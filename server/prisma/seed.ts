@@ -14,16 +14,31 @@ export async function seed(): Promise<void> {
     if (!prodAdminPassword || prodAdminPassword.length < 12) {
       console.warn(
         'Production environment detected: Demo accounts are strictly disabled. ' +
-        'To seed an initial production admin, set SEED_ADMIN_PASSWORD (min 12 chars). Skipping seeding.'
+        'To provision an initial administrator, configure SEED_ADMIN_PASSWORD (min 12 chars). Skipping seeding.'
+      );
+      return;
+    }
+
+    // Check if an administrator account already exists to prevent unexpected credential/role resets on re-deploy
+    const existingAdmin = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: 'admin' },
+          { role: 'ADMIN' }
+        ]
+      }
+    });
+
+    if (existingAdmin) {
+      console.log(
+        'Production administrator account already exists. Preserving existing credentials and role without mutation.'
       );
       return;
     }
 
     const adminHash = await bcrypt.hash(prodAdminPassword, saltRounds);
-    await prisma.user.upsert({
-      where: { username: 'admin' },
-      update: { password_hash: adminHash, role: 'ADMIN', is_active: true },
-      create: {
+    await prisma.user.create({
+      data: {
         username: 'admin',
         email: prodAdminEmail,
         password_hash: adminHash,
@@ -32,7 +47,7 @@ export async function seed(): Promise<void> {
       }
     });
 
-    console.log('Production initial admin provisioned securely.');
+    console.log('Production initial administrator account provisioned securely.');
     return;
   }
 
@@ -85,7 +100,7 @@ export async function seed(): Promise<void> {
 if (process.argv[1]?.includes('seed')) {
   seed()
     .catch((e) => {
-      console.error('Seeding error occurred');
+      console.error('Seeding error occurred:', e);
       process.exit(1);
     })
     .finally(async () => {

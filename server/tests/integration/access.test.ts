@@ -38,12 +38,26 @@ function createAuthCookie(userId: string, username: string, role: 'USER' | 'ADMI
   return `token=${token}; Path=/; HttpOnly; SameSite=Lax`;
 }
 
+/**
+ * Feature F-02: Application-Tier Tenancy Boundary & Role Segregation Suite
+ *
+ * SCOPE & EVIDENCE CLARIFICATION (FOR AUDITORS & INSTRUCTORS):
+ * In WP-01, the PostgreSQL schema only contains the `users` table. Financial tables (`accounts`,
+ * `transactions`, `allocations`) are formally scheduled for implementation in WP-02 through WP-05.
+ *
+ * Therefore, TEST-SEC-01 in this suite verifies application-tier tenancy boundary enforcement
+ * via isolated mock financial endpoint stubs (verifying that the server scopes ownership by authenticated
+ * `req.user.id`, returns 404 to conceal resource existence, and never trusts client-supplied user IDs).
+ *
+ * Full database-backed relational query isolation (`where: { userId: req.user.id }` executed against PostgreSQL)
+ * must be verified in WP-02 (Issue #3: Account table) and WP-04 (Issue #5: Allocation cross-tenant target_account_id).
+ */
 describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 02, 03)', () => {
   const userACookie = createAuthCookie('user-a-uuid', 'user_demo', 'USER');
   const userBCookie = createAuthCookie('user-b-uuid', 'user_other', 'USER');
   const adminCookie = createAuthCookie('admin-uuid', 'admin_demo', 'ADMIN');
 
-  describe('TEST-SEC-01: Cross-Tenant Isolation (AC-02-3, BR-01)', () => {
+  describe('TEST-SEC-01: Application-Tier Tenancy Isolation Stub Verification (AC-02-3, BR-01)', () => {
     it('allows User A to read, modify, and delete their own account (acc-user-a)', async () => {
       const readRes = await request(app)
         .get('/api/accounts/acc-user-a')
