@@ -76,12 +76,12 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 - [ ] Implement `GET /api/accounts` returning accounts belonging to the authenticated user.
 - [ ] Implement `PATCH /api/accounts/:id/opening-balance` to set opening balance on eligible unlocked accounts.
 - [ ] Enforce opening balance locking rule: Opening Balance can be updated only before the first committed transaction references the account. The account's opening balance becomes locked atomically when the first referencing transaction is committed.
-- [ ] Implement automated integration tests (`TEST-OPEN-01..02`, `TEST-SEC-01`).
+- [ ] Implement automated integration tests (`TEST-OPEN-01..04`, `TEST-SEC-01`).
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-03-1`: Setting opening balance of 10000.00 THB returns 200 OK and updates balance (`TEST-OPEN-01`).
-- [ ] `AC-03-2`: Negative opening balance rejected with 400 Bad Request.
-- [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422.
+- [ ] `AC-03-2`: Negative opening balance rejected with 400 Bad Request (`TEST-OPEN-03`).
+- [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 (`TEST-OPEN-04`).
 - [ ] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 
 ---
@@ -104,13 +104,13 @@ As an authenticated user, I want to record my received salary into my bank accou
 - [ ] Implement `POST /api/transactions/income` endpoint accepting destination cash account, amount, date, and income category account.
 - [ ] Enforce database transaction wrapping transaction insertion (Transaction 1 of Golden Journey), 1 allocation line targeting `Salary`, and atomic opening balance lock.
 - [ ] Verify cash account balance increases by the received amount (`BR-03`).
-- [ ] Implement automated integration tests (`TEST-INC-01`).
+- [ ] Implement automated integration tests (`TEST-INC-01..02`).
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-04-1`: Recording salary of 20000.00 THB on date 2026-11-06 returns 201 Created (`TEST-INC-01`).
 - [ ] Bank balance increases from 10000.00 THB to 30000.00 THB.
 - [ ] Income summary reflects 20000.00 THB.
-- [ ] `AC-04-2`: Invalid dates or non-positive amounts rejected with 400 Bad Request.
+- [ ] `AC-04-2`: Invalid dates or non-positive amounts rejected with 400 Bad Request (`TEST-INC-02`).
 
 ---
 
@@ -132,10 +132,11 @@ As an authenticated user, I want to record an expense charged to my credit card 
 - [ ] Implement split allocation validation engine: verify that sum of allocation lines strictly equals total amount (`BR-05`, `BR-06`).
 - [ ] Reject unbalanced allocation submissions with HTTP 422 Unprocessable Entity (`ALLOCATION_SUM_MISMATCH`).
 - [ ] Record purchase transaction (Transaction 2 of Golden Journey) with 2 allocation lines (Dining 1000.00, Grocery 2000.00) and increase credit card debt balance (`BR-04`).
-- [ ] Implement unit and integration tests (`TEST-EXP-01`, `TEST-ALLOC-01..02`) including TDD evidence for allocation validation.
+- [ ] Implement unit and integration tests (`TEST-EXP-01..02`, `TEST-ALLOC-01..02`) including TDD evidence for allocation validation.
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-05-1`: Recording credit purchase of 3000.00 THB returns 201 Created and increases debt (`TEST-EXP-01`).
+- [ ] `AC-05-2`: Omitting credit card primary account ID returns 400 Bad Request (`TEST-EXP-02`).
 - [ ] `AC-06-1`: Split allocation with Dining 1000.00 + Grocery 2000.00 = 3000.00 THB persists successfully with 2 allocation lines (`TEST-ALLOC-01`).
 - [ ] `AC-06-2`: Unbalanced allocation sum rejected with 422 Unprocessable Entity (`TEST-ALLOC-02`, `BR-06`).
 
@@ -160,15 +161,15 @@ As an authenticated user, I want to record repayment of my credit card debt from
 - [ ] Atomically decrease cash balance by 3000.00 and decrease debt balance by 3000.00 (`BR-07`).
 - [ ] Enforce repayment boundary validations: reject repayment amount exceeding outstanding debt with HTTP 422 (`REPAYMENT_EXCEEDS_DEBT`), reject insufficient funds with HTTP 422 (`INSUFFICIENT_FUNDS`), and reject non-positive amounts with HTTP 400 (`INVALID_AMOUNT`).
 - [ ] Ensure repayment allocation is classified under Loan Taken and excluded from expense summaries (`BR-08`).
-- [ ] Implement automated integration and boundary tests (`TEST-REPAY-01..04`).
+- [ ] Implement automated integration and boundary tests (`TEST-REPAY-01..06`).
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-07-1`: Repayment of 3000.00 THB returns 201 Created, creates 1 allocation line targeting Loan Taken, decreases bank balance to 27000.00, and decreases debt to 0.00 (`TEST-REPAY-01`).
 - [ ] `AC-07-2`: Expense summary verified unchanged at 3000.00 THB (`TEST-REPAY-02`, `BR-08`).
-- [ ] `AC-07-3`: Partial repayment strictly less than debt reduces debt proportionally.
+- [ ] `AC-07-3`: Partial repayment strictly less than debt reduces debt proportionally (`TEST-REPAY-05`).
 - [ ] `AC-07-4`: Repayment amount strictly exceeding outstanding debt returns 422 Unprocessable Entity (`TEST-REPAY-03`).
 - [ ] `AC-07-5`: Repayment amount exceeding available bank funds returns 422 Unprocessable Entity (`TEST-REPAY-04`).
-- [ ] `AC-07-6`: Non-positive repayment amount returns 400 Bad Request.
+- [ ] `AC-07-6`: Non-positive repayment amount returns 400 Bad Request (`TEST-REPAY-06`).
 
 ---
 

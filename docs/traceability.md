@@ -24,11 +24,11 @@ This document provides end-to-end traceability across all baseline Functional Re
 | **`FR-02`** | Current user identity and role resolution | `F-01` | **Sprint 1** | Automated API Integration (`TEST-AUTH-03`) |
 | **`FR-03`** | Platform user directory inspection | `F-19` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-04`** | Platform user status governance | `F-19` | Sprint 2 | Planned Sprint 2 Contract |
-| **`FR-05`** | Opening balance recording on eligible accounts | `F-03` | **Sprint 1** | Automated Integration (`TEST-OPEN-01`, `TEST-OPEN-02`) |
-| **`FR-06`** | Income transaction processing with date | `F-04` | **Sprint 1** | Automated Integration (`TEST-INC-01`) |
-| **`FR-07`** | Credit card purchase recording with date | `F-05`, `F-06` | **Sprint 1** | Automated Integration (`TEST-EXP-01`) |
-| **`FR-08`** | Multi-line split allocations (Dining & Grocery) | `F-06` | **Sprint 1** | Unit & Integration (`TEST-ALLOC-01`, `TEST-ALLOC-02`) |
-| **`FR-09`** | Credit card debt repayment from bank | `F-07` | **Sprint 1** | Automated Integration (`TEST-REPAY-01`, `TEST-REPAY-02`) |
+| **`FR-05`** | Opening balance recording on eligible accounts | `F-03` | **Sprint 1** | Automated Integration (`TEST-OPEN-01..04`) |
+| **`FR-06`** | Income transaction processing with date | `F-04` | **Sprint 1** | Automated Integration (`TEST-INC-01..02`) |
+| **`FR-07`** | Credit card purchase recording with date | `F-05`, `F-06` | **Sprint 1** | Automated Integration (`TEST-EXP-01..02`) |
+| **`FR-08`** | Multi-line split allocations (Dining & Grocery) | `F-06` | **Sprint 1** | Integration Test Suite (`TEST-ALLOC-01`, `TEST-ALLOC-02`) |
+| **`FR-09`** | Credit card debt repayment from bank | `F-07` | **Sprint 1** | Automated Integration (`TEST-REPAY-01..06`) |
 | **`FR-10`** | Deterministic balance and summary calculation | `F-08` | **Sprint 1** | Unit Integration (`TEST-BAL-01`) |
 | **`FR-11`** | Transaction history retrieval | `F-09` | **Sprint 1** | Automated Integration (`TEST-HIST-01`) |
 | **`FR-12`** | Custom account lifecycle across 5 types | `F-10` | Sprint 2 | Planned Sprint 2 Contract |
@@ -55,7 +55,7 @@ This document provides end-to-end traceability across all baseline Functional Re
 | **`BR-03`** | Income increases cash balance & income summary | `F-04`, `F-08` | **Sprint 1** | Automated Ledger Assertion (`TEST-INC-01`) |
 | **`BR-04`** | CC purchase increases debt & expense summary | `F-05`, `F-08` | **Sprint 1** | Automated Ledger Assertion (`TEST-EXP-01`) |
 | **`BR-05`** | Multi-line split allocation permitted | `F-06` | **Sprint 1** | Automated Allocation Test (`TEST-ALLOC-01`) |
-| **`BR-06`** | Sum of allocations strictly equals total amount | `F-06` | **Sprint 1** | Negative Boundary Unit/API Test (`TEST-ALLOC-02`) |
+| **`BR-06`** | Sum of allocations strictly equals total amount | `F-06` | **Sprint 1** | Negative Boundary Integration Test (`TEST-ALLOC-02`) |
 | **`BR-07`** | Repayment reduces cash balance and credit debt | `F-07`, `F-08` | **Sprint 1** | Automated Ledger Assertion (`TEST-REPAY-01`) |
 | **`BR-08`** | Repayment not counted as expense | `F-07`, `F-08` | **Sprint 1** | Summary Verification Assertion (`TEST-REPAY-02`) |
 | **`BR-09`** | Unauthenticated requests rejected | `F-01`, `F-02` | **Sprint 1** | Automated Security Integration (`TEST-SEC-02`) |

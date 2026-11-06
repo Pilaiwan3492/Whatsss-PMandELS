@@ -19,7 +19,7 @@
 |---|---|---|:---:|
 | **Repository Scaffolding & Configuration** | Assisted in drafting `README.md`, `.gitignore`, `.env.example`, `docker-compose.yml`, and `.github/` templates. | Both students inspected generated configuration files and verified paths locally. | [Pending Human Review] |
 | **Requirements Baseline Structuring (Part A)** | Formatted SRS document (`docs/srs.md`) ensuring separation between full product scope and Sprint 1 Golden Slice. | Students validated domain logic against Theme 7 brief and adjusted account/role boundaries. | [Pending Human Review] |
-| **Feature Inventory & Traceability (Part B)** | Structured `docs/features.md` and `docs/traceability.md` mapping requirements to features and sprints. | Students confirmed feature IDs (`F-01..F-18`) and verified that DevOps was excluded from product features. | [Pending Human Review] |
+| **Feature Inventory & Traceability (Part B)** | Structured `docs/features.md` and `docs/traceability.md` mapping requirements to features and sprints. | Students confirmed feature IDs (`F-01..F-19`) and verified that DevOps was excluded from product features. | [Pending Human Review] |
 | **Engineering Contracts & Test Specifications (Part E)** | Drafted `docs/sprints/sprint-1/feature-contracts.md`, `test-specification.md`, and `dod.md`. | Students calibrated acceptance criteria and test preconditions against the Golden Journey. | [Pending Human Review] |
 
 ---

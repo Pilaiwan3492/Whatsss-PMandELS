@@ -10,8 +10,8 @@
 
 | Contributor | Actual Contributions Performed to Date (Baseline Stage) | Concrete Evidence |
 |---|---|---|
-| **Pilaiwan Churdchu** | Defined project baseline scope, authored core requirements (`docs/srs.md`), structured domain account model, established Feature Inventory (`docs/features.md`), and coordinated PR #1 reviews. | Commits `8b9722a`, `1d5f2b3`, `8cc9c39`, `df7b08a`, `12d0ec7`, PR #1 (`docs/sprint-1-baseline`) |
-| **Aphichaya Klinhual** | Reviewed and refined security boundaries (Admin barrier, tenancy protection), authored traceability matrix (`docs/traceability.md`), calibrated Sprint 1 Feature Contracts (`docs/sprints/sprint-1/feature-contracts.md`), and structured test specifications. | Commits `8b9722a`, `1d5f2b3`, `8cc9c39`, `df7b08a`, `12d0ec7`, PR #1 (`docs/sprint-1-baseline`) |
+| **Pilaiwan Churdchu** | Defined project baseline scope, authored core requirements (`docs/srs.md`), structured domain account model, established Feature Inventory (`docs/features.md`), and coordinated PR #1 reviews. | Commits `8b9722a`, `1d5f2b3`, `8cc9c39`, `df7b08a`, `12d0ec7`, `a2f2d07`, PR #1 (`docs/sprint-1-baseline`) |
+| **Aphichaya Klinhual** | Reviewed and refined security boundaries (Admin barrier, tenancy protection), authored traceability matrix (`docs/traceability.md`), calibrated Sprint 1 Feature Contracts (`docs/sprints/sprint-1/feature-contracts.md`), and structured test specifications. | Commits `8b9722a`, `1d5f2b3`, `8cc9c39`, `df7b08a`, `12d0ec7`, `a2f2d07`, PR #1 (`docs/sprint-1-baseline`) |
 
 > **Audit Clarification:** The records above document verified actual contributions performed during the baseline engineering phase. The implementation tasks listed below represent the prospective, planned work allocation for upcoming code construction across `WP-01` through `WP-06`. Evidence for implementation tasks will be attached during Sprint 1 execution.
 

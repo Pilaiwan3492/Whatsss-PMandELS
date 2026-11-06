@@ -130,9 +130,12 @@ erDiagram
 1. **User Table (`users`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).
    * `username`: VARCHAR(50) (NOT NULL, UNIQUE, case-insensitive index).
+   * `email`: VARCHAR(254) (NOT NULL, UNIQUE, case-insensitive index matching ER Diagram).
    * `password_hash`: VARCHAR(255) (NOT NULL, salted one-way hash generated with bcrypt, work factor $\ge 10$, `NFR-SEC-01`).
    * `role`: ENUM(`'USER'`, `'ADMIN'`) (NOT NULL, default `'USER'`).
+   * `is_active`: BOOLEAN (NOT NULL, default `true`).
    * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
+   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
 
 2. **Account Table (`accounts`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).

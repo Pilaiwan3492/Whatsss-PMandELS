@@ -54,14 +54,14 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Main Workflow:**
   1. `AuthGuard` checks for valid session cookie; returns `401 Unauthorized` if absent or expired (`BR-09`).
   2. If an `ADMIN` requests any financial endpoint (`/api/accounts/*`, `/api/transactions/*`, `/api/reports/*`), server intercepts and rejects with `403 Forbidden` (`BR-10`).
-  3. If a `USER` requests another user's financial record by ID, database query scopes to `userId: req.user.id` and returns `404 Not Found` (`BR-01`).
+  3. If a `USER` submits a request referencing another user's financial record (whether querying by ID, using another user's account as `primary_account_id`, or referencing another user's account as `target_account_id` in an allocation line), database query scopes to `userId: req.user.id` and returns `404 Not Found` (`BR-01`).
 * **UI Behavior:**
   * Client router (`react-router`) evaluates authenticated status on route changes. Unauthenticated access to `/dashboard` redirects to `/login`.
   * For users authenticated as `ADMIN`, all financial UI elements (Accounts list, Record Transaction buttons, Financial Summary widgets) are hidden from the navigation bar. If an administrator manually enters `/dashboard` or financial URLs, the application displays a dedicated "Access Restricted: Platform Administrators have zero access to user personal ledgers" screen.
 * **Acceptance Criteria:**
   * `AC-02-1`: Unauthenticated requests to protected endpoints return `401 Unauthorized` (`TEST-SEC-02`, `BR-09`).
   * `AC-02-2`: ADMIN requests to financial endpoints return `403 Forbidden` with zero sensitive payload leakage (`TEST-SEC-03`, `BR-10`).
-  * `AC-02-3`: USER requests attempting to read or modify another user's financial record return `404 Not Found` (`TEST-SEC-01`, `BR-01`).
+  * `AC-02-3`: USER requests attempting to read or modify another user's financial record (including cross-tenant `primary_account_id` or allocation `target_account_id`) return `404 Not Found` (`TEST-SEC-01`, `BR-01`).
 
 ---
 
@@ -83,8 +83,8 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * If `is_opening_locked = true`, button is replaced by a disabled lock badge with tooltip: "Opening balance is locked permanently following first transaction".
 * **Acceptance Criteria:**
   * `AC-03-1`: Submitting valid opening balance (e.g., `10000.00 THB`) on unlocked account returns `200 OK` and updates balance (`TEST-OPEN-01`).
-  * `AC-03-2`: Submitting negative amount or non-numeric balance returns `400 Bad Request`.
-  * `AC-03-3`: Opening balance updates on an account with committed transactions return `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`).
+  * `AC-03-2`: Submitting negative amount or non-numeric balance returns `400 Bad Request` (`TEST-OPEN-03`).
+  * `AC-03-3`: Opening balance updates on an account with committed transactions return `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).
   * `AC-03-4`: Opening balance is verified omitted from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 * **API Specification:**
   * `PATCH /api/accounts/:id/opening-balance`: Body: `{ "opening_balance": 10000.00 }` $\rightarrow$ `200 OK` or `422 Unprocessable Entity`
@@ -105,7 +105,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * Form requires all fields; submit button disables and displays loading indicator during submission. On 201 Created, modal closes, bank balance updates in UI state, and transaction list prepends the new record. On error, a descriptive error message displays inline.
 * **Acceptance Criteria:**
   * `AC-04-1`: Recording salary of 20000.00 THB on date 2026-11-06 returns 201 Created and increases bank balance by 20000.00 (`TEST-INC-01`, `BR-03`).
-  * `AC-04-2`: Submitting income transaction with invalid/missing date or non-positive amount returns `400 Bad Request`.
+  * `AC-04-2`: Submitting income transaction with invalid/missing date or non-positive amount returns `400 Bad Request` (`TEST-INC-02`).
 * **API Specification:**
   * `POST /api/transactions/income`: Body: `{ "primary_account_id": "acc-bank", "total_amount": 20000.00, "transaction_date": "2026-11-06", "income_account_id": "acc-salary", "description": "Monthly Salary" }` $\rightarrow$ `201 Created`
 
@@ -124,7 +124,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * Form integrates with the Multiple Allocations component (`F-06`). On successful submit, modal closes, Credit Card debt card updates immediately, and transaction table updates.
 * **Acceptance Criteria:**
   * `AC-05-1`: Submitting valid credit card purchase returns `201 Created` and increases credit card debt balance (`TEST-EXP-01`, `BR-04`).
-  * `AC-05-2`: Omitting credit card primary account ID returns `400 Bad Request`.
+  * `AC-05-2`: Omitting credit card primary account ID returns `400 Bad Request` (`TEST-EXP-02`).
 
 ---
 
@@ -182,10 +182,10 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Acceptance Criteria:**
   * `AC-07-1`: Submitting valid repayment equal to debt (e.g., `3000.00 THB`) returns `201 Created`, creates 1 allocation line targeting `Loan Taken`, decreases bank balance to `27000.00`, and decreases credit debt to `0.00` (`TEST-REPAY-01`, `BR-07`).
   * `AC-07-2`: Verified that financial expense summary does not increase after repayment (`TEST-REPAY-02`, `BR-08`).
-  * `AC-07-3`: Submitting partial repayment strictly less than debt (e.g., `1500.00 THB` against `3000.00 THB` debt) returns `201 Created` and reduces debt to `1500.00 THB`.
-  * `AC-07-4`: Submitting repayment amount strictly exceeding outstanding debt returns `422 Unprocessable Entity` with error code `REPAYMENT_EXCEEDS_DEBT`.
-  * `AC-07-5`: Submitting repayment when source bank balance is insufficient returns `422 Unprocessable Entity` with error code `INSUFFICIENT_FUNDS`.
-  * `AC-07-6`: Submitting non-positive repayment amount ($\le 0.00$) or non-numeric value returns `400 Bad Request` with error code `INVALID_AMOUNT`.
+  * `AC-07-3`: Submitting partial repayment strictly less than debt (e.g., `1500.00 THB` against `3000.00 THB` debt) returns `201 Created` and reduces debt to `1500.00 THB` (`TEST-REPAY-05`).
+  * `AC-07-4`: Submitting repayment amount strictly exceeding outstanding debt returns `422 Unprocessable Entity` with error code `REPAYMENT_EXCEEDS_DEBT` (`TEST-REPAY-03`).
+  * `AC-07-5`: Submitting repayment when source bank balance is insufficient returns `422 Unprocessable Entity` with error code `INSUFFICIENT_FUNDS` (`TEST-REPAY-04`).
+  * `AC-07-6`: Submitting non-positive repayment amount ($\le 0.00$) or non-numeric value returns `400 Bad Request` with error code `INVALID_AMOUNT` (`TEST-REPAY-06`).
 * **API Specification:**
   * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created` or `422 Unprocessable Entity`
 
