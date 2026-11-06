@@ -99,7 +99,7 @@ Requirements are partitioned into **Sprint 1 Core Requirements** (the verified G
 | **`FR-13`** | **Internal Cash Transfer** | The system shall allow users to record internal fund transfers between their own Cash accounts without impacting income or expense summaries. | Sprint 2 |
 | **`FR-14`** | **Peer Lending Management** | The system shall allow users to record loans given to third parties (`Loan Given`) and subsequent loan repayments received. | Sprint 2 |
 | **`FR-15`** | **General Borrowing Management** | The system shall allow users to record money borrowed (`Loan Taken`) and subsequent loan principal repayments. | Sprint 2 |
-| **`FR-16`** | **Favorite Transaction Tagging** | The system shall allow users to mark frequently used transactions as favorites for quick access. | Sprint 2 |
+| **`FR-16`** | **Favorite Transaction Management** | The system shall allow users to mark frequently used transactions as favorites and view a filtered list of favorite transactions for quick access. | Sprint 2 |
 | **`FR-17`** | **Transaction Duplication** | The system shall allow users to duplicate an existing transaction to pre-fill a new editable transaction. | Sprint 2 |
 | **`FR-18`** | **Transaction Search & Filtering** | The system shall allow users to search and filter transactions by date range, account, and category. | Sprint 2 |
 | **`FR-19`** | **Transaction Corrections** | The system shall allow users to correct or adjust previously recorded transactions. | Sprint 2 |
@@ -113,7 +113,7 @@ Requirements are partitioned into **Sprint 1 Core Requirements** (the verified G
 The system strictly enforces the following domain rules:
 
 * **`BR-01 (Tenancy Isolation):`** A user shall access only their own financial accounts, transactions, and summaries. Any attempt to inspect or modify another user's financial resource shall be rejected and concealed.
-* **`BR-02 (Opening Balance Exclusion):`** Opening balances establish starting account balances and must not be counted as income or expenses in financial summaries.
+* **`BR-02 (Opening Balance & Internal Transfer Exclusion):`** Opening balances establish starting account balances and must not be counted as income or expenses in financial summaries. Furthermore, internal cash transfers between a user's own Cash accounts (`FR-13`) shall not impact or be counted as income or expenses.
 * **`BR-03 (Income Inflow):`** Income transactions shall increase the balance of the destination Cash account and increase the user's income summary by the allocated amount.
 * **`BR-04 (Credit Charge Invariant):`** Purchases charged to a credit card account shall increase the outstanding liability of that credit card and increase the expense summary by the transaction amount.
 * **`BR-05 (Multi-Line Allocation Support):`** A transaction may contain one or more allocation lines distributing the total transaction amount.
@@ -121,7 +121,7 @@ The system strictly enforces the following domain rules:
   $$\sum \text{allocation.amount} = \text{transaction.total\_amount}$$
   Any transaction where the allocation sum does not equal the total amount shall be rejected.
 * **`BR-07 (Debt Settlement Invariant):`** A credit card repayment shall reduce the funding Cash account balance and reduce the outstanding credit card debt balance by an equal amount.
-* **`BR-08 (No Double-Counted Expense):`** Debt repayments shall not be counted as an expense, because the underlying expenditure was already recognized when the charge occurred.
+* **`BR-08 (Debt Settlement & Financing Cashflow Exclusion):`** Debt repayments shall not be counted as an expense, because the underlying expenditure was already recognized when the charge occurred. Furthermore, proceeds from borrowings (`Loan Taken`, `FR-15`) and recoveries of loans given (`Loan Given`, `FR-14`) shall not be counted as income, and principal disbursed as loans given shall not be counted as expenses.
 * **`BR-09 (Authentication Boundary):`** Any unauthenticated request attempting to access protected financial or administrative resources shall be rejected.
 * **`BR-10 (Administrative Financial Privacy):`** Administrators shall have no access to view, query, or modify users' financial accounts, transactions, balances, or summaries. All financial endpoints shall enforce this exclusion on the backend.
 

@@ -35,7 +35,7 @@ Features are partitioned into:
 | **`F-11`** | **Internal Cash Transfer** | `USER` | Sprint 2 | Required (Theme 7) | Single-action internal transfer between Cash/Bank accounts without affecting income/expense. |
 | **`F-12`** | **Loan Given & Recovery** | `USER` | Sprint 2 | Required (Theme 7) | Track money lent to third parties (`Loan Given`) and subsequent repayment recoveries. |
 | **`F-13`** | **General Loan Taken & Repayment** | `USER` | Sprint 2 | Required (Theme 7) | Track money borrowed (`Loan Taken`) and subsequent loan principal repayments. |
-| **`F-14`** | **Favorite & Duplicate Transactions** | `USER` | Sprint 2 | Required (Theme 7) | Mark transactions as favorites; duplicate existing transactions for rapid entry. |
+| **`F-14`** | **Favorite & Duplicate Transactions** | `USER` | Sprint 2 | Required (Theme 7) | Mark transactions as favorites; view favorite transactions; duplicate existing transactions for rapid entry. |
 | **`F-15`** | **Transaction Search & Filtering** | `USER` | Sprint 2 | Required (Theme 7) | Query transactions by date ranges, account, category, and transaction form. |
 | **`F-16`** | **Transaction Corrections** | `USER` | Sprint 2 | Required (Theme 7) | Update and correct erroneous transaction entries while preserving ledger integrity. |
 | **`F-17`** | **Category Spending Summaries & Reports** | `USER` | Sprint 3 | Required (Theme 7) | In-depth analytics, category spending breakdowns, and period financial summaries. |

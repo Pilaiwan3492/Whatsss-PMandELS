@@ -47,7 +47,7 @@ flowchart LR
   * `F-11`: Internal Cash Transfer (Fund movement between bank/cash accounts)
   * `F-12`: Loan Given & Recovery (Peer lending tracking)
   * `F-13`: General Loan Taken & Repayment (General debt tracking)
-  * `F-14`: Favorite & Duplicate Transactions (Transaction shortcuts)
+  * `F-14`: Favorite & Duplicate Transactions (Tagging and viewing favorite transactions; transaction duplication)
   * `F-15`: Transaction Search & Filtering (Date and category query engine)
   * `F-16`: Transaction Corrections (Adjusting past entries safely)
   * `F-19`: Platform User Directory & Governance (Admin directory `FR-03` and access status governance `FR-04`)

@@ -35,7 +35,7 @@ This document provides end-to-end traceability across all baseline Functional Re
 | **`FR-13`** | Internal cash transfers between accounts | `F-11` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-14`** | Peer lending & repayment recovery (`Loan Given`) | `F-12` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-15`** | General borrowing & repayment (`Loan Taken`) | `F-13` | Sprint 2 | Planned Sprint 2 Contract |
-| **`FR-16`** | Favorite transaction tagging | `F-14` | Sprint 2 | Planned Sprint 2 Contract |
+| **`FR-16`** | Favorite transaction tagging and viewing | `F-14` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-17`** | Transaction duplication | `F-14` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-18`** | Transaction search and multi-criteria filtering | `F-15` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-19`** | Transaction corrections and adjustments | `F-16` | Sprint 2 | Planned Sprint 2 Contract |
@@ -51,13 +51,13 @@ This document provides end-to-end traceability across all baseline Functional Re
 | Business Rule ID | Business Rule Statement | Implementing Feature(s) | Planned Sprint | Verification Method / Test ID |
 |---|---|---|:---:|---|
 | **`BR-01`** | User accesses only their own financial records | `F-02` | **Sprint 1** | Automated Security Integration (`TEST-SEC-01`) |
-| **`BR-02`** | Opening balance excluded from income/expense | `F-03`, `F-08` | **Sprint 1** | Automated Calculation Check (`TEST-OPEN-02`) |
+| **`BR-02`** | Opening balance & internal transfers excluded from income/expense | `F-03`, `F-08`, `F-11` | **Sprint 1** (Baseline) / Sprint 2 (Transfers) | Automated Calculation Check (`TEST-OPEN-02`) |
 | **`BR-03`** | Income increases cash balance & income summary | `F-04`, `F-08` | **Sprint 1** | Automated Ledger Assertion (`TEST-INC-01`) |
 | **`BR-04`** | CC purchase increases debt & expense summary | `F-05`, `F-08` | **Sprint 1** | Automated Ledger Assertion (`TEST-EXP-01`) |
 | **`BR-05`** | Multi-line split allocation permitted | `F-06` | **Sprint 1** | Automated Allocation Test (`TEST-ALLOC-01`) |
 | **`BR-06`** | Sum of allocations strictly equals total amount | `F-06` | **Sprint 1** | Negative Boundary Integration Test (`TEST-ALLOC-02`) |
 | **`BR-07`** | Repayment reduces cash balance and credit debt | `F-07`, `F-08` | **Sprint 1** | Automated Ledger Assertion (`TEST-REPAY-01`) |
-| **`BR-08`** | Repayment not counted as expense | `F-07`, `F-08` | **Sprint 1** | Summary Verification Assertion (`TEST-REPAY-02`) |
+| **`BR-08`** | Debt repayments & loan financing excluded from income/expense | `F-07`, `F-08`, `F-12`, `F-13` | **Sprint 1** (Baseline) / Sprint 2 (Loans) | Summary Verification Assertion (`TEST-REPAY-02`) |
 | **`BR-09`** | Unauthenticated requests rejected | `F-01`, `F-02` | **Sprint 1** | Automated Security Integration (`TEST-SEC-02`) |
 | **`BR-10`** | ADMIN barred from viewing/modifying financial data | `F-02` | **Sprint 1** | Automated Role Barrier Test (`TEST-SEC-03`) |
 
