@@ -15,6 +15,11 @@
 
 ## 2. Actual AI Assistance Performed to Date (Repository Baseline Setup)
 
+### Oversight Level Definitions
+* **Human Verification:** Active domain validation, manual schema calibration, and rule inspection conducted directly by the authoring student on all AI-suggested content prior to commit.
+* **Peer Review:** Independent evaluation, technical verification, and critique conducted by the second team member on GitHub Pull Request #1.
+* **Pending Peer Review:** Formal status denoting that initial human verification is complete, while teammate peer review and formal PR approval remain pending prior to merging into `sprint-1`.
+
 | Engineering Activity | Actual AI Assistance to Date | Human Oversight Action Performed | Pending Verification Required | Status |
 |---|---|---|---|:---:|
 | **Repository Scaffolding & Configuration** | Assisted in drafting `README.md`, `.gitignore`, `.env.example`, `docker-compose.yml`, and `.github/` templates. | Team initialized repository structure and aligned local paths with course directory guidelines. | Formal peer inspection of baseline configuration files on GitHub PR #1. | [Pending Peer Review] |

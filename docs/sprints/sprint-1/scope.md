@@ -28,13 +28,13 @@ Develop a working, tested personal finance management system vertical slice that
 ---
 
 ## 3. Explicitly Excluded from Sprint 1 (Deferred to Sprints 2–3)
-* Full user custom account creation and deletion (`F-10`, Sprint 2).
-* Internal cash transfers between accounts (`F-11`, Sprint 2).
-* Peer lending (`Loan Given`) and borrowing (`Loan Taken`) beyond credit card repayment (`F-12`, `F-13`, Sprint 2).
-* Favorite and duplicate transactions (`F-14`, Sprint 2).
-* Multi-criteria transaction search and filtering (`F-15`, Sprint 2).
-* Transaction adjustments and corrections (`F-16`, Sprint 2).
-* Platform user directory inspection and access governance (`F-19`, `FR-03`, `FR-04`, Sprint 2).
-* Category spending distribution reports (`F-17`, `FR-20`, Sprint 3).
-* Audited correction history and soft-delete archival (`F-18`, `FR-21`, Sprint 3).
+* Account Creation & Management (`F-10`, Sprint 2).
+* Internal Cash Transfer (`F-11`, Sprint 2).
+* Loan Given & Recovery and General Loan Taken & Repayment (`F-12`, `F-13`, Sprint 2).
+* Favorite & Duplicate Transactions (`F-14`, Sprint 2).
+* Transaction Search & Filtering (`F-15`, Sprint 2).
+* Transaction Corrections (`F-16`, Sprint 2).
+* Platform User Directory & Governance (`F-19`, `FR-03`, `FR-04`, Sprint 2).
+* Category Spending Summaries & Reports (`F-17`, `FR-20`, Sprint 3).
+* Audited Correction History & Archival (`F-18`, `FR-21`, Sprint 3).
 * Completed Docker, CI/CD, and GCP cloud deployment (scheduled for Lab 5).

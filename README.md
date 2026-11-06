@@ -38,6 +38,8 @@ The goal of Sprint 1 is to deliver a verified, runnable vertical slice that exec
    * **Transaction History:** Exactly 3 transactions with 4 allocation lines total.
    * **Security:** Unauthenticated requests rejected (`401`); ADMIN barred from user financial data (`403`); cross-tenant access concealed (`404`).
 
+> **Testing Isolation Note:** Partial repayment (`TEST-REPAY-05`) and repayment boundary tests (`TEST-REPAY-03`, `TEST-REPAY-04`, `TEST-REPAY-06`) are independent test cases evaluated against isolated fixtures in the automated test suite. They do not alter the core Golden Journey sequence, which strictly encompasses the 3 transactions and 4 allocation lines above.
+
 ---
 
 ## 4. Technology Stack (Team Decision)
