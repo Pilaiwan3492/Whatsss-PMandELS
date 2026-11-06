@@ -43,7 +43,10 @@ As a user or platform administrator, I want to authenticate securely and have th
 - [ ] Implement `AuthGuard` middleware rejecting unauthenticated requests with HTTP 401 (`BR-09`).
 - [ ] Implement `RoleGuard` middleware rejecting ADMIN access to financial routes with HTTP 403 (`BR-10`).
 - [ ] Implement tenant scoping ensuring user requests access only own records (`BR-01`).
-- [ ] Implement automated integration tests (`TEST-AUTH-01..05`, `TEST-SEC-01..03`).
+- [ ] Implement CSRF Origin/Referer validation middleware rejecting untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
+- [ ] Configure and verify CORS preflight (`OPTIONS`) handling ensuring preflights terminate before CSRF and auth without executing business operations (`TEST-SEC-05`).
+- [ ] Implement conditional `RequireJsonContentType` middleware and malformed JSON error handling returning HTTP 400 (`INVALID_CONTENT_TYPE`, `INVALID_JSON_BODY`) while preserving bodyless logout compatibility (`TEST-SEC-06`).
+- [ ] Implement automated integration tests (`TEST-AUTH-01..05`, `TEST-SEC-01..06`).
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-01-1`: Valid credentials return 200 OK with user profile and set HttpOnly session cookie (`TEST-AUTH-01`).
@@ -54,6 +57,7 @@ As a user or platform administrator, I want to authenticate securely and have th
 - [ ] `AC-02-1`: Missing/invalid cookie returns 401 Unauthorized (`TEST-SEC-02`, `BR-09`).
 - [ ] `AC-02-2`: ADMIN calling financial endpoints returns 403 Forbidden with zero data leak (`TEST-SEC-03`, `BR-10`).
 - [ ] `AC-02-3`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
+- [ ] `AC-02-4`: Origin/Referer validation rejects untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
 
 ---
 

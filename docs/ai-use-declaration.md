@@ -15,10 +15,10 @@
 
 ## 2. Actual AI Assistance Performed to Date (Repository Baseline Setup)
 
-### Oversight Level Definitions
+### Oversight Level Definitions & Completion Status
 * **Human Verification:** Active domain validation, manual schema calibration, and rule inspection conducted directly by the authoring student on all AI-suggested content prior to commit.
-* **Peer Review:** Independent evaluation, technical verification, and critique conducted by the second team member on GitHub Pull Request #1.
-* **Pending Peer Review:** Formal status denoting that initial human verification is complete, while teammate peer review and formal PR approval remain pending prior to merging into `sprint-1`.
+* **Peer Review (Process Definition):** Independent technical evaluation, architectural verification, and critique required to be conducted by the second team member on GitHub Pull Request #1.
+* **Pending Peer Review (Current Status):** Formal status denoting that while author-level human verification has been conducted, teammate peer review and formal PR sign-off on GitHub remain pending prior to merging into `sprint-1`. No peer review is claimed as completed until submitted and recorded on GitHub.
 
 | Engineering Activity | Actual AI Assistance to Date | Human Oversight Action Performed | Pending Verification Required | Status |
 |---|---|---|---|:---:|

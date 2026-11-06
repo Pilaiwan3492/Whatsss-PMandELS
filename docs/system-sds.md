@@ -274,7 +274,7 @@ All error responses adhere to a consistent error schema:
 ### 6.4 HTTP Status Code Conventions
 * `200 OK`: Request succeeded (used for retrieval and updates).
 * `201 Created`: Resource successfully created.
-* `400 Bad Request`: Malformed JSON syntax, unparseable request body, missing `Content-Type: application/json` on mutating requests, or schema syntax validation errors. Express body parser syntax errors return code `INVALID_JSON_BODY`.
+* `400 Bad Request`: Malformed JSON syntax, unparseable request body, missing or unsupported `Content-Type` on endpoints requiring a JSON body (`INVALID_CONTENT_TYPE`), malformed JSON request body (`INVALID_JSON_BODY`), or schema syntax validation errors.
 * `401 Unauthorized`: Missing, invalid, or expired authentication credentials (`BR-09`).
 * `403 Forbidden`: Authenticated user lacks permission (e.g., ADMIN attempting to access financial records per `BR-10`), or CSRF origin verification failure (`CSRF_ORIGIN_REJECTED`).
 * `404 Not Found`: Resource does not exist, or cross-tenant access attempt (resource existence concealment per `BR-01`).
@@ -295,37 +295,71 @@ To ensure robust security, avoid token leakage, and eliminate token storage inco
 2. **CORS & Preflight Handling Configuration:**
    * The Express API uses the `cors` package configured with `origin: process.env.CLIENT_URL || 'http://localhost:5173'` and `credentials: true`.
    * Wildcard origins (`*`) are strictly prohibited, ensuring credentials cannot be intercepted or exposed across arbitrary origins.
-   * **CORS Preflight (OPTIONS) Interception & Bypass:** Browser-initiated cross-origin requests utilizing custom headers or non-simple HTTP methods automatically trigger an HTTP `OPTIONS` preflight request. The CORS middleware intercepts `OPTIONS` requests at the very beginning of the pipeline, validates the `Origin` against `CLIENT_URL`, sets allowed methods (`GET, POST, PUT, PATCH, DELETE, OPTIONS`) and headers (`Content-Type, Authorization`), and terminates the request immediately with HTTP `204 No Content` (or `200 OK`). Because browser preflights neither transmit credentials nor contain payload bodies, preflight `OPTIONS` requests intentionally bypass downstream CSRF origin guards, JSON body parsing, and authentication checks.
+   * **CORS Preflight (OPTIONS) Handling:** Browser-initiated cross-origin requests utilizing custom headers or non-simple HTTP methods automatically trigger an HTTP `OPTIONS` preflight request. `OPTIONS` preflight requests are handled by CORS middleware before CSRF validation and authentication middleware:
+     * **Trusted Preflight Handling:** Preflight requests from the configured trusted frontend origin receive authorizing CORS response headers (`Access-Control-Allow-Origin: process.env.CLIENT_URL`, `Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS`, `Access-Control-Allow-Headers: Content-Type, Authorization`, `Access-Control-Allow-Credentials: true`, `Access-Control-Max-Age: 86400`) and terminate with HTTP `204 No Content` (or `200 OK`).
+     * **Credentials Enforcement:** Credentials (`Access-Control-Allow-Credentials: true`) are permitted exclusively for configured trusted origins.
+     * **Untrusted Origins Policy:** Untrusted origins must not receive an authorizing `Access-Control-Allow-Origin` header, preventing cross-origin access. Untrusted preflights are not required to return HTTP 403; the security condition is strictly enforced by withholding CORS authorization headers.
+     * **Zero Execution:** `OPTIONS` preflight requests bypass CSRF validation and authentication guards, and must never execute business logic or perform database writes.
 
 3. **CSRF Mitigation Architecture:**
+   * **CORS vs. CSRF Separation:** CORS and CSRF validation are distinct, separate security controls. CORS governs cross-origin browser read permissions, whereas CSRF validation actively protects server-side state from unauthorized, forged mutations. Server-side Origin and Referer validation directly enforces CSRF rejection; CORS is not described or relied upon as the actual CSRF security mechanism.
+   * **Applicable Methods:** CSRF validation applies strictly to state-changing HTTP methods: `POST`, `PUT`, `PATCH`, and `DELETE`.
+   * **Safe Method Exemption:** Safe and idempotent methods (`GET`, `HEAD`, `OPTIONS`) are exempt from CSRF validation, ensuring standard read navigation and CORS preflight negotiations function normally.
    * **`SameSite=Lax` Cookie Policy:** Browsers automatically block cookie inclusion on cross-site subrequests (such as `fetch`/`XMLHttpRequest` from external domains).
-   * **Content-Type Validation & JSON Body Parsing:** All mutating endpoints (`POST`, `PUT`, `PATCH`, `DELETE`) require `Content-Type: application/json`. Non-JSON media types (e.g., standard HTML form submissions `application/x-www-form-urlencoded` or `multipart/form-data`) are rejected by Express body parsers, preventing cross-site form POST exploitation. The Express body parser (`express.json({ limit: '100kb' })`) processes JSON streams; any malformed JSON payload immediately triggers the centralized error handler, returning HTTP `400 Bad Request` with standardized error code `INVALID_JSON_BODY` (`{ "success": false, "error": { "code": "INVALID_JSON_BODY", "message": "Malformed JSON in request body", "details": [] } }`).
-   * **Strict State-Changing Origin & Referer Validation:** For all cookie-authenticated state-changing HTTP requests (`POST`, `PUT`, `PATCH`, `DELETE`), custom backend middleware enforces strict origin verification:
-     * **Exact Origin Validation:** Compares the request `Origin` header against `process.env.CLIENT_URL` (scheme, hostname, and port must match identically; substring or partial string matching is strictly forbidden).
-     * **Referer Fallback Validation:** If the `Origin` header is absent, the middleware falls back to extracting and validating the origin component of the `Referer` header against `CLIENT_URL`.
-     * **HTTP 403 Rejection:** Requests with missing, malformed, or untrusted `Origin`/`Referer` values are unconditionally rejected with HTTP `403 Forbidden` (`CSRF_ORIGIN_REJECTED`).
-     * **Safe Method Exemption:** Safe and idempotent methods (`GET`, `HEAD`, `OPTIONS`) are exempt from origin rejection, ensuring standard read navigation and CORS preflight negotiations function normally.
+   * **Strict Server-Side Origin & Referer Validation:**
+     * **Origin Validation First:** The server inspects the request `Origin` header first, requiring an exact match against `process.env.CLIENT_URL` (scheme, hostname, and port must match identically; substring, regex wildcard, or partial hostname matching is strictly prohibited).
+     * **Referer Fallback:** If the `Origin` header is absent, the middleware falls back to extracting and validating the origin component of the `Referer` header against `process.env.CLIENT_URL`.
+     * **Rejection Criteria:** The server rejects requests when:
+       1. The supplied origin does not match the configured trusted frontend origin.
+       2. Both `Origin` and `Referer` headers are missing.
+       3. The `Referer` header is malformed or unparseable.
+       4. The scheme, hostname, or port does not match the trusted origin.
+       5. The `Origin` value is literal `null`.
+       6. The origin cannot be safely parsed or validated.
+     * **Rejection Behavior:** Invalid or unverifiable CSRF requests return HTTP `403 Forbidden` with standardized error code `CSRF_ORIGIN_REJECTED` (`{ "success": false, "error": { "code": "CSRF_ORIGIN_REJECTED", "message": "Cross-site request forgery validation failed: Origin or Referer untrusted", "details": [] } }`).
+     * **Zero Execution & Zero Writes:** A rejected CSRF request terminates immediately at the middleware layer; it must not execute the protected business operation or perform database writes.
 
-4. **Session Identification & Verification:**
+4. **Dedicated JSON Content-Type Validation (`RequireJsonContentType`):**
+   * **Dedicated Validation Middleware:** Standard `express.json()` alone does not guarantee rejection of all unsupported request content types. A dedicated validation middleware (`RequireJsonContentType`) is deployed for endpoints that require a JSON request body.
+   * **Rejection of Unsupported Content Types:** For endpoints expecting a JSON request body, requests with missing or unsupported `Content-Type` values (e.g., standard HTML form submissions `application/x-www-form-urlencoded` or `multipart/form-data`) are rejected with HTTP `400 Bad Request` and error code `INVALID_CONTENT_TYPE`.
+   * **Malformed JSON Body Handling:** The Express JSON parser (`express.json({ limit: '100kb' })`) processes JSON streams for validated requests; any malformed JSON body triggers the centralized error handler, returning HTTP `400 Bad Request` with error code `INVALID_JSON_BODY` (`{ "success": false, "error": { "code": "INVALID_JSON_BODY", "message": "Malformed JSON in request body", "details": [] } }`). These responses preserve HTTP 400 per existing API conventions and are not changed to HTTP 415.
+   * **Conditional Scope:** The `RequireJsonContentType` middleware is applied conditionally based on the endpoint's request-body contract. It is applied to endpoints requiring a JSON request body (`POST /api/auth/login`, `POST /api/accounts/:id/opening-balance`, `POST /api/transactions`, `POST /api/transactions/repayment`) and must not be applied indiscriminately to endpoints that do not require a request body.
+   * **Bodyless Logout Compatibility (`POST /api/auth/logout`):** `POST /api/auth/logout` is a bodyless endpoint. It is not required to send `Content-Type: application/json` when it has no JSON request body. The logout endpoint must still undergo CSRF validation and applicable authentication/session checks; `RequireJsonContentType` must not incorrectly reject this bodyless request.
+
+5. **Session Identification & Verification:**
    * Browser requests include the cookie automatically when the client configures `axios` or `fetch` with `credentials: 'include'`.
    * `GET /api/auth/me` validates the cookie JWT and returns the user's public profile and verified role (`FR-02`).
 
-5. **Session Termination with Matching Attributes:**
+6. **Session Termination with Matching Attributes:**
    * `POST /api/auth/logout` clears the authentication cookie by returning an expired cookie (`Max-Age=0`) with exact matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production). Subsequent requests to protected endpoints return `401 Unauthorized` (`FR-01`).
 
-6. **Sequential Middleware Pipeline Order:**
-   Every HTTP request flows through a deterministic sequence of middleware layers:
+7. **Sequential Middleware Pipeline Order:**
+   Every HTTP request flows through a deterministic, ordered sequence of middleware layers:
    ```mermaid
    flowchart TD
-       Req["Incoming HTTP Request"] --> M1["1. CORS Middleware (Origin check & credentials: true)"]
-       M1 -->|OPTIONS Preflight| EndOptions["204 No Content / 200 OK\n(Terminates Preflight, Bypasses CSRF & Auth)"]
-       M1 -->|GET / POST / PUT / PATCH / DELETE| M2["2. CSRF Validation Guard\n(Strict Origin/Referer check on POST/PUT/PATCH/DELETE | 403 Forbidden CSRF_ORIGIN_REJECTED)"]
-       M2 --> M3["3. Content-Type Validation & Express JSON Parser\n(application/json check; 400 Bad Request INVALID_JSON_BODY on syntax error)"]
-       M3 --> M4["4. CookieParser\n(Parses Cookie header into req.cookies.token)"]
-       M4 --> M5["5. AuthGuard\n(Extracts JWT cookie -> verifies signature against JWT_SECRET -> attaches req.user | 401 Unauthorized)"]
-       M5 --> M6["6. RoleGuard\n(Checks req.user.role -> rejects ADMIN on financial routes with 403 Forbidden)"]
-       M6 --> M7["7. Tenant Scoping\n(Injects userId: req.user.id into primary & target account queries | 404 Not Found on cross-tenant access)"]
-       M7 --> Handler["8. Domain Controller & Service\n(Executes atomic business logic in prisma.$transaction)"]
+       Req["Incoming HTTP Request"] --> M1["1. CORS Middleware (Origin check & credentials policy)"]
+       M1 -->|OPTIONS Preflight| EndOptions["Return CORS Preflight Response\n(204 No Content / 200 OK | Bypasses CSRF & Auth)"]
+       M1 -->|GET / POST / PUT / PATCH / DELETE| M2["2. CSRF Origin/Referer Guard\n(Strict Origin/Referer check on POST/PUT/PATCH/DELETE | 403 Forbidden CSRF_ORIGIN_REJECTED)"]
+       M2 --> M3{"Endpoint requires\nJSON request body?"}
+       M3 -->|Yes| M3A["3. RequireJsonContentType\n(Rejects missing/unsupported Content-Type | 400 Bad Request INVALID_CONTENT_TYPE)"]
+       M3A --> M3B["4. express.json()\n(Parses JSON body | 400 Bad Request INVALID_JSON_BODY on malformed syntax)"]
+       M3 -->|No (e.g. GET, bodyless POST /api/auth/logout)| M4["5. CookieParser\n(Parses Cookie header into req.cookies.token)"]
+       M3B --> M4
+       M4 --> M5["6. AuthGuard\n(Verifies JWT cookie signature -> attaches req.user | 401 Unauthorized)"]
+       M5 --> M6["7. RoleGuard\n(Checks req.user.role -> rejects ADMIN on financial routes with 403 Forbidden)"]
+       M6 --> M7["8. Tenant Scoping\n(Injects userId: req.user.id into primary & target account queries | 404 Not Found)"]
+       M7 --> Handler["9. Controller / Service\n(Executes domain business logic)"]
+       Handler --> DBTx["10. Database Transaction\n(Atomic execution via prisma.$transaction)"]
+       DBTx --> Res["11. Standard JSON Response Envelope\n(200 OK / 201 Created)"]
+       M1 -.->|Errors| Err["Centralized Error Handler (Standard Error Envelope)"]
+       M2 -.->|Errors| Err
+       M3A -.->|Errors| Err
+       M3B -.->|Errors| Err
+       M5 -.->|Errors| Err
+       M6 -.->|Errors| Err
+       M7 -.->|Errors| Err
+       Handler -.->|Errors| Err
+       DBTx -.->|Errors| Err
    ```
 
 ---

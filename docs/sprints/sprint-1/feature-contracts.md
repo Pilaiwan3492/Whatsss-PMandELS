@@ -62,6 +62,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-02-1`: Unauthenticated requests to protected endpoints return `401 Unauthorized` (`TEST-SEC-02`, `BR-09`).
   * `AC-02-2`: ADMIN requests to financial endpoints return `403 Forbidden` with zero sensitive payload leakage (`TEST-SEC-03`, `BR-10`).
   * `AC-02-3`: USER requests attempting to read or modify another user's financial record (including cross-tenant `primary_account_id` or allocation `target_account_id`) return `404 Not Found` (`TEST-SEC-01`, `BR-01`).
+  * `AC-02-4`: The system must validate the Origin header or Referer header for state-changing requests and reject requests from untrusted or unverifiable origins with HTTP 403 and error code `CSRF_ORIGIN_REJECTED` (`TEST-SEC-04`).
 
 ---
 

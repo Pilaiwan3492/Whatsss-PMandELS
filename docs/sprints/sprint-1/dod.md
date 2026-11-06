@@ -30,27 +30,36 @@ A feature or release candidate is declared **DONE** only when all of the followi
   - `BR-09`: Unauthenticated requests rejected with `401 Unauthorized`.
   - `BR-10`: ADMIN role blocked from viewing/modifying user financial data with `403 Forbidden`.
 
-### 2.2 Relational Data Persistence & Durability
+### 2.2 Security Architecture & Access Control
+- [ ] `TEST-SEC-01`: Cross-tenant security isolation verified (foreign account references return `404 Not Found`, resource existence concealed, zero database writes).
+- [ ] `TEST-SEC-02`: Unauthenticated request security barrier verified (returns `401 Unauthorized`).
+- [ ] `TEST-SEC-03`: Administrator financial privacy barrier verified (returns `403 Forbidden` with zero sensitive financial data leakage).
+- [ ] `TEST-SEC-04`: CSRF Origin/Referer validation enforced on state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`); untrusted, missing, or malformed origins return `403 Forbidden` (`CSRF_ORIGIN_REJECTED`); rejected CSRF requests do not execute business operations or perform database writes.
+- [ ] `TEST-SEC-05`: CORS preflight handling verified; `OPTIONS` requests handled by CORS middleware before CSRF and authentication; authorizing headers granted only to configured trusted origin; zero business logic execution and zero database writes.
+- [ ] `TEST-SEC-06`: Content-Type validation and malformed JSON rejection enforced; missing/unsupported media types return `400 Bad Request` (`INVALID_CONTENT_TYPE`) and malformed JSON returns `400 Bad Request` (`INVALID_JSON_BODY`); bodyless logout (`POST /api/auth/logout`) compatibility verified without requiring a JSON body.
+
+### 2.3 Relational Data Persistence & Durability
 - [ ] Data models adhere to PostgreSQL schema via Prisma ORM with strict relational constraints.
 - [ ] Deterministic seed script (`npx prisma db seed`) executes cleanly and idempotently.
 - [ ] Data persists and remains verifiable across backend server process restarts (`NFR-DATA-01`).
 
-### 2.3 Automated Testing & TDD Evidence
-- [ ] All planned automated test cases (`TEST-AUTH-01..05`, `TEST-SEC-01..03`, `TEST-OPEN-01..04`, `TEST-INC-01..02`, `TEST-EXP-01..02`, `TEST-ALLOC-01..02`, `TEST-REPAY-01..06`, `TEST-BAL-01`, `TEST-HIST-01`, `TEST-PERSIST-01`, `TEST-E2E-01`) pass with zero failures and zero skipped tests.
-- [ ] Meaningful negative and boundary tests are executed (e.g., allocation sum mismatch, unauthenticated access, admin financial intrusion).
+### 2.4 Automated Testing & TDD Evidence
+- [ ] All 31 planned automated test cases (`TEST-AUTH-01..05`, `TEST-SEC-01..06`, `TEST-OPEN-01..04`, `TEST-INC-01..02`, `TEST-EXP-01..02`, `TEST-ALLOC-01..02`, `TEST-REPAY-01..06`, `TEST-BAL-01`, `TEST-HIST-01`, `TEST-PERSIST-01`, `TEST-E2E-01`) pass with zero failures and zero skipped tests.
+- [ ] Meaningful negative and boundary tests are executed (e.g., allocation sum mismatch, unauthenticated access, admin financial intrusion, CSRF rejection, malformed JSON).
+- [ ] Execution evidence recorded in `evidence-index.md` for all test cases, including new security test cases (`TEST-SEC-04`, `TEST-SEC-05`, `TEST-SEC-06`).
 - [ ] TDD red/green commit history or test excerpt evidence is preserved for core rule validation (`BR-06`).
 
-### 2.4 Code Quality, Architecture & Build
+### 2.5 Code Quality, Architecture & Build
 - [ ] Code is formatted and passes TypeScript compilation (`npm run build`) without errors.
 - [ ] No hardcoded secrets, database passwords, or production credentials exist in version control.
 - [ ] Environment configuration is externalized via `.env.example`.
 
-### 2.5 Git Workflow & Teammate Peer Review
+### 2.6 Git Workflow & Teammate Peer Review
 - [ ] Features developed on bounded branches branching from sprint staging.
 - [ ] Pull Requests opened with completed PR template, linked to relevant Issues and Feature Contracts.
 - [ ] Teammate code review completed with substantive feedback or inspection finding recorded (Course Rule: Authors do NOT approve their own PRs).
 - [ ] Integrated release candidate merged into `main` and tagged with `v0.1.0-sprint1`.
 
-### 2.6 Deliverable Documentation & Reproduction
+### 2.7 Deliverable Documentation & Reproduction
 - [ ] Deliverable documentation (Parts A through F) updated and consistent with released behavior.
 - [ ] README setup instructions verified locally on a fresh clone.
