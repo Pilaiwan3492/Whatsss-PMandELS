@@ -24,8 +24,8 @@
   * Failing: `[Pending Execution]`
   * Skipped: `[Pending Execution]`
 
-### Results Mapping Table (AC to Test Results)
-| Test ID | Linked AC | Test Name / Location | Execution Result | Tested Commit |
+### Test-to-Requirement Results Mapping
+| Test ID | Linked AC / System Contract | Test Name / Location | Execution Result | Tested Commit |
 |---|---|---|:---:|:---:|
 | `TEST-AUTH-01` | `AC-01-1` | `server/tests/integration/auth.test.ts` | Pending Execution | Pending Execution |
 | `TEST-AUTH-02` | `AC-01-2` | `server/tests/integration/auth.test.ts` | Pending Execution | Pending Execution |

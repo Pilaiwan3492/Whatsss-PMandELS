@@ -12,7 +12,7 @@
 
 The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or system-level contract to an executable automated test case (`TEST-XX`), specifying test level, preconditions, inputs, and expected outcomes across 31 defined test cases (28 core domain and accounting tests plus 3 dedicated security boundary tests).
 
-| Test ID | Linked AC | Target Feature | Test Level | Preconditions & Input | Expected Result |
+| Test ID | Linked AC / System Contract | Target Feature | Test Level | Preconditions & Input | Expected Result |
 |---|---|:---:|:---:|---|---|
 | **`TEST-AUTH-01`** | `AC-01-1` | `F-01` | Integration | Seeded user submits correct username and password to `/api/auth/login`. | HTTP `200 OK`, signed HttpOnly session cookie set. |
 | **`TEST-AUTH-02`** | `AC-01-2` | `F-01` | Integration | Submitting invalid password or nonexistent username to `/api/auth/login`. | HTTP `401 Unauthorized`, error code `INVALID_CREDENTIALS`. |
