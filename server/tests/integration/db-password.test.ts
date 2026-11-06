@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 
 /**
  * Integration Test: PostgreSQL Database-Backed Password Persistence Verification
@@ -22,9 +23,9 @@ describe('Integration Test: PostgreSQL Live Database Password Persistence (TEST-
   const BCRYPT_REGEX = /^\$2[ab]\$[0-9]{2}\$[A-Za-z0-9./]{53}$/;
 
   const SEEDED_DEMO_ACCOUNTS = [
-    { username: 'user_demo', expectedPassword: 'Password123!' },
-    { username: 'user_other', expectedPassword: 'Password123!' },
-    { username: 'admin_demo', expectedPassword: 'Password123!' }
+    { username: 'user_demo', expectedRole: 'USER', expectedPassword: 'Password123!' },
+    { username: 'user_other', expectedRole: 'USER', expectedPassword: 'Password123!' },
+    { username: 'admin_demo', expectedRole: 'ADMIN', expectedPassword: 'Password123!' }
   ];
 
   beforeAll(async () => {
@@ -51,7 +52,7 @@ describe('Integration Test: PostgreSQL Live Database Password Persistence (TEST-
     }
   });
 
-  it('validates persisted user records in PostgreSQL contain valid bcrypt hashes and zero plaintext', async (ctx) => {
+  it('validates persisted demo user records in PostgreSQL contain valid bcrypt hashes and zero plaintext', async (ctx) => {
     if (!isDbConnected) {
       console.warn(
         '[TEST-AUTH-04 NOTICE] Live PostgreSQL instance is offline in local environment. ' +
@@ -61,24 +62,38 @@ describe('Integration Test: PostgreSQL Live Database Password Persistence (TEST-
       return;
     }
 
-    const allUsers = await prisma.user.findMany();
-    expect(allUsers.length).toBeGreaterThan(0);
+    // 1. Mandatory existence and validation for all 3 seeded demo accounts
+    for (const demoAccount of SEEDED_DEMO_ACCOUNTS) {
+      const user = await prisma.user.findUnique({
+        where: { username: demoAccount.username }
+      });
 
-    // 1. All persisted users in PostgreSQL must have valid bcrypt hash format
-    for (const user of allUsers) {
+      // Must fail immediately if demo user does not exist in PostgreSQL
+      expect(user, `Expected seeded user ${demoAccount.username} to exist in PostgreSQL`).not.toBeNull();
+      if (!user) {
+        throw new Error(`Seeded user ${demoAccount.username} not found in database`);
+      }
+
+      // Assert username, role, and active status
+      expect(user.username).toBe(demoAccount.username);
+      expect(user.role).toBe(demoAccount.expectedRole);
+      expect(user.is_active).toBe(true);
+
+      // Assert bcrypt format and length
       expect(user.password_hash).toMatch(BCRYPT_REGEX);
       expect(user.password_hash.length).toBe(60);
-    }
 
-    // 2. Verified seeded demo accounts match expected passwords and contain zero plaintext
-    for (const demoAccount of SEEDED_DEMO_ACCOUNTS) {
-      const user = allUsers.find(u => u.username === demoAccount.username);
-      if (user) {
-        expect(user.password_hash).not.toBe(demoAccount.expectedPassword);
-        expect(user.password_hash).not.toContain(demoAccount.expectedPassword);
-        const isValid = await bcrypt.compare(demoAccount.expectedPassword, user.password_hash);
-        expect(isValid).toBe(true);
-      }
+      // Assert zero plaintext password stored or contained
+      expect(user.password_hash).not.toBe(demoAccount.expectedPassword);
+      expect(user.password_hash).not.toContain(demoAccount.expectedPassword);
+
+      // Assert bcrypt.compare returns true for expected password
+      const isCorrectMatch = await bcrypt.compare(demoAccount.expectedPassword, user.password_hash);
+      expect(isCorrectMatch).toBe(true);
+
+      // Assert bcrypt.compare returns false for invalid password
+      const isWrongMatch = await bcrypt.compare('WrongPassword456!', user.password_hash);
+      expect(isWrongMatch).toBe(false);
     }
   });
 
@@ -90,34 +105,48 @@ describe('Integration Test: PostgreSQL Live Database Password Persistence (TEST-
 
     const testRawPassword = 'LivePostgresPassword2026!';
     const testHash = await bcrypt.hash(testRawPassword, 10);
-    const uniqueUsername = `test_pg_${Date.now()}`;
+    const uniqueUsername = `test_pg_${crypto.randomUUID()}`;
 
-    const createdUser = await prisma.user.create({
-      data: {
-        username: uniqueUsername,
-        email: `${uniqueUsername}@test.local`,
-        password_hash: testHash,
-        role: 'USER',
-        is_active: true
-      }
-    });
-
+    let createdUser: any = null;
     try {
+      createdUser = await prisma.user.create({
+        data: {
+          username: uniqueUsername,
+          email: `${uniqueUsername}@test.local`,
+          password_hash: testHash,
+          role: 'USER',
+          is_active: true
+        }
+      });
+
       // Fetch directly from PostgreSQL table to verify persisted bytes
       const persistedUser = await prisma.user.findUnique({
         where: { id: createdUser.id }
       });
 
       expect(persistedUser).not.toBeNull();
-      expect(persistedUser!.password_hash).toMatch(BCRYPT_REGEX);
-      expect(persistedUser!.password_hash).not.toBe(testRawPassword);
-      expect(persistedUser!.password_hash).not.toContain(testRawPassword);
+      if (!persistedUser) {
+        throw new Error('Persisted user record could not be retrieved from PostgreSQL');
+      }
 
-      const isMatch = await bcrypt.compare(testRawPassword, persistedUser!.password_hash);
+      expect(persistedUser.username).toBe(uniqueUsername);
+      expect(persistedUser.role).toBe('USER');
+      expect(persistedUser.is_active).toBe(true);
+      expect(persistedUser.password_hash).toMatch(BCRYPT_REGEX);
+      expect(persistedUser.password_hash.length).toBe(60);
+      expect(persistedUser.password_hash).not.toBe(testRawPassword);
+      expect(persistedUser.password_hash).not.toContain(testRawPassword);
+
+      const isMatch = await bcrypt.compare(testRawPassword, persistedUser.password_hash);
       expect(isMatch).toBe(true);
+
+      const isWrongMatch = await bcrypt.compare('WrongPassword456!', persistedUser.password_hash);
+      expect(isWrongMatch).toBe(false);
     } finally {
-      // Always cleanup created user record, even if assertions fail
-      await prisma.user.delete({ where: { id: createdUser.id } }).catch(() => {});
+      // Cleanup created user record without swallowing deletion errors
+      if (createdUser?.id) {
+        await prisma.user.delete({ where: { id: createdUser.id } });
+      }
     }
   });
 });

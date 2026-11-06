@@ -1,9 +1,9 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 
-const prisma = new PrismaClient();
+const defaultPrisma = new PrismaClient();
 
-export async function seed(): Promise<void> {
+export async function seed(client: PrismaClient = defaultPrisma): Promise<void> {
   const isProduction = process.env.NODE_ENV === 'production';
   const saltRounds = 10;
 
@@ -11,6 +11,7 @@ export async function seed(): Promise<void> {
     const prodAdminPassword = process.env.SEED_ADMIN_PASSWORD;
     const prodAdminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@whatsss.local';
 
+    // Case 4: No SEED_ADMIN_PASSWORD or password < 12 chars
     if (!prodAdminPassword || prodAdminPassword.length < 12) {
       console.warn(
         'Production environment detected: Demo accounts are strictly disabled. ' +
@@ -19,14 +20,9 @@ export async function seed(): Promise<void> {
       return;
     }
 
-    // Check if an administrator account already exists to prevent unexpected credential/role resets on re-deploy
-    const existingAdmin = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { username: 'admin' },
-          { role: 'ADMIN' }
-        ]
-      }
+    // Case 2: Check if an administrator account already exists (role === 'ADMIN')
+    const existingAdmin = await client.user.findFirst({
+      where: { role: 'ADMIN' }
     });
 
     if (existingAdmin) {
@@ -36,8 +32,21 @@ export async function seed(): Promise<void> {
       return;
     }
 
+    // Case 3: Check if username "admin" is already taken by a non-ADMIN account
+    const usernameConflict = await client.user.findUnique({
+      where: { username: 'admin' }
+    });
+
+    if (usernameConflict) {
+      throw new Error(
+        'FATAL: Username "admin" already exists with non-ADMIN role. ' +
+        'Cannot provision production administrator due to username conflict.'
+      );
+    }
+
+    // Case 1: No admin exists and username "admin" is available -> provision initial admin
     const adminHash = await bcrypt.hash(prodAdminPassword, saltRounds);
-    await prisma.user.create({
+    await client.user.create({
       data: {
         username: 'admin',
         email: prodAdminEmail,
@@ -56,7 +65,7 @@ export async function seed(): Promise<void> {
   const passwordHash = await bcrypt.hash(demoPassword, saltRounds);
 
   // Seed user_demo (USER)
-  await prisma.user.upsert({
+  await client.user.upsert({
     where: { username: 'user_demo' },
     update: { password_hash: passwordHash, role: 'USER', is_active: true },
     create: {
@@ -69,7 +78,7 @@ export async function seed(): Promise<void> {
   });
 
   // Seed user_other (USER)
-  await prisma.user.upsert({
+  await client.user.upsert({
     where: { username: 'user_other' },
     update: { password_hash: passwordHash, role: 'USER', is_active: true },
     create: {
@@ -82,7 +91,7 @@ export async function seed(): Promise<void> {
   });
 
   // Seed admin_demo (ADMIN)
-  await prisma.user.upsert({
+  await client.user.upsert({
     where: { username: 'admin_demo' },
     update: { password_hash: passwordHash, role: 'ADMIN', is_active: true },
     create: {
@@ -104,6 +113,6 @@ if (process.argv[1]?.includes('seed')) {
       process.exit(1);
     })
     .finally(async () => {
-      await prisma.$disconnect();
+      await defaultPrisma.$disconnect();
     });
 }
