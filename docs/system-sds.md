@@ -170,9 +170,24 @@ erDiagram
 5. **Relational Invariants, Atomicity & Concurrency Controls:**
    * **Transactional Atomicity (`prisma.$transaction`):** The creation of a `Transaction` header, all associated `AllocationLine` items, and the atomic locking of referenced opening balances are unconditionally executed inside a single database transaction. If any validation fails (e.g., allocation sum mismatch, unowned target account), the transaction aborts and rolls back completely; zero partial records are ever committed.
    * **Cross-Tenant Ownership Scoping on Target Accounts:** In addition to validating `primary_account.user_id === req.user.id`, the backend must explicitly verify that **every** `target_account_id` referenced in the allocation lines belongs to `req.user.id`. Any attempt to reference another tenant's account as a target account is rejected immediately with HTTP `404 Not Found` (resource existence concealment per `BR-01`).
-   * **Concurrency-Safe Opening Balance Locking:** Opening balance updates (`PATCH /api/accounts/:id/opening-balance`) are permitted only while `is_opening_locked = false`. When the first referencing transaction commits, the account is locked atomically using a conditional update:
+   * **Concurrency-Safe Opening Balance Locking & Atomic Conditional Mutation:**
+     Opening balance updates (`PATCH /api/accounts/:id/opening-balance`) are permitted only while `is_opening_locked = false`. When the first referencing transaction commits, the account is locked atomically using a conditional update:
      $$\text{UPDATE accounts SET is\_opening\_locked = true WHERE id = \$id AND is\_opening\_locked = false}$$
-     Rejected or rolled-back transactions never lock the account. Future transaction adjustments or edits (Sprint 2) never unlock or modify the recorded opening balance. Concurrent transaction submissions against an unlocked account are serialized by PostgreSQL row-level locks, ensuring exactly-once transition to the locked state.
+     Rejected or rolled-back transactions never lock the account. Future transaction adjustments or edits (Sprint 2) never unlock or modify the recorded opening balance.
+     
+     To eliminate race conditions between concurrent requests (e.g., Request A reading an unlocked state while Request B commits the first transaction), the `PATCH /api/accounts/:id/opening-balance` endpoint must execute an atomic conditional `UPDATE` asserting ownership and unlocked state simultaneously:
+     ```sql
+     UPDATE accounts
+     SET opening_balance = $1, updated_at = NOW()
+     WHERE id = $2
+       AND user_id = $3
+       AND is_opening_locked = false;
+     ```
+     The backend inspects the affected row count:
+     - If `affectedRows === 0`: The backend checks whether the account exists for this user. If not found, it responds with HTTP `404 Not Found` (`BR-01`). If the account exists but has `is_opening_locked = true`, it immediately rejects with HTTP `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`). Under no circumstances is the opening balance overwritten after an account is locked.
+     - If `affectedRows === 1`: The update succeeds and returns HTTP `200 OK`.
+     
+     Furthermore, transaction insertion binds the account locking statement within the exact same atomic `prisma.$transaction` block as the `Transaction` and `AllocationLine` inserts, guaranteeing strict linearizability between opening balance mutations and transaction creation.
 
 ---
 
