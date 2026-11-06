@@ -91,7 +91,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * If `is_opening_locked = true`, button is replaced by a disabled lock badge with tooltip: "Opening balance is locked permanently following first transaction".
 * **Acceptance Criteria:**
   * `AC-03-1`: Submitting valid opening balance (e.g., `10000.00 THB`) on unlocked account via `PATCH /api/accounts/:id/opening-balance` returns `200 OK` and updates balance (`TEST-OPEN-01`).
-  * `AC-03-2`: Submitting negative amount (`-500.00`), non-numeric value, or invalid precision returns `400 Bad Request` with error code `INVALID_OPENING_BALANCE` (`TEST-OPEN-03`).
+  * `AC-03-2`: Submitting negative amount (`-500.00`), non-numeric value, or invalid precision exceeding 2 decimal places (`100.123`) returns `400 Bad Request` with error code `INVALID_OPENING_BALANCE` (`TEST-OPEN-03`).
   * `AC-03-3`: Opening balance updates on an account with committed transactions return `422 Unprocessable Entity` with error code `OPENING_BALANCE_LOCKED` (`TEST-OPEN-04`).
   * `AC-03-4`: Opening balance is verified omitted from income and expense summaries via `GET /api/reports/summary` (`TEST-OPEN-02`, `BR-02`).
 * **API Specification:**
@@ -122,7 +122,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
       "success": true,
       "data": {
         "account": {
-          "id": "acc-bank-123",
+          "id": "550e8400-e29b-41d4-a716-446655440000",
           "name": "Checking Bank",
           "type": "CASH",
           "opening_balance": 10000.00,

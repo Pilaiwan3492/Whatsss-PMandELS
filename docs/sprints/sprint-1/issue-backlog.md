@@ -92,7 +92,7 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-03-1`: Setting opening balance of 10000.00 THB returns 200 OK and updates balance (`TEST-OPEN-01`).
-- [ ] `AC-03-2`: Negative, non-numeric, or invalid decimal balance rejected with 400 Bad Request (`INVALID_OPENING_BALANCE`) (`TEST-OPEN-03`).
+- [ ] `AC-03-2`: Negative, non-numeric, or invalid decimal balance (e.g., `100.123`) rejected with 400 Bad Request (`INVALID_OPENING_BALANCE`) (`TEST-OPEN-03`).
 - [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).
 - [ ] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 
