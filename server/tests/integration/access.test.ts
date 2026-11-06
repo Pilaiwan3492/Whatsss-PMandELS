@@ -58,7 +58,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
   const adminCookie = createAuthCookie('admin-uuid', 'admin_demo', 'ADMIN');
 
   describe('TEST-SEC-01: Application-Tier Tenancy Isolation Stub Verification (AC-02-3, BR-01)', () => {
-    it('allows User A to read, modify, and delete their own account (acc-user-a)', async () => {
+    it('allows User A to read their own account (acc-user-a)', async () => {
       const readRes = await request(app)
         .get('/api/accounts/acc-user-a')
         .set('Cookie', userACookie);
@@ -66,6 +66,29 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
       expect(readRes.status).toBe(200);
       expect(readRes.body.success).toBe(true);
       expect(readRes.body.data.account.id).toBe('acc-user-a');
+    });
+
+    it('allows User A to send an update request for their own account', async () => {
+      const response = await request(app)
+        .put('/api/accounts/acc-user-a')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ name: 'Updated Account Name' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+    });
+
+    it('allows User A to send a delete request for their own account', async () => {
+      const response = await request(app)
+        .delete('/api/accounts/acc-user-a')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
     });
 
     it('rejects User A attempting to read User B account with 404 RESOURCE_NOT_FOUND', async () => {
@@ -157,6 +180,41 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
       expect(accRes.status).toBe(403);
       expect(accRes.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
       expect(accRes.body.data).toBeUndefined();
+    });
+
+    describe('Financial route path boundary matching', () => {
+      it('blocks ADMIN from valid financial route paths', async () => {
+        const response = await request(app)
+          .get('/api/accounts')
+          .set('Cookie', adminCookie);
+
+        expect(response.status).toBe(403);
+        expect(response.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
+      });
+
+      it('does not classify accountsXYZ as a financial route', async () => {
+        const response = await request(app)
+          .get('/api/accountsXYZ')
+          .set('Cookie', adminCookie);
+
+        expect(response.status).toBe(404);
+      });
+
+      it('does not classify transactionsXYZ as a financial route', async () => {
+        const response = await request(app)
+          .get('/api/transactionsXYZ')
+          .set('Cookie', adminCookie);
+
+        expect(response.status).toBe(404);
+      });
+
+      it('does not classify reportsXYZ as a financial route', async () => {
+        const response = await request(app)
+          .get('/api/reportsXYZ')
+          .set('Cookie', adminCookie);
+
+        expect(response.status).toBe(404);
+      });
     });
   });
 });
