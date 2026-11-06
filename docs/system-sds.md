@@ -184,9 +184,44 @@ erDiagram
        AND is_opening_locked = false;
      ```
      The backend inspects the affected row count:
-     - If `affectedRows === 0`: The backend checks whether the account exists for this user. If not found, it responds with HTTP `404 Not Found` (`BR-01`). If the account exists but has `is_opening_locked = true`, it immediately rejects with HTTP `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`). Under no circumstances is the opening balance overwritten after an account is locked.
+     - If `affectedRows === 0`: The backend checks whether the account exists for this user. If not found, it responds with HTTP `404 Not Found` (`NOT_FOUND`, `BR-01`). If the account exists but has `is_opening_locked = true`, it immediately rejects with HTTP `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`). Under no circumstances is the opening balance overwritten after an account is locked.
      - If `affectedRows === 1`: The update succeeds and returns HTTP `200 OK`.
      
+     Opening balance mutations adhere to standardized error envelopes:
+     - **Validation Failure (`400 Bad Request`):**
+       ```json
+       {
+         "success": false,
+         "error": {
+           "code": "INVALID_OPENING_BALANCE",
+           "message": "Opening balance must be a non-negative numeric value with up to 2 decimal places.",
+           "details": []
+         }
+       }
+       ```
+     - **Resource Not Found (`404 Not Found`):**
+       ```json
+       {
+         "success": false,
+         "error": {
+           "code": "NOT_FOUND",
+           "message": "Account not found.",
+           "details": []
+         }
+       }
+       ```
+     - **Locked Account Rejection (`422 Unprocessable Entity`):**
+       ```json
+       {
+         "success": false,
+         "error": {
+           "code": "OPENING_BALANCE_LOCKED",
+           "message": "Opening balance cannot be updated after the first transaction.",
+           "details": []
+         }
+       }
+       ```
+
      Furthermore, transaction insertion binds the account locking statement within the exact same atomic `prisma.$transaction` block as the `Transaction` and `AllocationLine` inserts, guaranteeing strict linearizability between opening balance mutations and transaction creation.
 
 ---
@@ -274,11 +309,11 @@ All error responses adhere to a consistent error schema:
 ### 6.4 HTTP Status Code Conventions
 * `200 OK`: Request succeeded (used for retrieval and updates).
 * `201 Created`: Resource successfully created.
-* `400 Bad Request`: Malformed JSON syntax, unparseable request body, missing or unsupported `Content-Type` on endpoints requiring a JSON body (`INVALID_CONTENT_TYPE`), malformed JSON request body (`INVALID_JSON_BODY`), or schema syntax validation errors.
+* `400 Bad Request`: Malformed JSON syntax, unparseable request body, missing or unsupported `Content-Type` on endpoints requiring a JSON body (`INVALID_CONTENT_TYPE`), malformed JSON request body (`INVALID_JSON_BODY`), schema syntax validation errors, or invalid opening balance values (`INVALID_OPENING_BALANCE`).
 * `401 Unauthorized`: Missing, invalid, or expired authentication credentials (`BR-09`).
 * `403 Forbidden`: Authenticated user lacks permission (e.g., ADMIN attempting to access financial records per `BR-10`), or CSRF origin verification failure (`CSRF_ORIGIN_REJECTED`).
-* `404 Not Found`: Resource does not exist, or cross-tenant access attempt (resource existence concealment per `BR-01`).
-* `422 Unprocessable Entity`: Semantic domain or business rule violation (e.g., allocation sum does not equal total amount per `BR-06`).
+* `404 Not Found`: Resource does not exist, or cross-tenant access attempt (resource existence concealment per `BR-01`; error code `NOT_FOUND`).
+* `422 Unprocessable Entity`: Semantic domain or business rule violation (e.g., allocation sum does not equal total amount per `BR-06` [`ALLOCATION_SUM_MISMATCH`], or attempt to update a locked opening balance [`OPENING_BALANCE_LOCKED`]).
 
 ---
 

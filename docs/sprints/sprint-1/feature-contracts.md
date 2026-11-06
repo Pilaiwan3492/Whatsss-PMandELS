@@ -70,25 +70,101 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Feature ID:** `F-03`
 * **Linked Requirements:** `FR-05`, `BR-02`, `NFR-DATA-01`
 * **Preconditions:** Authenticated `USER` owns an eligible account (Checking Bank) with `is_opening_locked = false`.
-* **Locking Rule:**
-  > Opening Balance can be updated only before the first committed transaction references the account. The account's opening balance becomes locked atomically when the first referencing transaction is committed.
+* **Locking Rule & Invariants:**
+  1. Accounts are initialized with `is_opening_locked = false`.
+  2. Authenticated users may update `opening_balance` on their accounts only while `is_opening_locked = false` (prior to committing the first referencing transaction).
+  3. When the first committed transaction referencing the account is committed, the account is atomically locked (`is_opening_locked = true`).
+  4. The lock mutation is executed atomically within the exact same database transaction (`prisma.$transaction`) as the referencing transaction and allocation lines.
+  5. If the transaction rolls back or fails validation, the account remains unlocked (`is_opening_locked = false`).
+  6. Once `is_opening_locked = true`, any subsequent opening balance update attempt must be rejected with HTTP `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`).
 * **Main Workflow:**
   1. User submits opening balance amount via `PATCH /api/accounts/:id/opening-balance`.
-  2. Server verifies the account belongs to user and `is_opening_locked` is `false`.
-  3. Server updates `opening_balance`.
-  4. Balance calculation engine incorporates opening balance into account balance without counting it as income or expense (`BR-02`).
-  5. Once a transaction referencing the account commits, server atomically sets `is_opening_locked = true`. If a transaction fails or rolls back, the lock is not applied.
+  2. Server verifies the account exists and belongs to the authenticated user (`user_id === req.user.id`). If not found or owned by another user, it returns HTTP `404 Not Found` (`NOT_FOUND`, `BR-01`).
+  3. Server validates that `opening_balance` is numeric, non-negative, and has at most 2 decimal places. If invalid, it returns HTTP `400 Bad Request` (`INVALID_OPENING_BALANCE`).
+  4. Server asserts that `is_opening_locked === false`. If locked, it returns HTTP `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`).
+  5. Server updates `opening_balance` and `updated_at`.
+  6. Balance calculation engine incorporates opening balance into account balance without counting it as income or expense (`BR-02`).
+  7. Upon committing the first referencing transaction (e.g. Transaction 1: Salary Income), the server atomically sets `is_opening_locked = true`. If the transaction rolls back, the lock is not applied.
 * **UI Behavior:**
   * Account Card in Accounts view shows "Set Opening Balance" button when `is_opening_locked = false`.
   * Clicking button opens modal with a currency-formatted numeric input (`0.00`).
   * If `is_opening_locked = true`, button is replaced by a disabled lock badge with tooltip: "Opening balance is locked permanently following first transaction".
 * **Acceptance Criteria:**
-  * `AC-03-1`: Submitting valid opening balance (e.g., `10000.00 THB`) on unlocked account returns `200 OK` and updates balance (`TEST-OPEN-01`).
-  * `AC-03-2`: Submitting negative amount or non-numeric balance returns `400 Bad Request` (`TEST-OPEN-03`).
-  * `AC-03-3`: Opening balance updates on an account with committed transactions return `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).
-  * `AC-03-4`: Opening balance is verified omitted from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
+  * `AC-03-1`: Submitting valid opening balance (e.g., `10000.00 THB`) on unlocked account via `PATCH /api/accounts/:id/opening-balance` returns `200 OK` and updates balance (`TEST-OPEN-01`).
+  * `AC-03-2`: Submitting negative amount (`-500.00`), non-numeric value, or invalid precision returns `400 Bad Request` with error code `INVALID_OPENING_BALANCE` (`TEST-OPEN-03`).
+  * `AC-03-3`: Opening balance updates on an account with committed transactions return `422 Unprocessable Entity` with error code `OPENING_BALANCE_LOCKED` (`TEST-OPEN-04`).
+  * `AC-03-4`: Opening balance is verified omitted from income and expense summaries via `GET /api/reports/summary` (`TEST-OPEN-02`, `BR-02`).
 * **API Specification:**
-  * `PATCH /api/accounts/:id/opening-balance`: Body: `{ "opening_balance": 10000.00 }` $\rightarrow$ `200 OK` or `422 Unprocessable Entity`
+  * **Endpoint:** `PATCH /api/accounts/:id/opening-balance`
+  * **Headers:** `Content-Type: application/json`, Cookie: `token=...`
+  * **URL Parameters:** `id` (UUID of the target account)
+  * **Request Validation Rules:**
+    * `opening_balance` is required and must be a number (`typeof opening_balance === 'number'`).
+    * `opening_balance` must be greater than or equal to `0.00` (`opening_balance >= 0.00`).
+    * `opening_balance` allows at most two decimal places of precision.
+    * Modification is strictly prohibited once the account's `is_opening_locked` flag is `true`.
+  * **Request Body Example:**
+    ```json
+    {
+      "opening_balance": 10000.00
+    }
+    ```
+  * **Response Status Codes & Error Mapping:**
+    | Condition | HTTP Status | Response Payload / Error Code | Description |
+    |---|:---:|---|---|
+    | Valid update on unlocked account | `200 OK` | `{ "success": true, "data": { "account": { ... } } }` | Opening balance successfully updated. |
+    | Negative, non-numeric, or invalid decimal balance | `400 Bad Request` | `INVALID_OPENING_BALANCE` | Opening balance must be a non-negative number with at most 2 decimal places. |
+    | Account not found or owned by another user | `404 Not Found` | `NOT_FOUND` | Account does not exist or access concealed per `BR-01`. |
+    | Account opening balance is already locked | `422 Unprocessable Entity` | `OPENING_BALANCE_LOCKED` | Opening balance cannot be updated after the first transaction. |
+  * **Success Response Example (`200 OK`):**
+    ```json
+    {
+      "success": true,
+      "data": {
+        "account": {
+          "id": "acc-bank-123",
+          "name": "Checking Bank",
+          "type": "CASH",
+          "opening_balance": 10000.00,
+          "is_opening_locked": false,
+          "updated_at": "2026-11-06T08:00:00.000Z"
+        }
+      }
+    }
+    ```
+  * **Error Response Example — Validation Failure (`400 Bad Request`):**
+    ```json
+    {
+      "success": false,
+      "error": {
+        "code": "INVALID_OPENING_BALANCE",
+        "message": "Opening balance must be a non-negative numeric value with up to 2 decimal places.",
+        "details": []
+      }
+    }
+    ```
+  * **Error Response Example — Resource Not Found (`404 Not Found`):**
+    ```json
+    {
+      "success": false,
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "Account not found.",
+        "details": []
+      }
+    }
+    ```
+  * **Error Response Example — Account Locked (`422 Unprocessable Entity`):**
+    ```json
+    {
+      "success": false,
+      "error": {
+        "code": "OPENING_BALANCE_LOCKED",
+        "message": "Opening balance cannot be updated after the first transaction.",
+        "details": []
+      }
+    }
+    ```
 
 ---
 

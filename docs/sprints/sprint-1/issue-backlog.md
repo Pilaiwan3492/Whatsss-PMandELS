@@ -77,17 +77,23 @@ As a user or platform administrator, I want to authenticate securely and have th
 As an authenticated user, I want to access my pre-seeded financial accounts and set an initial opening balance on my bank account before recording transactions, so that my starting cash position is accurately established without being counted as income.
 
 #### Implementation Tasks
-- [ ] Implement `Account` model in Prisma schema (`id`, `user_id`, `name`, `type`, `opening_balance`, `is_opening_locked`).
+- [ ] Implement `Account` model in Prisma schema (`id`, `user_id`, `name`, `type`, `opening_balance`, `is_opening_locked` default `false`).
 - [ ] Implement seed script (`server/prisma/seed.ts`) populating `user_demo`, `user_other`, `admin_demo`, and the 5 accounts for each user (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`).
 - [ ] Implement `GET /api/accounts` returning accounts belonging to the authenticated user.
-- [ ] Implement `PATCH /api/accounts/:id/opening-balance` to set opening balance on eligible unlocked accounts.
-- [ ] Enforce opening balance locking rule: Opening Balance can be updated only before the first committed transaction references the account. The account's opening balance becomes locked atomically when the first referencing transaction is committed.
+- [ ] Implement `PATCH /api/accounts/:id/opening-balance` to set opening balance on eligible unlocked accounts (`opening_balance >= 0.00`, max 2 decimals).
+- [ ] Enforce opening balance locking rules:
+  1. Account initializes with `is_opening_locked = false`.
+  2. User can update opening balance only before the first referencing transaction commits.
+  3. When first referencing transaction commits, account is locked atomically (`is_opening_locked = true`).
+  4. Locking executes atomically within the same database transaction (`prisma.$transaction`).
+  5. If transaction fails or rolls back, account is not locked.
+  6. Once locked, any subsequent opening balance update returns HTTP 422 (`OPENING_BALANCE_LOCKED`).
 - [ ] Implement automated integration tests (`TEST-OPEN-01..04`, `TEST-SEC-01`).
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-03-1`: Setting opening balance of 10000.00 THB returns 200 OK and updates balance (`TEST-OPEN-01`).
-- [ ] `AC-03-2`: Negative opening balance rejected with 400 Bad Request (`TEST-OPEN-03`).
-- [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 (`TEST-OPEN-04`).
+- [ ] `AC-03-2`: Negative, non-numeric, or invalid decimal balance rejected with 400 Bad Request (`INVALID_OPENING_BALANCE`) (`TEST-OPEN-03`).
+- [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).
 - [ ] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 
 ---
