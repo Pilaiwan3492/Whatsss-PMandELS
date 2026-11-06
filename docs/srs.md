@@ -59,7 +59,7 @@ The system defines two authenticated user roles and recognizes one unauthenticat
   * *Receive Money:* Inflow into Cash, with allocation lines distributed across Income, debt borrowings, loan repayments received, or cash transfers.
 * **Transaction Date Support:** Every transaction includes a user-specified transaction date.
 * **Balance & Financial Reporting:** Real-time computed account balances, outstanding debt balances, and true income/expense summaries excluding transfers and repayments.
-* **Product Enhancements (Later Sprints):** User custom account creation, single-action internal cash transfers, peer lending (`Loan Given`), general borrowing (`Loan Taken`), favorite transactions, transaction duplication, search and filtering, category spending distributions, and platform user administration.
+* **Product Enhancements (Later Sprints):** User custom account creation, single-action internal cash transfers, peer lending (`Loan Given`), general borrowing (`Loan Taken`), favorite transactions, transaction duplication, search and filtering, category spending distributions, platform user administration, and audited correction history with archival lifecycle (`FR-21`).
 
 ### 3.2 Out-of-Scope Capabilities (Explicit Exclusions)
 * Automatic bank feed integrations and real banking APIs.
@@ -104,6 +104,7 @@ Requirements are partitioned into **Sprint 1 Core Requirements** (the verified G
 | **`FR-18`** | **Transaction Search & Filtering** | The system shall allow users to search and filter transactions by date range, account, and category. | Sprint 2 |
 | **`FR-19`** | **Transaction Corrections** | The system shall allow users to correct or adjust previously recorded transactions. | Sprint 2 |
 | **`FR-20`** | **Category Spending Reports** | The system shall compute and display detailed category-wise spending distributions and analytics over selectable periods. | Sprint 3 |
+| **`FR-21`** | **Audited Correction History & Archival** | The system shall maintain an immutable audit history of modified transactions and support soft-delete archival lifecycle (Approved Team Scope Addition). | Sprint 3 |
 
 ---
 

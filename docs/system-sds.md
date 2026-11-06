@@ -125,11 +125,51 @@ erDiagram
     }
 ```
 
-### Data Dictionary & Constraints
-1. **User Table:** Holds authentication credentials and system role. Plaintext passwords are strictly forbidden (`NFR-SEC-01`).
-2. **Account Table:** Scoped to `user_id`. `type` is an enum of the five Theme 7 types. `opening_balance` defaults to `0.00`. `is_opening_locked` becomes `true` atomically when the first referencing transaction is committed (`BR-02`).
-3. **Transaction Table:** Represents the financial event header. `total_amount` must be positive (> 0.00). Includes `transaction_date` and references the primary account.
-4. **AllocationLine Table:** Represents individual split lines. Foreign key points to `transaction_id` (CASCADE delete) and `target_account_id`.
+### Data Dictionary, Database Constraints & Multi-Tenant Invariants
+
+1. **User Table (`users`):**
+   * `id`: UUID (Primary Key, default `gen_random_uuid()`).
+   * `username`: VARCHAR(50) (NOT NULL, UNIQUE, case-insensitive index).
+   * `password_hash`: VARCHAR(255) (NOT NULL, salted one-way hash generated with bcrypt, work factor $\ge 10$, `NFR-SEC-01`).
+   * `role`: ENUM(`'USER'`, `'ADMIN'`) (NOT NULL, default `'USER'`).
+   * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
+
+2. **Account Table (`accounts`):**
+   * `id`: UUID (Primary Key, default `gen_random_uuid()`).
+   * `user_id`: UUID (NOT NULL, Foreign Key references `users(id)` ON DELETE CASCADE).
+   * `name`: VARCHAR(100) (NOT NULL).
+   * `type`: ENUM(`'CASH'`, `'LOAN_TAKEN'`, `'LOAN_GIVEN'`, `'INCOME'`, `'EXPENSE'`) (NOT NULL).
+   * `opening_balance`: DECIMAL(12, 2) (NOT NULL, default `0.00`, CHECK `opening_balance >= 0.00`).
+   * `is_opening_locked`: BOOLEAN (NOT NULL, default `false`).
+   * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
+   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
+   * **Constraints & Indexes:** `UNIQUE(user_id, name)`, `INDEX(user_id)`.
+
+3. **Transaction Table (`transactions`):**
+   * `id`: UUID (Primary Key, default `gen_random_uuid()`).
+   * `user_id`: UUID (NOT NULL, Foreign Key references `users(id)` ON DELETE CASCADE).
+   * `primary_account_id`: UUID (NOT NULL, Foreign Key references `accounts(id)` ON DELETE RESTRICT).
+   * `form`: ENUM(`'PAYMENT_CHARGE'`, `'RECEIVE_MONEY'`) (NOT NULL).
+   * `total_amount`: DECIMAL(12, 2) (NOT NULL, CHECK `total_amount > 0.00`).
+   * `transaction_date`: DATE (NOT NULL).
+   * `description`: VARCHAR(255) (NULLABLE).
+   * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
+   * **Constraints & Indexes:** `INDEX(user_id, transaction_date)`.
+
+4. **AllocationLine Table (`allocation_lines`):**
+   * `id`: UUID (Primary Key, default `gen_random_uuid()`).
+   * `transaction_id`: UUID (NOT NULL, Foreign Key references `transactions(id)` ON DELETE CASCADE).
+   * `target_account_id`: UUID (NOT NULL, Foreign Key references `accounts(id)` ON DELETE RESTRICT).
+   * `amount`: DECIMAL(12, 2) (NOT NULL, CHECK `amount > 0.00`).
+   * `notes`: VARCHAR(255) (NULLABLE).
+   * **Constraints & Indexes:** `INDEX(transaction_id)`, `INDEX(target_account_id)`.
+
+5. **Relational Invariants, Atomicity & Concurrency Controls:**
+   * **Transactional Atomicity (`prisma.$transaction`):** The creation of a `Transaction` header, all associated `AllocationLine` items, and the atomic locking of referenced opening balances are unconditionally executed inside a single database transaction. If any validation fails (e.g., allocation sum mismatch, unowned target account), the transaction aborts and rolls back completely; zero partial records are ever committed.
+   * **Cross-Tenant Ownership Scoping on Target Accounts:** In addition to validating `primary_account.user_id === req.user.id`, the backend must explicitly verify that **every** `target_account_id` referenced in the allocation lines belongs to `req.user.id`. Any attempt to reference another tenant's account as a target account is rejected immediately with HTTP `404 Not Found` (resource existence concealment per `BR-01`).
+   * **Concurrency-Safe Opening Balance Locking:** Opening balance updates (`PATCH /api/accounts/:id/opening-balance`) are permitted only while `is_opening_locked = false`. When the first referencing transaction commits, the account is locked atomically using a conditional update:
+     $$\text{UPDATE accounts SET is\_opening\_locked = true WHERE id = \$id AND is\_opening\_locked = false}$$
+     Rejected or rolled-back transactions never lock the account. Future transaction adjustments or edits (Sprint 2) never unlock or modify the recorded opening balance. Concurrent transaction submissions against an unlocked account are serialized by PostgreSQL row-level locks, ensuring exactly-once transition to the locked state.
 
 ---
 
@@ -150,16 +190,38 @@ flowchart LR
     end
 ```
 
-In the Whatsss ledger domain, every financial transaction consists of a header referencing a primary account (source for outflows/charges, destination for inflows) and one or more `AllocationLine` records referencing target accounts:
-* **Income Transaction:** Destines to Cash account (Bank), with 1 allocation line referencing Income (`Salary`).
-* **Credit Card Expense:** Charges Loan Taken account (Credit Card), with split allocation lines referencing Expense accounts (`Dining`, `Grocery`).
-* **Debt Repayment:** Deducts Cash account (Bank), with 1 allocation line targeting the credit card debt account (`Loan Taken`). This reduces cash balance and debt balance simultaneously while keeping the repayment excluded from expense summaries per `BR-08`.
+### Ledger Transaction Semantics & Accounting Effects Matrix
 
-### Balance Invariants:
-* **Cash Balance:** $\text{Opening Balance} + \sum \text{Cash Inflows} - \sum \text{Cash Outflows}$
-* **Loan Taken Debt:** $\text{Opening Balance} + \sum \text{Charges} - \sum \text{Repayments}$
-* **Income Summary:** $\sum \text{Allocations to Income accounts}$ (Excludes transfers and debt operations)
-* **Expense Summary:** $\sum \text{Allocations to Expense accounts}$ (Excludes transfers and debt repayments per `BR-08`)
+Every financial event in Whatsss is recorded using the `Transaction` header and child `AllocationLine` items. The ledger strictly validates allowed account-type pairings and computes balances based on double-entry principles adapted for personal finance:
+
+| Transaction Type | Transaction Form | Primary Account (`primary_account_id`) | Allocation Account (`target_account_id`) | Accounting & Ledger Invariant Effect |
+|---|---|---|---|---|
+| **Income Transaction** | `RECEIVE_MONEY` | Must be `CASH` (e.g. Bank Account) | Must be `INCOME` (e.g. Salary) | **`CASH` Balance increases** ($+ \text{amount}$)<br>**`Income` Summary increases** ($+ \text{amount}$)<br>Debt and Expenses are unaffected. |
+| **Credit Card Purchase** | `PAYMENT_CHARGE` | Must be `LOAN_TAKEN` (Credit Card) | Must be `EXPENSE` (e.g. Dining, Grocery) | **`LOAN_TAKEN` Debt increases** ($+ \text{amount}$)<br>**`Expense` Summary increases** ($+ \sum \text{allocations}$)<br>Cash balance is unaffected. |
+| **Debt Repayment** | `PAYMENT_CHARGE` | Must be `CASH` (Bank Account) | Must be `LOAN_TAKEN` (Credit Card) | **`CASH` Balance decreases** ($- \text{amount}$)<br>**`LOAN_TAKEN` Debt decreases (Liability Settlement)** ($- \text{amount}$)<br>**Zero effect on Expense Summary** (`BR-08`). |
+
+### Balance Calculation Engine Invariants
+
+All account balances and financial summaries are computed deterministically from persisted records:
+
+1. **Cash Account Balance (Asset):**
+   $$\text{Cash Balance} = \text{opening\_balance} + \sum \text{Inflows (RECEIVE\_MONEY to Cash)} - \sum \text{Outflows (PAYMENT\_CHARGE from Cash)}$$
+   *For the Golden Journey:* Bank Account = $10,000.00 \text{ (Opening)} + 20,000.00 \text{ (Salary Inflow)} - 3,000.00 \text{ (Repayment Outflow)} = 27,000.00 \text{ THB}$.
+
+2. **Loan Taken Outstanding Debt (Liability):**
+   $$\text{Debt Balance} = \text{opening\_balance} + \sum \text{Charges (PAYMENT\_CHARGE on Loan Taken)} - \sum \text{Settlements (Allocations targeting Loan Taken)}$$
+   *Crucial Accounting Rule:* When a Debt Repayment transaction is executed, the allocation line targets the `Loan Taken` account. In liability ledger evaluation, allocations targeting `Loan Taken` represent **debt reduction**, directly decrementing outstanding debt.
+   *For the Golden Journey:* Credit Card Debt = $0.00 \text{ (Opening)} + 3,000.00 \text{ (Purchase Charge)} - 3,000.00 \text{ (Repayment Settlement)} = 0.00 \text{ THB}$.
+
+3. **Income Summary:**
+   $$\text{Total Income} = \sum \text{AllocationLine.amount where target\_account.type == 'INCOME'}$$
+   *(Transfers, opening balances, and debt inflows are excluded per `BR-02`).*  
+   *For the Golden Journey:* Total Income = $20,000.00 \text{ THB}$ (Salary).
+
+4. **Expense Summary:**
+   $$\text{Total Expense} = \sum \text{AllocationLine.amount where target\_account.type == 'EXPENSE'}$$
+   *(Debt repayments, transfers, and opening balances are strictly excluded per `BR-02` and `BR-08`).*  
+   *For the Golden Journey:* Total Expense = $1,000.00 \text{ (Dining)} + 2,000.00 \text{ (Grocery)} = 3,000.00 \text{ THB}$.
 
 ---
 
@@ -202,23 +264,44 @@ All error responses adhere to a consistent error schema:
 
 ---
 
-## 7. Authentication and Authorization (Unified HttpOnly Cookie Approach)
+## 7. Authentication, Authorization & Security Architecture (Unified HttpOnly Cookie Approach)
 
-To ensure robust security and avoid token handling inconsistencies, the application standardizes exclusively on **HttpOnly Cookies**:
+To ensure robust security, avoid token leakage, and eliminate token storage inconsistencies between client and server, the application standardizes exclusively on **HttpOnly Cookies** and a strict middleware pipeline:
 
-1. **Token Transport:**
-   * Upon successful login (`POST /api/auth/login`), the server issues a signed JWT containing `userId` and `role`.
-   * The token is set in an `HttpOnly`, `SameSite=Lax`, `Path=/` cookie named `token`. In production (`NODE_ENV === 'production'`), the `Secure` flag is enabled; in local HTTP development, `Secure` is omitted so the cookie persists over local HTTP.
-   * The JWT is **never returned in the JSON response body** and is **never stored in `localStorage` or `sessionStorage`** on the client.
-2. **Session Identification:**
-   * Browser requests include the cookie automatically with credentials.
-   * `GET /api/auth/me` validates the cookie and returns the user's public profile and role.
-3. **Session Termination:**
-   * `POST /api/auth/logout` clears the authentication cookie by returning an expired cookie (`Max-Age=0`) with matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production). Subsequent requests to protected endpoints return `401 Unauthorized`.
-4. **Backend Authorization Guards:**
-   * **`AuthGuard`:** Intercepts incoming requests, verifies cookie JWT, and attaches `req.user`.
-   * **`RoleGuard`:** Verifies whether `req.user.role` is authorized (rejects ADMIN access to financial routes with `403 Forbidden`).
-   * **`Tenant Filter`:** Financial domain queries unconditionally enforce `userId: req.user.id` (returns `404 Not Found` on mismatch).
+1. **Token Transport & Attributes:**
+   * Upon successful login (`POST /api/auth/login`), the server signs a JWT containing payload `{ "id": user.id, "username": user.username, "role": user.role }` signed with `JWT_SECRET` and set with expiration `JWT_EXPIRES_IN` (default `1d`).
+   * The token is set in an `HttpOnly`, `SameSite=Lax`, `Path=/` cookie named `token`.
+   * **Production vs Development Secure Flag:** In production (`NODE_ENV === 'production'`), the `Secure` flag is enforced (requires HTTPS); in local development (`NODE_ENV !== 'production'`), `Secure` is omitted so the cookie persists over local HTTP (`http://localhost:5173`).
+   * **Zero Body/Storage Leakage:** The JWT is **never returned in the JSON response body** and **never stored in `localStorage` or `sessionStorage`** on the client, neutralizing token exfiltration via Cross-Site Scripting (XSS).
+
+2. **CORS & Credentials Configuration:**
+   * The Express API uses the `cors` package configured with `origin: process.env.CLIENT_URL || 'http://localhost:5173'` and `credentials: true`.
+   * Wildcard origins (`*`) are strictly prohibited, ensuring that credentials cannot be accessed from unauthorized origins.
+
+3. **CSRF Mitigation Architecture:**
+   * **`SameSite=Lax` Cookie Policy:** Browsers automatically block cookie inclusion on cross-site subrequests (such as `fetch`/`XMLHttpRequest` from external domains).
+   * **Custom Content-Type Enforcement:** All mutating endpoints require `Content-Type: application/json`. Standard HTML form submissions (`application/x-www-form-urlencoded` or `multipart/form-data`) are rejected by Express body parsers, preventing cross-site form POST attacks.
+   * **CORS Preflight (OPTIONS):** Cross-origin requests trigger CORS preflight checks that reject unauthorized origins before any mutating handler executes.
+
+4. **Session Identification & Verification:**
+   * Browser requests include the cookie automatically when the client configures `axios` or `fetch` with `credentials: 'include'`.
+   * `GET /api/auth/me` validates the cookie JWT and returns the user's public profile and verified role (`FR-02`).
+
+5. **Session Termination with Matching Attributes:**
+   * `POST /api/auth/logout` clears the authentication cookie by returning an expired cookie (`Max-Age=0`) with exact matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production). Subsequent requests to protected endpoints return `401 Unauthorized` (`FR-01`).
+
+6. **Sequential Middleware Pipeline Order:**
+   Every HTTP request flows through a deterministic sequence of middleware layers:
+   ```mermaid
+   flowchart TD
+       Req["Incoming HTTP Request"] --> M1["1. CORS Middleware (Origin check & credentials: true)"]
+       M1 --> M2["2. Express JSON Parser (Content-Type: application/json)"]
+       M2 --> M3["3. CookieParser (Parse Cookie header into req.cookies)"]
+       M3 --> M4["4. AuthGuard (Verify JWT cookie -> attach req.user | 401 Unauthorized)"]
+       M4 --> M5["5. RoleGuard (Verify req.user.role -> reject ADMIN on financial routes with 403 Forbidden)"]
+       M5 --> M6["6. Tenant Scoping (Inject userId: req.user.id into primary & target accounts | 404 Not Found)"]
+       M6 --> Handler["Domain Controller & Service (prisma.$transaction)"]
+   ```
 
 ---
 
@@ -243,6 +326,7 @@ All runtime configuration is managed through externalized environment variables 
 | Variable | Description | Example Placeholder Value |
 |---|---|---|
 | `PORT` | Backend HTTP service port | `5000` |
+| `CLIENT_URL` | Allowed frontend origin for CORS | `http://localhost:5173` |
 | `NODE_ENV` | Runtime environment | `development` |
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/whatsss_db?schema=public` |
 | `JWT_SECRET` | Secret key for signing session tokens | `replace_with_a_long_random_secret_for_local_development` |

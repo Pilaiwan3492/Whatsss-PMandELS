@@ -32,7 +32,7 @@
 | `TEST-AUTH-03` | `AC-01-3` | `server/tests/integration/auth.test.ts` | Pending Execution | Pending Execution |
 | `TEST-AUTH-04` | `AC-01-4` | `server/tests/unit/password.test.ts` | Pending Execution | Pending Execution |
 | `TEST-AUTH-05` | `AC-01-5` | `server/tests/integration/auth.test.ts` | Pending Execution | Pending Execution |
-| `TEST-SEC-01` | `AC-02-4` | `server/tests/integration/access.test.ts` | Pending Execution | Pending Execution |
+| `TEST-SEC-01` | `AC-02-3` | `server/tests/integration/access.test.ts` | Pending Execution | Pending Execution |
 | `TEST-SEC-02` | `AC-02-1` | `server/tests/integration/access.test.ts` | Pending Execution | Pending Execution |
 | `TEST-SEC-03` | `AC-02-2` | `server/tests/integration/access.test.ts` | Pending Execution | Pending Execution |
 | `TEST-OPEN-01` | `AC-03-1` | `server/tests/integration/account.test.ts` | Pending Execution | Pending Execution |
@@ -43,6 +43,8 @@
 | `TEST-ALLOC-02`| `AC-06-2` | `server/tests/unit/allocation.test.ts` | Pending Execution | Pending Execution |
 | `TEST-REPAY-01`| `AC-07-1` | `server/tests/integration/transaction.test.ts` | Pending Execution | Pending Execution |
 | `TEST-REPAY-02`| `AC-07-2` | `server/tests/integration/summary.test.ts` | Pending Execution | Pending Execution |
+| `TEST-REPAY-03`| `AC-07-4` | `server/tests/unit/repayment.test.ts` | Pending Execution | Pending Execution |
+| `TEST-REPAY-04`| `AC-07-5` | `server/tests/unit/repayment.test.ts` | Pending Execution | Pending Execution |
 | `TEST-BAL-01` | `AC-08-1` | `server/tests/unit/balance.test.ts` | Pending Execution | Pending Execution |
 | `TEST-HIST-01` | `AC-09-1` | `server/tests/integration/transaction.test.ts` | Pending Execution | Pending Execution |
 | `TEST-PERSIST-01`| `AC-09-2`| `server/tests/integration/persistence.test.ts` | Pending Execution | Pending Execution |

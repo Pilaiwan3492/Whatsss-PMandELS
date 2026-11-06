@@ -66,25 +66,27 @@ Whatsss-PMandELS/
 ├── docs/                              # Engineering Deliverable Documentation
 │   ├── deliverable-1-header.md        # Deliverable 1 Preamble & Navigation Index
 │   ├── srs.md                         # Part A: Software Requirements Specification
-│   ├── features.md                    # Part B: Feature Inventory (F-01..F-18)
+│   ├── features.md                    # Part B: Feature Inventory (F-01..F-19)
 │   ├── traceability.md                # Part B: Requirements-to-Feature-to-Sprint Matrix
 │   ├── system-sds.md                  # Part C: System-Level Software Design Specification
 │   ├── decision-log.md                # Architecture & Engineering Decision Records
 │   ├── contribution-log.md            # Dual-student contribution and review log
 │   ├── ai-use-declaration.md          # Section 8.4 AI Usage Declaration
-│   └── sprints/
-│       ├── plan.md                    # Part D: Three-Sprint Product Roadmap
-│       └── sprint-1/
-│           ├── scope.md               # Sprint 1 Frozen Scope Agreement
-│           ├── issue-backlog.md       # Sprint 1 Implementation Backlog (6 Work Packages)
-│           ├── feature-contracts.md   # Part E: Feature SDS & API Contracts (F-01..F-09)
-│           ├── test-data.md           # Seed Data & Environment Setup Specification
-│           ├── test-specification.md  # Software Test Specification (STS)
-│           ├── dod.md                 # Product Definition of Done
-│           └── evidence-index.md      # Part F: Test logs, commit evidence & results
-├── client/                            # [Sprint 1 Frontend] React + Vite + TypeScript
-└── server/                            # [Sprint 1 Backend] Express + TypeScript + Prisma
+│   ├── sprints/
+│   │   ├── plan.md                    # Part D: Three-Sprint Product Roadmap
+│   │   └── sprint-1/
+│   │       ├── scope.md               # Sprint 1 Frozen Scope Agreement
+│   │       ├── issue-backlog.md       # Sprint 1 Implementation Backlog (6 Work Packages)
+│   │       ├── feature-contracts.md   # Part E: Feature SDS & API Contracts (F-01..F-09)
+│   │       ├── test-data.md           # Seed Data & Environment Setup Specification
+│   │       ├── test-specification.md  # Software Test Specification (STS)
+│   │       ├── dod.md                 # Product Definition of Done
+│   │       └── evidence-index.md      # Part F: Test logs, commit evidence & results
+├── client/                            # [Sprint 1 Frontend] Target React + Vite + TypeScript workspace
+└── server/                            # [Sprint 1 Backend] Target Express + TypeScript + Prisma workspace
 ```
+
+> **Baseline Architecture Note:** This PR (#1) establishes the authoritative deliverable documentation, configuration templates, and target workspace architecture. Implementation code for `server/` and `client/` will be constructed and verified sequentially across the 6 planned Work Packages (`WP-01` through `WP-06`) branching from `sprint-1`.
 
 ---
 

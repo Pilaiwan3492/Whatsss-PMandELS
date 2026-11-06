@@ -22,8 +22,8 @@ This document provides end-to-end traceability across all baseline Functional Re
 |---|---|---|:---:|---|
 | **`FR-01`** | User login and session termination (logout) | `F-01` | **Sprint 1** | Automated API Integration (`TEST-AUTH-01`, `TEST-AUTH-05`) |
 | **`FR-02`** | Current user identity and role resolution | `F-01` | **Sprint 1** | Automated API Integration (`TEST-AUTH-03`) |
-| **`FR-03`** | Platform user directory inspection | *Unassigned (Pending Sprint 2 Backlog definition)* | Sprint 2 | Planned Sprint 2 Contract |
-| **`FR-04`** | Platform user status governance | *Unassigned (Pending Sprint 2 Backlog definition)* | Sprint 2 | Planned Sprint 2 Contract |
+| **`FR-03`** | Platform user directory inspection | `F-19` | Sprint 2 | Planned Sprint 2 Contract |
+| **`FR-04`** | Platform user status governance | `F-19` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-05`** | Opening balance recording on eligible accounts | `F-03` | **Sprint 1** | Automated Integration (`TEST-OPEN-01`, `TEST-OPEN-02`) |
 | **`FR-06`** | Income transaction processing with date | `F-04` | **Sprint 1** | Automated Integration (`TEST-INC-01`) |
 | **`FR-07`** | Credit card purchase recording with date | `F-05`, `F-06` | **Sprint 1** | Automated Integration (`TEST-EXP-01`) |
@@ -40,8 +40,9 @@ This document provides end-to-end traceability across all baseline Functional Re
 | **`FR-18`** | Transaction search and multi-criteria filtering | `F-15` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-19`** | Transaction corrections and adjustments | `F-16` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-20`** | Category spending distribution reports | `F-17` | Sprint 3 | Planned Sprint 3 Contract |
+| **`FR-21`** | Audited correction history & archival | `F-18` | Sprint 3 | Planned Sprint 3 Contract (Approved Scope Addition) |
 
-> **Traceability Note on FR-03 and FR-04:** Feature mapping for administrative user management (`FR-03` Platform user directory and `FR-04` User access governance) is deliberately left unassigned in Sprint 1 to prevent conflation with `F-02` (which is dedicated exclusively to Sprint 1 Authorization & Privacy Isolation). Dedicated administrative feature definitions and verification contracts will be formally defined during Sprint 2 Product Backlog refinement before overall traceability for later sprints is finalized.
+> **Traceability Note on FR-03, FR-04, and FR-21:** `FR-03` and `FR-04` are planned for Sprint 2 under dedicated feature `F-19: Platform User Directory & Governance`, maintaining architectural separation from Sprint 1 authorization and privacy controls (`F-02`). `FR-21` is an approved team scope addition providing transaction audit trails and soft-delete lifecycle under Sprint 3 feature `F-18: Audited Correction History & Archival`.
 
 ---
 
@@ -64,8 +65,8 @@ This document provides end-to-end traceability across all baseline Functional Re
 
 ### 2.3 Non-Functional Requirements Traceability
 
-| NFR ID | Target Characteristic | Implementing Component / Feature | Planned Sprint | Verification Method |
+| NFR ID | Target Characteristic | Implementing Component / Feature Architecture | Planned Sprint | Verification Method |
 |---|---|---|:---:|---|
-| **`NFR-SEC-01`** | Password hashing (Salted one-way hash) | Auth Service (`F-01`) | **Sprint 1** | Direct schema and password verification test (`TEST-AUTH-04`) |
-| **`NFR-SEC-02`** | Backend boundary & tenancy enforcement | AuthGuard & RoleGuard (`F-02`) | **Sprint 1** | Automated API tests asserting rejection & zero data leak (`TEST-SEC-01..03`) |
-| **`NFR-DATA-01`** | Data persistence & durability across server restarts | PostgreSQL & Prisma ORM (`F-03..F-09`) | **Sprint 1** | Automated database persistence test across server process restart (`TEST-PERSIST-01`) |
+| **`NFR-SEC-01`** | Password hashing (Salted one-way hash) | Auth Service (`F-01`) | **Sprint 1** | Direct schema and password verification test inspecting bcrypt hashes (`TEST-AUTH-04`) |
+| **`NFR-SEC-02`** | Backend boundary & tenancy enforcement | AuthGuard & RoleGuard Middleware (`F-02`) | **Sprint 1** | Automated API tests asserting rejection & zero data leak (`TEST-SEC-01..03`) |
+| **`NFR-DATA-01`** | Data persistence & durability across server restarts | Shared Relational Ledger Infrastructure (PostgreSQL 16 & Prisma ORM backing `F-03` Opening Balance, `F-04` Income, `F-05` Expense, `F-06` Allocation, `F-07` Repayment, `F-08` Balance Calculation, and `F-09` History) | **Sprint 1** | Automated database persistence test verifying all committed records and calculated balances remain identical after backend server process restart (`TEST-PERSIST-01`) |

@@ -14,7 +14,7 @@ This document establishes the authoritative Feature Inventory for Whatsss. Each 
 
 Features are partitioned into:
 1. **Sprint 1 Core Features (`F-01` to `F-09`):** The foundational Golden Domain Journey slice implemented and verified in Deliverable 1.
-2. **Later Sprints Product Backlog (`F-10` to `F-18`):** Remaining features required to fulfill the full Theme 7 product specification, allocated across Sprints 2 and 3.
+2. **Later Sprints Product Backlog (`F-10` to `F-19`):** Remaining features required to fulfill the full Theme 7 product specification and approved team scope additions, allocated across Sprints 2 and 3.
 
 ---
 
@@ -39,7 +39,8 @@ Features are partitioned into:
 | **`F-15`** | **Transaction Search & Filtering** | `USER` | Sprint 2 | Required (Theme 7) | Query transactions by date ranges, account, category, and transaction form. |
 | **`F-16`** | **Transaction Corrections** | `USER` | Sprint 2 | Required (Theme 7) | Update and correct erroneous transaction entries while preserving ledger integrity. |
 | **`F-17`** | **Category Spending Summaries & Reports** | `USER` | Sprint 3 | Required (Theme 7) | In-depth analytics, category spending breakdowns, and period financial summaries. |
-| **`F-18`** | **Audited Correction History & Archival** | `USER` | Sprint 3 | Team Decision | Historical audit trail for corrected transactions and account soft-delete lifecycle. |
+| **`F-18`** | **Audited Correction History & Archival** | `USER` | Sprint 3 | Team Decision (Approved Scope Addition) | Historical audit trail for corrected transactions and account soft-delete lifecycle (`FR-21`). |
+| **`F-19`** | **Platform User Directory & Governance** | `ADMIN` | Sprint 2 | Required (Admin Governance) | Administrator inspection of registered platform user accounts (`FR-03`) and access status governance (`FR-04`). |
 
 ---
 

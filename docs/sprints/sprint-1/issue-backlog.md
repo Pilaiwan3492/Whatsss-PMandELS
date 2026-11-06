@@ -39,7 +39,7 @@ As a user or platform administrator, I want to authenticate securely and have th
 - [ ] Implement `User` model in Prisma schema (`id`, `username`, `email`, `password_hash`, `role`, `is_active`).
 - [ ] Implement `POST /api/auth/login` with bcrypt password verification and signed JWT set in an HttpOnly, SameSite=Lax cookie with conditional Secure flag in production (no token in body).
 - [ ] Implement `GET /api/auth/me` returning current user profile and role from cookie credentials.
-- [ ] Implement `POST /api/auth/logout` clearing session cookie with matching Path=/ and Max-Age=0.
+- [ ] Implement `POST /api/auth/logout` clearing session cookie with matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production) and `Max-Age=0`.
 - [ ] Implement `AuthGuard` middleware rejecting unauthenticated requests with HTTP 401 (`BR-09`).
 - [ ] Implement `RoleGuard` middleware rejecting ADMIN access to financial routes with HTTP 403 (`BR-10`).
 - [ ] Implement tenant scoping ensuring user requests access only own records (`BR-01`).
@@ -53,7 +53,7 @@ As a user or platform administrator, I want to authenticate securely and have th
 - [ ] `AC-01-5`: Calling logout clears cookie and subsequent protected call returns 401 (`TEST-AUTH-05`, `FR-01`).
 - [ ] `AC-02-1`: Missing/invalid cookie returns 401 Unauthorized (`TEST-SEC-02`, `BR-09`).
 - [ ] `AC-02-2`: ADMIN calling financial endpoints returns 403 Forbidden with zero data leak (`TEST-SEC-03`, `BR-10`).
-- [ ] `AC-02-4`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
+- [ ] `AC-02-3`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
 
 ---
 
@@ -158,12 +158,17 @@ As an authenticated user, I want to record repayment of my credit card debt from
 - [ ] Implement `POST /api/transactions/repayment` endpoint accepting funding cash account, destination loan taken account, amount, and date.
 - [ ] Record transaction (Transaction 3 of Golden Journey) with 1 allocation line targeting the credit card account (`Loan Taken`).
 - [ ] Atomically decrease cash balance by 3000.00 and decrease debt balance by 3000.00 (`BR-07`).
+- [ ] Enforce repayment boundary validations: reject repayment amount exceeding outstanding debt with HTTP 422 (`REPAYMENT_EXCEEDS_DEBT`), reject insufficient funds with HTTP 422 (`INSUFFICIENT_FUNDS`), and reject non-positive amounts with HTTP 400 (`INVALID_AMOUNT`).
 - [ ] Ensure repayment allocation is classified under Loan Taken and excluded from expense summaries (`BR-08`).
-- [ ] Implement automated integration tests (`TEST-REPAY-01..02`).
+- [ ] Implement automated integration and boundary tests (`TEST-REPAY-01..04`).
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-07-1`: Repayment of 3000.00 THB returns 201 Created, creates 1 allocation line targeting Loan Taken, decreases bank balance to 27000.00, and decreases debt to 0.00 (`TEST-REPAY-01`).
 - [ ] `AC-07-2`: Expense summary verified unchanged at 3000.00 THB (`TEST-REPAY-02`, `BR-08`).
+- [ ] `AC-07-3`: Partial repayment strictly less than debt reduces debt proportionally.
+- [ ] `AC-07-4`: Repayment amount strictly exceeding outstanding debt returns 422 Unprocessable Entity (`TEST-REPAY-03`).
+- [ ] `AC-07-5`: Repayment amount exceeding available bank funds returns 422 Unprocessable Entity (`TEST-REPAY-04`).
+- [ ] `AC-07-6`: Non-positive repayment amount returns 400 Bad Request.
 
 ---
 

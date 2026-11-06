@@ -15,7 +15,7 @@ The Whatsss development lifecycle is organized into three balanced sprints desig
 ```mermaid
 flowchart LR
     S1["Sprint 1: Foundational Golden Slice\n(Deliverable 1 — 8 Nov)\nF-01 to F-09\nAuth, Boundaries, Persistence, Golden Journey"] --> 
-    S2["Sprint 2: Core Expansion Slice\n(Deliverable 2 — 29 Nov)\nF-10 to F-16\nAccounts, Transfers, Loans, Search, Reversal, User Admin"] --> 
+    S2["Sprint 2: Core Expansion Slice\n(Deliverable 2 — 29 Nov)\nF-10 to F-16, F-19\nAccounts, Transfers, Loans, Search, Reversal, User Admin"] --> 
     S3["Sprint 3: Hardening & Analytics\n(Final Delivery — 13 Dec)\nF-17 to F-18\nCategory Analytics, Archival, Final QA"]
 ```
 
@@ -50,7 +50,7 @@ flowchart LR
   * `F-14`: Favorite & Duplicate Transactions (Transaction shortcuts)
   * `F-15`: Transaction Search & Filtering (Date and category query engine)
   * `F-16`: Transaction Corrections (Adjusting past entries safely)
-  * Platform user directory inspection (`FR-03`) and user access status governance (`FR-04`).
+  * `F-19`: Platform User Directory & Governance (Admin directory `FR-03` and access status governance `FR-04`)
 * **Checkpoint Deliverable:** Integrated release candidate on `main`, continuous regression test suite, and Deliverable 2 PDF report.
 
 ---
@@ -58,8 +58,8 @@ flowchart LR
 ### 2.3 Sprint 3: Completion, Hardening & Analytics (Final Delivery Checkpoint: 13 Dec 2026)
 * **Strategic Goal:** Harden the application against defects, complete analytical reporting, verify cross-team UAT resolutions, and prepare release documentation and demonstration video.
 * **Included Features:**
-  * `F-17`: Category Spending Summaries & Reports (In-depth distribution analytics)
-  * `F-18`: Audited Correction History & Archival (Soft-delete lifecycle)
+  * `F-17`: Category Spending Summaries & Reports (In-depth distribution analytics `FR-20`)
+  * `F-18`: Audited Correction History & Archival (Soft-delete lifecycle and audit trail `FR-21`)
 * **Checkpoint Deliverable:** Fully verified release on `main`, passing regression suite, under-10-minute presentation video, and Final PDF report.
 
 ---

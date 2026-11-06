@@ -37,6 +37,9 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-01-3`: Calling `GET /api/auth/me` with valid session cookie returns `200 OK` and current user identity and role (`TEST-AUTH-03`).
   * `AC-01-4`: Passwords stored in database are cryptographically hashed using salted one-way hashing (`TEST-AUTH-04`, `NFR-SEC-01`).
   * `AC-01-5`: Calling `POST /api/auth/logout` clears session cookie with matching attributes; subsequent protected calls return `401 Unauthorized` (`TEST-AUTH-05`, `FR-01`).
+* **UI Behavior:**
+  * Login view displays username and password inputs with client-side non-empty validation. Submit button disables during submission and shows a loading state. On HTTP 200, user state updates in React Auth Context and navigates to the financial dashboard (`/dashboard`). On HTTP 401, a clear error banner displays "Invalid username or password".
+  * Navigation bar contains user identity pill (`USER` / `ADMIN`) and a prominent "Logout" button. Clicking Logout triggers `POST /api/auth/logout`, clears client auth state, and redirects to `/login`.
 * **API Specifications:**
   * `POST /api/auth/login`: Body: `{ "username": "...", "password": "..." }` $\rightarrow$ `200 OK` `{ "success": true, "data": { "user": { "id": "...", "username": "...", "role": "..." } } }` (Sets Header: `Set-Cookie: token=...; HttpOnly; SameSite=Lax; Path=/` with conditional `Secure` in production) or `401 Unauthorized`
   * `GET /api/auth/me`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "user": { "id": "...", "username": "...", "role": "..." } } }`
@@ -52,10 +55,13 @@ This document establishes the binding engineering contracts for all nine Sprint 
   1. `AuthGuard` checks for valid session cookie; returns `401 Unauthorized` if absent or expired (`BR-09`).
   2. If an `ADMIN` requests any financial endpoint (`/api/accounts/*`, `/api/transactions/*`, `/api/reports/*`), server intercepts and rejects with `403 Forbidden` (`BR-10`).
   3. If a `USER` requests another user's financial record by ID, database query scopes to `userId: req.user.id` and returns `404 Not Found` (`BR-01`).
+* **UI Behavior:**
+  * Client router (`react-router`) evaluates authenticated status on route changes. Unauthenticated access to `/dashboard` redirects to `/login`.
+  * For users authenticated as `ADMIN`, all financial UI elements (Accounts list, Record Transaction buttons, Financial Summary widgets) are hidden from the navigation bar. If an administrator manually enters `/dashboard` or financial URLs, the application displays a dedicated "Access Restricted: Platform Administrators have zero access to user personal ledgers" screen.
 * **Acceptance Criteria:**
   * `AC-02-1`: Unauthenticated requests to protected endpoints return `401 Unauthorized` (`TEST-SEC-02`, `BR-09`).
   * `AC-02-2`: ADMIN requests to financial endpoints return `403 Forbidden` with zero sensitive payload leakage (`TEST-SEC-03`, `BR-10`).
-  * `AC-02-4`: USER requests attempting to read or modify another user's financial record return `404 Not Found` (`TEST-SEC-01`, `BR-01`).
+  * `AC-02-3`: USER requests attempting to read or modify another user's financial record return `404 Not Found` (`TEST-SEC-01`, `BR-01`).
 
 ---
 
@@ -71,6 +77,10 @@ This document establishes the binding engineering contracts for all nine Sprint 
   3. Server updates `opening_balance`.
   4. Balance calculation engine incorporates opening balance into account balance without counting it as income or expense (`BR-02`).
   5. Once a transaction referencing the account commits, server atomically sets `is_opening_locked = true`. If a transaction fails or rolls back, the lock is not applied.
+* **UI Behavior:**
+  * Account Card in Accounts view shows "Set Opening Balance" button when `is_opening_locked = false`.
+  * Clicking button opens modal with a currency-formatted numeric input (`0.00`).
+  * If `is_opening_locked = true`, button is replaced by a disabled lock badge with tooltip: "Opening balance is locked permanently following first transaction".
 * **Acceptance Criteria:**
   * `AC-03-1`: Submitting valid opening balance (e.g., `10000.00 THB`) on unlocked account returns `200 OK` and updates balance (`TEST-OPEN-01`).
   * `AC-03-2`: Submitting negative amount or non-numeric balance returns `400 Bad Request`.
@@ -90,6 +100,9 @@ This document establishes the binding engineering contracts for all nine Sprint 
   2. Server verifies account ownership and validates positive amount.
   3. In a database transaction, server creates `Transaction` (Transaction 1 of Golden Journey) and 1 linked `AllocationLine` targeting `Salary` account.
   4. System updates receiving bank balance and locks opening balance of bank account atomically.
+* **UI Behavior:**
+  * User clicks "Record Income" in dashboard action bar. Modal opens with fields: Destination Cash Account (dropdown defaulted to Checking Bank), Amount (numeric), Date (date picker defaulted to current date), Description (text), and Income Category (dropdown defaulted to Salary).
+  * Form requires all fields; submit button disables and displays loading indicator during submission. On 201 Created, modal closes, bank balance updates in UI state, and transaction list prepends the new record. On error, a descriptive error message displays inline.
 * **Acceptance Criteria:**
   * `AC-04-1`: Recording salary of 20000.00 THB on date 2026-11-06 returns 201 Created and increases bank balance by 20000.00 (`TEST-INC-01`, `BR-03`).
   * `AC-04-2`: Submitting income transaction with invalid/missing date or non-positive amount returns `400 Bad Request`.
@@ -106,6 +119,9 @@ This document establishes the binding engineering contracts for all nine Sprint 
   1. User submits purchase transaction charged to credit card account with total amount, transaction date, and expense allocations.
   2. Server verifies total amount is positive and creates the transaction (Transaction 2 of Golden Journey).
   3. System increases credit card debt balance by the total amount (`BR-04`).
+* **UI Behavior:**
+  * User clicks "Record Credit Card Purchase" button. Modal presents form with Primary Account selector (defaults to Credit Card), Transaction Date, Description, and Total Amount field.
+  * Form integrates with the Multiple Allocations component (`F-06`). On successful submit, modal closes, Credit Card debt card updates immediately, and transaction table updates.
 * **Acceptance Criteria:**
   * `AC-05-1`: Submitting valid credit card purchase returns `201 Created` and increases credit card debt balance (`TEST-EXP-01`, `BR-04`).
   * `AC-05-2`: Omitting credit card primary account ID returns `400 Bad Request`.
@@ -121,6 +137,11 @@ This document establishes the binding engineering contracts for all nine Sprint 
   2. Server computes $\sum \text{allocations.amount}$.
   3. If sum equals `total_amount` (`3000.00`), transaction succeeds and creates both allocation lines (`BR-05`, `BR-06`).
   4. If sum does not equal `total_amount`, server rolls back and rejects with `422 Unprocessable Entity` (`BR-06`).
+* **UI Behavior:**
+  * Inside the Expense Form, an "Allocations Breakdown" table allows dynamic addition/removal of allocation rows (`+ Add Split Line`).
+  * Each row includes Category Account dropdown (e.g., Dining, Grocery), Amount input, and Notes.
+  * Live client-side calculation calculates $\text{Remaining to Allocate} = \text{Total Amount} - \sum \text{Row Amounts}$.
+  * If $\text{Remaining to Allocate} \neq 0.00$, a warning badge displays in amber and the Submit button is disabled. If an unbalanced request reaches the server, the server returns 422 and an inline alert displays "Allocations sum does not match total amount".
 * **Acceptance Criteria:**
   * `AC-06-1`: Multi-line allocation where sum equals total amount (e.g., `1000 + 2000 = 3000`) returns `201 Created` and creates both allocation lines (`TEST-ALLOC-01`, `BR-05`).
   * `AC-06-2`: Multi-line allocation where sum does not equal total amount (e.g., `1000 + 1500 != 3000`) returns `422 Unprocessable Entity` with error code `ALLOCATION_SUM_MISMATCH` (`TEST-ALLOC-02`, `BR-06`).
@@ -154,11 +175,19 @@ This document establishes the binding engineering contracts for all nine Sprint 
   3. Server records transaction (Transaction 3) with 1 allocation line targeting the credit card account.
   4. Server atomically decreases bank balance by `3000.00` and decreases credit card debt by `3000.00` (`BR-07`).
   5. Server ensures repayment is excluded from expense summaries (`BR-08`).
+* **UI Behavior:**
+  * Credit Card Account Card presents a dedicated "Pay Credit Card" button.
+  * Clicking opens modal displaying Current Outstanding Debt (e.g., `3,000.00 THB`) with "Pay in Full" quick-fill button, Funding Bank selector (displaying available balance), Repayment Amount input, and Transaction Date picker.
+  * Client validation displays warning if amount exceeds debt or available bank funds. On 201 Created, modal closes, Credit Card debt badge transitions to `0.00 THB`, and Bank balance updates to `27,000.00 THB`.
 * **Acceptance Criteria:**
-  * `AC-07-1`: Submitting valid repayment (e.g., `3000.00 THB`) returns `201 Created`, creates 1 allocation line targeting `Loan Taken`, decreases bank balance by `3000.00`, and decreases credit debt by `3000.00` (`TEST-REPAY-01`, `BR-07`).
+  * `AC-07-1`: Submitting valid repayment equal to debt (e.g., `3000.00 THB`) returns `201 Created`, creates 1 allocation line targeting `Loan Taken`, decreases bank balance to `27000.00`, and decreases credit debt to `0.00` (`TEST-REPAY-01`, `BR-07`).
   * `AC-07-2`: Verified that financial expense summary does not increase after repayment (`TEST-REPAY-02`, `BR-08`).
+  * `AC-07-3`: Submitting partial repayment strictly less than debt (e.g., `1500.00 THB` against `3000.00 THB` debt) returns `201 Created` and reduces debt to `1500.00 THB`.
+  * `AC-07-4`: Submitting repayment amount strictly exceeding outstanding debt returns `422 Unprocessable Entity` with error code `REPAYMENT_EXCEEDS_DEBT`.
+  * `AC-07-5`: Submitting repayment when source bank balance is insufficient returns `422 Unprocessable Entity` with error code `INSUFFICIENT_FUNDS`.
+  * `AC-07-6`: Submitting non-positive repayment amount ($\le 0.00$) or non-numeric value returns `400 Bad Request` with error code `INVALID_AMOUNT`.
 * **API Specification:**
-  * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created`
+  * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created` or `422 Unprocessable Entity`
 
 ---
 
@@ -174,6 +203,9 @@ This document establishes the binding engineering contracts for all nine Sprint 
      * Total Income: $\text{Salary} = 20000$ (Excludes Opening Balance per `BR-02`)
      * Total Expense: $\text{Dining} + \text{Grocery} = 1000 + 2000 = 3000$ (Excludes Repayment per `BR-08`)
   3. Server returns computed figures with `200 OK`.
+* **UI Behavior:**
+  * Top of dashboard displays 4 Summary Metric Cards: "Checking Bank Balance", "Credit Card Debt", "Total Income", and "Total Expenses".
+  * Figures are formatted to 2 decimal places with currency symbol (`THB`). Cards show animated skeleton placeholders during data fetching and auto-refresh whenever an income, expense, or repayment mutation completes.
 * **Acceptance Criteria:**
   * `AC-08-1`: Calling summary endpoint returns exact deterministic figures matching the Golden Journey state: Bank = `27000.00`, Debt = `0.00`, Income = `20000.00`, Expense = `3000.00` (`TEST-BAL-01`, `FR-10`).
 * **API Specification:**
@@ -189,6 +221,9 @@ This document establishes the binding engineering contracts for all nine Sprint 
   1. Client sends `GET /api/transactions`.
   2. Server queries transactions belonging to `req.user.id` ordered by `transaction_date DESC`.
   3. Server returns exactly 3 transactions recorded across the Golden Journey (Salary [1 allocation], CC Purchase [2 allocations], CC Repayment [1 allocation]) totaling 4 allocation lines.
+* **UI Behavior:**
+  * Main dashboard lower pane renders a responsive Transaction History Table with columns: Date, Form / Type badge, Primary Account, Split Allocations (individual category tag pills with amounts), and Total Amount.
+  * Displays a clean empty-state placeholder ("No transactions recorded yet") prior to recording the first transaction. Table updates reactively upon creating transactions.
 * **Acceptance Criteria:**
   * `AC-09-1`: Calling endpoint returns `200 OK` with exactly 3 recorded transactions and 4 allocation lines total (`TEST-HIST-01`, `FR-11`).
   * `AC-09-2`: Data persists and is returned identically across backend server process restarts (`TEST-PERSIST-01`, `NFR-DATA-01`).
