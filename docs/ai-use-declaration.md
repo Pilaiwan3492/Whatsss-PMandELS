@@ -15,12 +15,12 @@
 
 ## 2. Actual AI Assistance Performed to Date (Repository Baseline Setup)
 
-| Engineering Activity | Actual AI Assistance to Date | Human Verification & Oversight Status | Status |
-|---|---|---|:---:|
-| **Repository Scaffolding & Configuration** | Assisted in drafting `README.md`, `.gitignore`, `.env.example`, `docker-compose.yml`, and `.github/` templates. | Both students inspected generated configuration files and verified paths locally. | [Pending Human Review] |
-| **Requirements Baseline Structuring (Part A)** | Formatted SRS document (`docs/srs.md`) ensuring separation between full product scope and Sprint 1 Golden Slice. | Students validated domain logic against Theme 7 brief and adjusted account/role boundaries. | [Pending Human Review] |
-| **Feature Inventory & Traceability (Part B)** | Structured `docs/features.md` and `docs/traceability.md` mapping requirements to features and sprints. | Students confirmed feature IDs (`F-01..F-19`) and verified that DevOps was excluded from product features. | [Pending Human Review] |
-| **Engineering Contracts & Test Specifications (Part E)** | Drafted `docs/sprints/sprint-1/feature-contracts.md`, `test-specification.md`, and `dod.md`. | Students calibrated acceptance criteria and test preconditions against the Golden Journey. | [Pending Human Review] |
+| Engineering Activity | Actual AI Assistance to Date | Human Oversight Action Performed | Pending Verification Required | Status |
+|---|---|---|---|:---:|
+| **Repository Scaffolding & Configuration** | Assisted in drafting `README.md`, `.gitignore`, `.env.example`, `docker-compose.yml`, and `.github/` templates. | Team initialized repository structure and aligned local paths with course directory guidelines. | Formal peer inspection of baseline configuration files on GitHub PR #1. | [Pending Peer Review] |
+| **Requirements Baseline Structuring (Part A)** | Formatted SRS document (`docs/srs.md`) ensuring structural separation between full product scope and Sprint 1 Golden Slice. | Team defined stakeholder context, validated Theme 7 domain rules, and set user/admin privacy boundaries. | Final student sign-off on frozen requirements baseline prior to PR #1 merge. | [Pending Peer Review] |
+| **Feature Inventory & Traceability (Part B & D)** | Structured `docs/features.md`, `docs/traceability.md`, and roadmap `docs/sprints/plan.md` mapping requirements to features. | Team reviewed feature allocations (`F-01..F-19`), approved scope addition `F-18` (`FR-21`), and assigned admin features `F-19` (`FR-03`, `FR-04`). | Teammate peer verification of PR #1 traceability matrix on GitHub. | [Pending Peer Review] |
+| **Engineering Contracts & Test Specifications (Part E)** | Drafted `feature-contracts.md`, `test-specification.md`, and `dod.md` specifying API schemas, UI behaviors, and test matrices. | Team calibrated double-entry accounting rules, repayment boundary conditions, and test fixtures (`TEST-REPAY-03..04`). | Substantive peer review approval of PR #1 contracts prior to beginning implementation work packages. | [Pending Peer Review] |
 
 ---
 

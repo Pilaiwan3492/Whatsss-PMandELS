@@ -300,6 +300,11 @@ To ensure robust security, avoid token leakage, and eliminate token storage inco
    * **`SameSite=Lax` Cookie Policy:** Browsers automatically block cookie inclusion on cross-site subrequests (such as `fetch`/`XMLHttpRequest` from external domains).
    * **Custom Content-Type Enforcement:** All mutating endpoints require `Content-Type: application/json`. Standard HTML form submissions (`application/x-www-form-urlencoded` or `multipart/form-data`) are rejected by Express body parsers, preventing cross-site form POST attacks.
    * **CORS Preflight (OPTIONS):** Cross-origin requests trigger CORS preflight checks that reject unauthorized origins before any mutating handler executes.
+   * **Strict State-Changing Origin & Referer Validation:** For all state-changing HTTP requests (`POST`, `PUT`, `PATCH`, `DELETE`), backend middleware enforces strict origin verification:
+     * **Exact Origin Validation:** Compares the request `Origin` header against `process.env.CLIENT_URL` (scheme, hostname, and port must match identically; substring or partial string matching is strictly forbidden).
+     * **Referer Fallback Validation:** If the `Origin` header is absent, the middleware falls back to extracting and validating the origin component of the `Referer` header against `CLIENT_URL`.
+     * **HTTP 403 Rejection:** Requests with missing, malformed, or untrusted `Origin`/`Referer` values are unconditionally rejected with HTTP `403 Forbidden` (`CSRF_ORIGIN_REJECTED`).
+     * **Safe Method Exemption:** Safe and idempotent methods (`GET`, `HEAD`, `OPTIONS`) are exempt from origin rejection, ensuring standard read navigation and CORS preflight negotiations function normally.
 
 4. **Session Identification & Verification:**
    * Browser requests include the cookie automatically when the client configures `axios` or `fetch` with `credentials: 'include'`.
@@ -313,12 +318,13 @@ To ensure robust security, avoid token leakage, and eliminate token storage inco
    ```mermaid
    flowchart TD
        Req["Incoming HTTP Request"] --> M1["1. CORS Middleware (Origin check & credentials: true)"]
-       M1 --> M2["2. Express JSON Parser (Content-Type: application/json)"]
-       M2 --> M3["3. CookieParser (Parse Cookie header into req.cookies)"]
-       M3 --> M4["4. AuthGuard (Verify JWT cookie -> attach req.user | 401 Unauthorized)"]
-       M4 --> M5["5. RoleGuard (Verify req.user.role -> reject ADMIN on financial routes with 403 Forbidden)"]
-       M5 --> M6["6. Tenant Scoping (Inject userId: req.user.id into primary & target accounts | 404 Not Found)"]
-       M6 --> Handler["Domain Controller & Service (prisma.$transaction)"]
+       M1 --> M2["2. CSRF Validation (Origin/Referer check on POST/PUT/PATCH/DELETE | 403 Forbidden)"]
+       M2 --> M3["3. Express JSON Parser (Content-Type: application/json)"]
+       M3 --> M4["4. CookieParser (Parse Cookie header into req.cookies)"]
+       M4 --> M5["5. AuthGuard (Verify JWT cookie -> attach req.user | 401 Unauthorized)"]
+       M5 --> M6["6. RoleGuard (Verify req.user.role -> reject ADMIN on financial routes with 403 Forbidden)"]
+       M6 --> M7["7. Tenant Scoping (Inject userId: req.user.id into primary & target accounts | 404 Not Found)"]
+       M7 --> Handler["8. Domain Controller & Service (prisma.$transaction)"]
    ```
 
 ---
