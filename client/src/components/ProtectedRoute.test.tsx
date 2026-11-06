@@ -11,8 +11,7 @@ describe('Frontend AuthProvider Lifecycle & Route Protection Suite (Section 2.4 
   });
 
   it('verifies AuthProvider lifecycle for USER: queries /api/auth/me and grants access to /dashboard', async () => {
-    // Mock /api/auth/me returning valid USER profile
-    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+    const authMeSpy = vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/auth/me') {
         return {
           data: {
@@ -47,12 +46,13 @@ describe('Frontend AuthProvider Lifecycle & Route Protection Suite (Section 2.4 
       expect(screen.getByText('Welcome, user_demo!')).toBeDefined();
     });
 
+    expect(authMeSpy).toHaveBeenCalledTimes(1);
+    expect(authMeSpy).toHaveBeenCalledWith('/auth/me');
     expect(screen.getAllByText('USER').length).toBeGreaterThan(0);
   });
 
   it('verifies AuthProvider lifecycle for ADMIN: intercepts /dashboard and redirects to /access-denied', async () => {
-    // Mock /api/auth/me returning ADMIN profile
-    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+    const authMeSpy = vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/auth/me') {
         return {
           data: {
@@ -84,13 +84,14 @@ describe('Frontend AuthProvider Lifecycle & Route Protection Suite (Section 2.4 
       expect(screen.getByText(/Access Forbidden/i)).toBeDefined();
     });
 
+    expect(authMeSpy).toHaveBeenCalledTimes(1);
+    expect(authMeSpy).toHaveBeenCalledWith('/auth/me');
     expect(screen.getByText(/Security Policy \(BR-10\)/i)).toBeDefined();
     expect(screen.getAllByText('ADMIN').length).toBeGreaterThan(0);
   });
 
   it('verifies AuthProvider lifecycle for Unauthenticated: redirects /dashboard to /login', async () => {
-    // Mock /api/auth/me rejecting with 401
-    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+    const authMeSpy = vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/auth/me') {
         const error: any = new Error('Unauthorized');
         error.response = { status: 401, data: { success: false, error: { code: 'UNAUTHORIZED' } } };
@@ -111,13 +112,16 @@ describe('Frontend AuthProvider Lifecycle & Route Protection Suite (Section 2.4 
     await waitFor(() => {
       expect(screen.getByText('Sign In to Whatsss')).toBeDefined();
     });
+
+    expect(authMeSpy).toHaveBeenCalledTimes(1);
+    expect(authMeSpy).toHaveBeenCalledWith('/auth/me');
   });
 
-  it('verifies full page refresh lifecycle: remounting AuthProvider re-evaluates server session state', async () => {
+  it('verifies full page refresh lifecycle: remounting AuthProvider re-evaluates server session state with explicit call count', async () => {
     let sessionActive = true;
 
-    // Dynamic mock simulating active session on first load, revoked on reload
-    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+    // Spy on axiosClient.get to verify exact call sequence and counts across remounts
+    const authMeSpy = vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/auth/me') {
         if (sessionActive) {
           return {
@@ -142,7 +146,7 @@ describe('Frontend AuthProvider Lifecycle & Route Protection Suite (Section 2.4 
       throw new Error(`Unhandled url: ${url}`);
     });
 
-    // 1. Initial Page Load
+    // 1. Initial Page Load with valid session
     const { unmount } = render(
       <MemoryRouter initialEntries={['/dashboard']}>
         <AuthProvider>
@@ -151,15 +155,22 @@ describe('Frontend AuthProvider Lifecycle & Route Protection Suite (Section 2.4 
       </MemoryRouter>
     );
 
+    // 2. Verify dashboard is accessible on initial mount
     await waitFor(() => {
       expect(screen.getByText('Welcome, user_demo!')).toBeDefined();
     });
 
-    // 2. Simulate Session Invalidation on backend and Page Refresh / Remount
+    // 3. Verify exactly one call to /api/auth/me was made during initial mount
+    expect(authMeSpy).toHaveBeenCalledTimes(1);
+    expect(authMeSpy).toHaveBeenNthCalledWith(1, '/auth/me');
+
+    // 4. Simulate session invalidation on server
     sessionActive = false;
+
+    // 5. Unmount the entire application tree (simulating browser reload / navigation away)
     unmount();
 
-    // 3. Remount application from scratch (simulating browser reload)
+    // 6. Mount a brand new AuthProvider and application instance from scratch
     render(
       <MemoryRouter initialEntries={['/dashboard']}>
         <AuthProvider>
@@ -168,9 +179,19 @@ describe('Frontend AuthProvider Lifecycle & Route Protection Suite (Section 2.4 
       </MemoryRouter>
     );
 
-    // The remounted AuthProvider re-queries /api/auth/me, detects session revocation, and redirects to login
+    // 7. Verify /api/auth/me was called a second time by the newly mounted AuthProvider
+    await waitFor(() => {
+      expect(authMeSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(authMeSpy).toHaveBeenNthCalledWith(2, '/auth/me');
+
+    // 8. Verify the application handles HTTP 401 from second request and redirects to login
     await waitFor(() => {
       expect(screen.getByText('Sign In to Whatsss')).toBeDefined();
     });
+
+    // 9. Verify protected dashboard content is completely removed and no longer visible in DOM
+    expect(screen.queryByText('Welcome, user_demo!')).toBeNull();
+    expect(screen.queryByText('Sprint 1 Golden Slice Dashboard')).toBeNull();
   });
 });

@@ -2,40 +2,81 @@ import { Request, Response, NextFunction } from 'express';
 
 /**
  * Endpoints that strictly require a JSON request payload.
- * As additional domain entities are added in future work packages (WP-02..06),
- * mutating endpoints requiring payloads are registered here or automatically
- * detected via incoming payload presence.
+ * Evaluated without query strings and normalized to lower-case path.
  */
-const JSON_BODY_ENDPOINTS = [
+const JSON_BODY_REQUIRED_ENDPOINTS = [
   '/api/auth/login',
   '/login'
 ];
 
-export function isJsonBodyRequired(path: string): boolean {
-  return JSON_BODY_ENDPOINTS.some(endpoint => path.endsWith(endpoint) || path === endpoint);
+/**
+ * Normalizes request path by stripping query parameters and trailing slashes.
+ */
+export function normalizeRequestPath(req: Request): string {
+  const rawPath = req.originalUrl || req.path || '';
+  return rawPath.split('?')[0].replace(/\/+$/, '').toLowerCase();
 }
 
+/**
+ * Determines whether the given route strictly requires a JSON request body.
+ */
+export function isJsonBodyRequired(req: Request): boolean {
+  const method = req.method.toUpperCase();
+  if (!['POST', 'PUT', 'PATCH'].includes(method)) {
+    return false;
+  }
+
+  const normalizedPath = normalizeRequestPath(req);
+  return JSON_BODY_REQUIRED_ENDPOINTS.some(
+    endpoint => normalizedPath === endpoint || normalizedPath.endsWith(endpoint)
+  );
+}
+
+/**
+ * Determines whether the incoming request transmits a message body payload.
+ */
+export function requestHasBody(req: Request): boolean {
+  const contentLength = req.headers['content-length'];
+  if (contentLength !== undefined) {
+    const parsedLength = parseInt(contentLength, 10);
+    if (!isNaN(parsedLength) && parsedLength > 0) {
+      return true;
+    }
+  }
+
+  if (req.headers['transfer-encoding']) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Content-Type validation middleware.
+ * Enforces exact 'application/json' media type on endpoints and requests that require or contain
+ * JSON bodies, while permitting bodyless mutating endpoints (e.g. POST /api/auth/logout) to proceed.
+ */
 export function requireJsonContentType(req: Request, res: Response, next: NextFunction): void {
-  // Safe methods do not mutate data
-  if (!['POST', 'PUT', 'PATCH'].includes(req.method)) {
+  // Safe methods (GET, HEAD, OPTIONS) do not transmit or validate mutating bodies
+  if (!['POST', 'PUT', 'PATCH'].includes(req.method.toUpperCase())) {
     return next();
   }
 
-  const path = req.originalUrl ? req.originalUrl.split('?')[0] : req.path;
+  const normalizedPath = normalizeRequestPath(req);
 
-  // Bodyless endpoints are explicitly exempt (e.g. POST /api/auth/logout)
-  if (path.endsWith('/logout')) {
+  // Bodyless endpoints are explicitly exempt from body requirements (e.g. POST /api/auth/logout)
+  if (normalizedPath.endsWith('/logout')) {
     return next();
   }
 
   const rawContentType = req.headers['content-type'];
-  const contentLength = req.headers['content-length'];
-  const hasBody = (contentLength && parseInt(contentLength, 10) > 0) || Boolean(req.headers['transfer-encoding']);
-  const requiresJson = isJsonBodyRequired(path) || hasBody;
+  const hasContentType = Boolean(rawContentType && rawContentType.trim() !== '');
+  const endpointRequiresJson = isJsonBodyRequired(req);
+  const carriesPayload = requestHasBody(req);
 
-  // If a Content-Type is provided, it must be exact application/json
-  if (rawContentType && rawContentType.trim() !== '') {
-    const mediaType = rawContentType.split(';')[0].trim().toLowerCase();
+  // Case A & C: If a Content-Type is provided, it must strictly be application/json
+  if (hasContentType) {
+    const mediaType = rawContentType!.split(';')[0].trim().toLowerCase();
     if (mediaType !== 'application/json') {
       res.status(400).json({
         success: false,
@@ -49,8 +90,8 @@ export function requireJsonContentType(req: Request, res: Response, next: NextFu
     return next();
   }
 
-  // If no Content-Type was sent, reject only if endpoint requires a JSON body or carries payload
-  if (requiresJson) {
+  // Case A & C: Missing Content-Type when the endpoint requires a JSON body or carries a payload
+  if (endpointRequiresJson || carriesPayload) {
     res.status(400).json({
       success: false,
       error: {
@@ -61,6 +102,6 @@ export function requireJsonContentType(req: Request, res: Response, next: NextFu
     return;
   }
 
-  // Bodyless mutating request to an endpoint not requiring a body proceeds
+  // Case B: Endpoint does not require a body and request transmits no body -> proceed
   next();
 }

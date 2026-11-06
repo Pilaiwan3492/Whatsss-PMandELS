@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
+import { config } from '../../src/config/env.js';
 import { findMockUser, DEMO_PASSWORD } from '../fixtures/mockPrisma.js';
 
 vi.mock('../../src/prisma.js', () => {
@@ -27,8 +29,18 @@ import { app } from '../../src/app.js';
 
 const TRUSTED_ORIGIN = 'http://localhost:5173';
 
+function createAuthCookie(userId: string, username: string, role: 'USER' | 'ADMIN'): string {
+  const token = jwt.sign(
+    { userId, username, role },
+    config.jwtSecret,
+    { expiresIn: config.jwtExpiresIn as any }
+  );
+  return `token=${token}; Path=/; HttpOnly; SameSite=Lax`;
+}
+
 describe('System API Contract: Content-Type Validation and JSON Body Parsing (TEST-SEC-06)', () => {
   const loginEndpoint = '/api/auth/login';
+  const userCookie = createAuthCookie('user-a-uuid', 'user_demo', 'USER');
 
   it('Condition 1: Missing Content-Type header on mutating JSON endpoint returns 400 INVALID_CONTENT_TYPE', async () => {
     const res = await request(app)
@@ -153,5 +165,38 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
     expect(logoutRes.status).toBe(200);
     expect(logoutRes.body.success).toBe(true);
     expect(logoutRes.body.data.message).toBe('Logged out successfully');
+  });
+
+  it('Condition 7: JSON-required request with query string handles path normalization accurately', async () => {
+    const res = await request(app)
+      .post(`${loginEndpoint}?ref=navbar&mode=quick`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .send('{"username":"user_demo","password":"Password123!"}')
+      .unset('Content-Type');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_CONTENT_TYPE');
+  });
+
+  it('Condition 8: Bodyless mutating request to an endpoint that does not require JSON proceeds without Content-Type', async () => {
+    // DELETE /api/accounts/:id is a mutating request that does not require a request body
+    const res = await request(app)
+      .delete('/api/accounts/acc-user-a')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', userCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.message).toBe('Account deleted successfully');
+  });
+
+  it('Condition 9: CORS preflight OPTIONS request remains unaffected and terminates with 204', async () => {
+    const res = await request(app)
+      .options(loginEndpoint)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST');
+
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe(TRUSTED_ORIGIN);
   });
 });
