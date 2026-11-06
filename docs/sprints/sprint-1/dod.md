@@ -33,10 +33,10 @@ A feature or release candidate is declared **DONE** only when all of the followi
 ### 2.2 Relational Data Persistence & Durability
 - [ ] Data models adhere to PostgreSQL schema via Prisma ORM with strict relational constraints.
 - [ ] Deterministic seed script (`npx prisma db seed`) executes cleanly and idempotently.
-- [ ] Data persists and remains verifiable across database reconnects / application restarts (`NFR-DATA-01`).
+- [ ] Data persists and remains verifiable across backend server process restarts (`NFR-DATA-01`).
 
 ### 2.3 Automated Testing & TDD Evidence
-- [ ] All planned automated test cases (`TEST-AUTH-01..04`, `TEST-SEC-01..03`, `TEST-ADMIN-01`, `TEST-OPEN-01..02`, `TEST-INC-01`, `TEST-EXP-01`, `TEST-ALLOC-01..02`, `TEST-REPAY-01..02`, `TEST-BAL-01`, `TEST-HIST-01`, `TEST-PERSIST-01`, `TEST-E2E-01`) pass with zero failures and zero skipped tests.
+- [ ] All planned automated test cases (`TEST-AUTH-01..05`, `TEST-SEC-01..03`, `TEST-OPEN-01..02`, `TEST-INC-01`, `TEST-EXP-01`, `TEST-ALLOC-01..02`, `TEST-REPAY-01..02`, `TEST-BAL-01`, `TEST-HIST-01`, `TEST-PERSIST-01`, `TEST-E2E-01`) pass with zero failures and zero skipped tests.
 - [ ] Meaningful negative and boundary tests are executed (e.g., allocation sum mismatch, unauthenticated access, admin financial intrusion).
 - [ ] TDD red/green commit history or test excerpt evidence is preserved for core rule validation (`BR-06`).
 

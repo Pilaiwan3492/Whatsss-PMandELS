@@ -10,8 +10,8 @@
 
 | Contributor | Actual Contributions Performed to Date | Concrete Evidence |
 |---|---|---|
-| **Pilaiwan Churdchu** | Defined project baseline scope, authored core requirements (`docs/srs.md`), structured domain account model, and established Feature Inventory (`docs/features.md`). | Commits `8b9722a`, `1d5f2b3`, PR #1 (`docs/sprint-1-baseline`) |
-| **Aphichaya Klinhual** | Reviewed and refined security boundaries (Admin barrier, tenancy protection), authored traceability matrix (`docs/traceability.md`), and calibrated Sprint 1 Feature Contracts (`docs/sprints/sprint-1/feature-contracts.md`). | Commits `8b9722a`, `1d5f2b3`, PR #1 (`docs/sprint-1-baseline`) |
+| **Pilaiwan Churdchu** | Defined project baseline scope, authored core requirements (`docs/srs.md`), structured domain account model, and established Feature Inventory (`docs/features.md`). | Commits `8b9722a`, `1d5f2b3`, `8cc9c39`, PR #1 (`docs/sprint-1-baseline`) |
+| **Aphichaya Klinhual** | Reviewed and refined security boundaries (Admin barrier, tenancy protection), authored traceability matrix (`docs/traceability.md`), and calibrated Sprint 1 Feature Contracts (`docs/sprints/sprint-1/feature-contracts.md`). | Commits `8b9722a`, `1d5f2b3`, `8cc9c39`, PR #1 (`docs/sprint-1-baseline`) |
 
 ---
 

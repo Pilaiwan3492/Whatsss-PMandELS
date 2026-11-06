@@ -17,8 +17,8 @@ The following test suite maps each Acceptance Criteria (`AC-XX`) to an executabl
 | **`TEST-AUTH-01`** | `AC-01-1` | `F-01` | Integration | Seeded user submits correct username and password to `/api/auth/login`. | HTTP `200 OK`, signed HttpOnly session cookie set. |
 | **`TEST-AUTH-02`** | `AC-01-2` | `F-01` | Integration | Submitting invalid password or nonexistent username to `/api/auth/login`. | HTTP `401 Unauthorized`, error code `INVALID_CREDENTIALS`. |
 | **`TEST-AUTH-03`** | `AC-01-3` | `F-01` | Integration | Submitting valid session cookie to `GET /api/auth/me`. | HTTP `200 OK`, profile returned with correct `role`. |
-| **`TEST-AUTH-04`** | `AC-01-1`, `NFR-SEC-01` | `F-01` | Unit / DB | Inspecting stored password column for seeded test users in PostgreSQL. | Passwords match bcrypt hash format; zero plaintext found. |
-| **`TEST-AUTH-05`** | `AC-01-4`, `FR-01` | `F-01` | Integration | Submitting valid session cookie to `POST /api/auth/logout`. | HTTP `200 OK`, cookie cleared (`Max-Age=0`), subsequent protected call returns `401 Unauthorized`. |
+| **`TEST-AUTH-04`** | `AC-01-4`, `NFR-SEC-01` | `F-01` | Unit / DB | Inspecting stored password column for seeded test users in PostgreSQL. | Passwords match bcrypt hash format; zero plaintext found. |
+| **`TEST-AUTH-05`** | `AC-01-5`, `FR-01` | `F-01` | Integration | Submitting valid session cookie to `POST /api/auth/logout`. | HTTP `200 OK`, cookie cleared (`Max-Age=0`), subsequent protected call returns `401 Unauthorized`. |
 | **`TEST-SEC-01`** | `AC-02-4`, `BR-01` | `F-02` | Integration | `user_demo` submits request for `user_other`'s account ID. | HTTP `404 Not Found` (resource existence concealed). |
 | **`TEST-SEC-02`** | `AC-02-1`, `BR-09` | `F-02` | Integration | Unauthenticated request sent to `/api/transactions` or `/api/accounts`. | HTTP `401 Unauthorized`. |
 | **`TEST-SEC-03`** | `AC-02-2`, `BR-10` | `F-02` | Integration | `admin_demo` submits request to `/api/reports/summary` or `/api/transactions`. | HTTP `403 Forbidden`, zero financial payload returned. |
@@ -28,7 +28,7 @@ The following test suite maps each Acceptance Criteria (`AC-XX`) to an executabl
 | **`TEST-EXP-01`** | `AC-05-1`, `BR-04` | `F-05` | Integration | Record CC purchase of `3000.00 THB` with date `2026-11-06`. | HTTP `201 Created` (Txn 2), CC Debt increases by `3000.00`. |
 | **`TEST-ALLOC-01`** | `AC-06-1`, `BR-05` | `F-06` | Integration | Submit split purchase: Dining `1000.00` + Grocery `2000.00` (Total `3000.00`). | HTTP `201 Created`, two allocation lines created in database. |
 | **`TEST-ALLOC-02`** | `AC-06-2`, `BR-06` | `F-06` | Unit / API | Submit split purchase with unbalanced allocations (`1000 + 1500 != 3000`). | HTTP `422 Unprocessable Entity`, transaction rejected and rolled back. |
-| **`TEST-REPAY-01`** | `AC-07-1`, `BR-07` | `F-07` | Integration | Submit CC repayment of `3000.00 THB` from Bank to Credit Card. | HTTP `201 Created` (Txn 3), Bank = `27000.00`, CC Debt = `0.00`. |
+| **`TEST-REPAY-01`** | `AC-07-1`, `BR-07` | `F-07` | Integration | Submit CC repayment of `3000.00 THB` from Bank to Credit Card. | HTTP `201 Created` (Txn 3 with 1 allocation line targeting `Loan Taken`), Bank = `27000.00`, CC Debt = `0.00`. |
 | **`TEST-REPAY-02`** | `AC-07-2`, `BR-08` | `F-07` | Integration | Query `GET /api/reports/summary` after repayment. | Expense Summary remains `3000.00` (Repayment strictly excluded). |
 | **`TEST-BAL-01`** | `AC-08-1` | `F-08` | Unit | Execute balance calculator service against the Golden Journey events. | Final balances: Bank `27000.00`, CC Debt `0.00`, Income `20000.00`, Expense `3000.00`. |
 | **`TEST-HIST-01`** | `AC-09-1` | `F-09` | Integration | Query `GET /api/transactions` for `user_demo`. | HTTP `200 OK`, returns exactly 3 transactions and 4 allocation lines total. |

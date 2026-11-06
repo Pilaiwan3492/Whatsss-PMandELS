@@ -30,8 +30,8 @@
 | `TEST-AUTH-01` | `AC-01-1` | `server/tests/integration/auth.test.ts` | Pending Execution | Pending Execution |
 | `TEST-AUTH-02` | `AC-01-2` | `server/tests/integration/auth.test.ts` | Pending Execution | Pending Execution |
 | `TEST-AUTH-03` | `AC-01-3` | `server/tests/integration/auth.test.ts` | Pending Execution | Pending Execution |
-| `TEST-AUTH-04` | `AC-01-1` | `server/tests/unit/password.test.ts` | Pending Execution | Pending Execution |
-| `TEST-AUTH-05` | `AC-01-4` | `server/tests/integration/auth.test.ts` | Pending Execution | Pending Execution |
+| `TEST-AUTH-04` | `AC-01-4` | `server/tests/unit/password.test.ts` | Pending Execution | Pending Execution |
+| `TEST-AUTH-05` | `AC-01-5` | `server/tests/integration/auth.test.ts` | Pending Execution | Pending Execution |
 | `TEST-SEC-01` | `AC-02-4` | `server/tests/integration/access.test.ts` | Pending Execution | Pending Execution |
 | `TEST-SEC-02` | `AC-02-1` | `server/tests/integration/access.test.ts` | Pending Execution | Pending Execution |
 | `TEST-SEC-03` | `AC-02-2` | `server/tests/integration/access.test.ts` | Pending Execution | Pending Execution |

@@ -37,9 +37,9 @@ As a user or platform administrator, I want to authenticate securely and have th
 #### Implementation Tasks
 - [ ] Initialize Express and TypeScript application structure with configuration loader.
 - [ ] Implement `User` model in Prisma schema (`id`, `username`, `email`, `password_hash`, `role`, `is_active`).
-- [ ] Implement `POST /api/auth/login` with bcrypt password verification and signed JWT set in an HttpOnly, SameSite=Lax cookie (no token in body).
+- [ ] Implement `POST /api/auth/login` with bcrypt password verification and signed JWT set in an HttpOnly, SameSite=Lax cookie with conditional Secure flag in production (no token in body).
 - [ ] Implement `GET /api/auth/me` returning current user profile and role from cookie credentials.
-- [ ] Implement `POST /api/auth/logout` clearing session cookie.
+- [ ] Implement `POST /api/auth/logout` clearing session cookie with matching Path=/ and Max-Age=0.
 - [ ] Implement `AuthGuard` middleware rejecting unauthenticated requests with HTTP 401 (`BR-09`).
 - [ ] Implement `RoleGuard` middleware rejecting ADMIN access to financial routes with HTTP 403 (`BR-10`).
 - [ ] Implement tenant scoping ensuring user requests access only own records (`BR-01`).
@@ -50,7 +50,7 @@ As a user or platform administrator, I want to authenticate securely and have th
 - [ ] `AC-01-2`: Invalid credentials return 401 Unauthorized (`TEST-AUTH-02`).
 - [ ] `AC-01-3`: `GET /api/auth/me` returns verified identity and role (`TEST-AUTH-03`).
 - [ ] `AC-01-4`: Passwords stored as salted one-way hashes (`TEST-AUTH-04`, `NFR-SEC-01`).
-- [ ] `AC-01-4`: Calling logout clears cookie and subsequent protected call returns 401 (`TEST-AUTH-05`).
+- [ ] `AC-01-5`: Calling logout clears cookie and subsequent protected call returns 401 (`TEST-AUTH-05`, `FR-01`).
 - [ ] `AC-02-1`: Missing/invalid cookie returns 401 Unauthorized (`TEST-SEC-02`, `BR-09`).
 - [ ] `AC-02-2`: ADMIN calling financial endpoints returns 403 Forbidden with zero data leak (`TEST-SEC-03`, `BR-10`).
 - [ ] `AC-02-4`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
@@ -83,7 +83,6 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 - [ ] `AC-03-2`: Negative opening balance rejected with 400 Bad Request.
 - [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422.
 - [ ] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
-- [ ] `AC-02-4`: Accessing another user's account returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
 
 ---
 
@@ -103,7 +102,7 @@ As an authenticated user, I want to record my received salary into my bank accou
 #### Implementation Tasks
 - [ ] Implement `Transaction` and `AllocationLine` models in Prisma schema.
 - [ ] Implement `POST /api/transactions/income` endpoint accepting destination cash account, amount, date, and income category account.
-- [ ] Enforce database transaction wrapping transaction insertion (Transaction 1 of Golden Journey), allocation line insertion, and atomic opening balance lock.
+- [ ] Enforce database transaction wrapping transaction insertion (Transaction 1 of Golden Journey), 1 allocation line targeting `Salary`, and atomic opening balance lock.
 - [ ] Verify cash account balance increases by the received amount (`BR-03`).
 - [ ] Implement automated integration tests (`TEST-INC-01`).
 
@@ -132,7 +131,7 @@ As an authenticated user, I want to record an expense charged to my credit card 
 - [ ] Implement `POST /api/transactions/expense` endpoint accepting credit card primary account, total amount, date, and allocation lines.
 - [ ] Implement split allocation validation engine: verify that sum of allocation lines strictly equals total amount (`BR-05`, `BR-06`).
 - [ ] Reject unbalanced allocation submissions with HTTP 422 Unprocessable Entity (`ALLOCATION_SUM_MISMATCH`).
-- [ ] Record purchase transaction (Transaction 2 of Golden Journey) and increase credit card debt balance (`BR-04`).
+- [ ] Record purchase transaction (Transaction 2 of Golden Journey) with 2 allocation lines (Dining 1000.00, Grocery 2000.00) and increase credit card debt balance (`BR-04`).
 - [ ] Implement unit and integration tests (`TEST-EXP-01`, `TEST-ALLOC-01..02`) including TDD evidence for allocation validation.
 
 #### Acceptance Criteria Checklist
@@ -157,14 +156,13 @@ As an authenticated user, I want to record repayment of my credit card debt from
 
 #### Implementation Tasks
 - [ ] Implement `POST /api/transactions/repayment` endpoint accepting funding cash account, destination loan taken account, amount, and date.
-- [ ] Enforce atomic update recording repayment (Transaction 3 of Golden Journey), decreasing cash balance and decreasing debt balance by identical amount (`BR-07`).
-- [ ] Ensure repayment transactions are classified as debt settlement and excluded from expense summaries (`BR-08`).
+- [ ] Record transaction (Transaction 3 of Golden Journey) with 1 allocation line targeting the credit card account (`Loan Taken`).
+- [ ] Atomically decrease cash balance by 3000.00 and decrease debt balance by 3000.00 (`BR-07`).
+- [ ] Ensure repayment allocation is classified under Loan Taken and excluded from expense summaries (`BR-08`).
 - [ ] Implement automated integration tests (`TEST-REPAY-01..02`).
 
 #### Acceptance Criteria Checklist
-- [ ] `AC-07-1`: Repayment of 3000.00 THB returns 201 Created (`TEST-REPAY-01`).
-- [ ] Bank balance decreases from 30000.00 THB to 27000.00 THB.
-- [ ] Credit card debt decreases from 3000.00 THB to 0.00 THB.
+- [ ] `AC-07-1`: Repayment of 3000.00 THB returns 201 Created, creates 1 allocation line targeting Loan Taken, decreases bank balance to 27000.00, and decreases debt to 0.00 (`TEST-REPAY-01`).
 - [ ] `AC-07-2`: Expense summary verified unchanged at 3000.00 THB (`TEST-REPAY-02`, `BR-08`).
 
 ---

@@ -137,19 +137,23 @@ erDiagram
 
 ```mermaid
 flowchart LR
-    subgraph Form1 ["Make Payment / Record Charge"]
+    subgraph Form1 ["Make Payment / Record Charge / Repay Debt"]
         SourceAcc["Primary Account\n(Cash or Loan Taken)"] -- "Deducts / Charges Total" --> Txn1["Transaction"]
         Txn1 -- "Allocates" --> Alloc1["Allocation 1 (Expense: Dining)"]
         Txn1 -- "Allocates" --> Alloc2["Allocation 2 (Expense: Grocery)"]
-        Txn1 -- "Allocates" --> Alloc3["Allocation 3 (Loan Repayment)"]
+        Txn1 -- "Allocates" --> Alloc3["Allocation Line\n(Target: Loan Taken / Repayment)"]
     end
 
     subgraph Form2 ["Receive Money"]
         Txn2["Transaction"] -- "Deposits Total" --> DestAcc["Primary Account\n(Cash / Bank)"]
-        Alloc4["Allocation 1 (Income: Salary)"] -- "Funds" --> Txn2
-        Alloc5["Allocation 2 (Borrowing / Transfer)"] -- "Funds" --> Txn2
+        Alloc4["Allocation Line (Target: Income: Salary)"] -- "Funds" --> Txn2
     end
 ```
+
+In the Whatsss ledger domain, every financial transaction consists of a header referencing a primary account (source for outflows/charges, destination for inflows) and one or more `AllocationLine` records referencing target accounts:
+* **Income Transaction:** Destines to Cash account (Bank), with 1 allocation line referencing Income (`Salary`).
+* **Credit Card Expense:** Charges Loan Taken account (Credit Card), with split allocation lines referencing Expense accounts (`Dining`, `Grocery`).
+* **Debt Repayment:** Deducts Cash account (Bank), with 1 allocation line targeting the credit card debt account (`Loan Taken`). This reduces cash balance and debt balance simultaneously while keeping the repayment excluded from expense summaries per `BR-08`.
 
 ### Balance Invariants:
 * **Cash Balance:** $\text{Opening Balance} + \sum \text{Cash Inflows} - \sum \text{Cash Outflows}$
@@ -204,7 +208,7 @@ To ensure robust security and avoid token handling inconsistencies, the applicat
 
 1. **Token Transport:**
    * Upon successful login (`POST /api/auth/login`), the server issues a signed JWT containing `userId` and `role`.
-   * The token is set in an `HttpOnly`, `SameSite=Lax`, `Path=/` secure cookie named `token`.
+   * The token is set in an `HttpOnly`, `SameSite=Lax`, `Path=/` cookie named `token`. In production (`NODE_ENV === 'production'`), the `Secure` flag is enabled; in local HTTP development, `Secure` is omitted so the cookie persists over local HTTP.
    * The JWT is **never returned in the JSON response body** and is **never stored in `localStorage` or `sessionStorage`** on the client.
 2. **Session Identification:**
    * Browser requests include the cookie automatically with credentials.

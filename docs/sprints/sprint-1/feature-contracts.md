@@ -28,18 +28,19 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Main Workflow:**
   1. Client sends username and plaintext password to `POST /api/auth/login`.
   2. Server verifies password against bcrypt hash (`NFR-SEC-01`).
-  3. Server sets signed JWT in an `HttpOnly`, `SameSite=Lax`, `Path=/` secure cookie named `token`. No token is returned in the response body.
+  3. Server sets signed JWT in an `HttpOnly`, `SameSite=Lax`, `Path=/` cookie named `token`. In production (`NODE_ENV === 'production'`), the `Secure` flag is enabled; in local HTTP development, `Secure` is omitted so the cookie persists over local HTTP. No token is returned in the response body.
   4. Authenticated client queries `GET /api/auth/me` with cookie credentials to obtain user profile and verified role (`FR-02`).
-  5. Client sends `POST /api/auth/logout` to terminate the session; server clears the cookie (`Max-Age=0`).
+  5. Client sends `POST /api/auth/logout` to terminate the session; server clears the cookie with matching `Path=/` and `Max-Age=0`.
 * **Acceptance Criteria:**
-  * `AC-01-1`: Valid credentials return `200 OK` with user profile and set HttpOnly session cookie.
-  * `AC-01-2`: Invalid credentials return `401 Unauthorized` with error code `INVALID_CREDENTIALS`.
-  * `AC-01-3`: Calling `GET /api/auth/me` with valid session cookie returns `200 OK` and current user identity and role.
-  * `AC-01-4`: Calling `POST /api/auth/logout` clears session cookie; subsequent protected requests return `401 Unauthorized`.
+  * `AC-01-1`: Valid credentials return `200 OK` with user profile and set HttpOnly session cookie (`TEST-AUTH-01`).
+  * `AC-01-2`: Invalid credentials return `401 Unauthorized` with error code `INVALID_CREDENTIALS` (`TEST-AUTH-02`).
+  * `AC-01-3`: Calling `GET /api/auth/me` with valid session cookie returns `200 OK` and current user identity and role (`TEST-AUTH-03`).
+  * `AC-01-4`: Passwords stored in database are cryptographically hashed using salted one-way hashing (`TEST-AUTH-04`, `NFR-SEC-01`).
+  * `AC-01-5`: Calling `POST /api/auth/logout` clears session cookie with matching attributes; subsequent protected calls return `401 Unauthorized` (`TEST-AUTH-05`, `FR-01`).
 * **API Specifications:**
-  * `POST /api/auth/login`: Body: `{ "username": "...", "password": "..." }` $\rightarrow$ `200 OK` (Sets `Set-Cookie: token=...; HttpOnly; SameSite=Lax; Path=/`) or `401 Unauthorized`
+  * `POST /api/auth/login`: Body: `{ "username": "...", "password": "..." }` $\rightarrow$ `200 OK` `{ "success": true, "data": { "user": { "id": "...", "username": "...", "role": "..." } } }` (Sets Header: `Set-Cookie: token=...; HttpOnly; SameSite=Lax; Path=/` with conditional `Secure` in production) or `401 Unauthorized`
   * `GET /api/auth/me`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "user": { "id": "...", "username": "...", "role": "..." } } }`
-  * `POST /api/auth/logout`: Cookie: `token=...` $\rightarrow$ `200 OK` (Sets `Set-Cookie: token=; Path=/; Max-Age=0`)
+  * `POST /api/auth/logout`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "message": "Logged out successfully" } }` (Sets Header: `Set-Cookie: token=; Path=/; Max-Age=0`)
 
 ---
 
@@ -52,9 +53,9 @@ This document establishes the binding engineering contracts for all nine Sprint 
   2. If an `ADMIN` requests any financial endpoint (`/api/accounts/*`, `/api/transactions/*`, `/api/reports/*`), server intercepts and rejects with `403 Forbidden` (`BR-10`).
   3. If a `USER` requests another user's financial record by ID, database query scopes to `userId: req.user.id` and returns `404 Not Found` (`BR-01`).
 * **Acceptance Criteria:**
-  * `AC-02-1`: Unauthenticated requests to protected endpoints return `401 Unauthorized`.
-  * `AC-02-2`: ADMIN requests to financial endpoints return `403 Forbidden` with zero sensitive payload leakage.
-  * `AC-02-4`: USER requests attempting to read or modify another user's financial record return `404 Not Found`.
+  * `AC-02-1`: Unauthenticated requests to protected endpoints return `401 Unauthorized` (`TEST-SEC-02`, `BR-09`).
+  * `AC-02-2`: ADMIN requests to financial endpoints return `403 Forbidden` with zero sensitive payload leakage (`TEST-SEC-03`, `BR-10`).
+  * `AC-02-4`: USER requests attempting to read or modify another user's financial record return `404 Not Found` (`TEST-SEC-01`, `BR-01`).
 
 ---
 
@@ -71,10 +72,10 @@ This document establishes the binding engineering contracts for all nine Sprint 
   4. Balance calculation engine incorporates opening balance into account balance without counting it as income or expense (`BR-02`).
   5. Once a transaction referencing the account commits, server atomically sets `is_opening_locked = true`. If a transaction fails or rolls back, the lock is not applied.
 * **Acceptance Criteria:**
-  * `AC-03-1`: Submitting valid opening balance (e.g., `10000.00 THB`) on unlocked account returns `200 OK` and updates balance.
+  * `AC-03-1`: Submitting valid opening balance (e.g., `10000.00 THB`) on unlocked account returns `200 OK` and updates balance (`TEST-OPEN-01`).
   * `AC-03-2`: Submitting negative amount or non-numeric balance returns `400 Bad Request`.
   * `AC-03-3`: Opening balance updates on an account with committed transactions return `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`).
-  * `AC-03-4`: Opening balance is verified omitted from income and expense summaries (`BR-02`).
+  * `AC-03-4`: Opening balance is verified omitted from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 * **API Specification:**
   * `PATCH /api/accounts/:id/opening-balance`: Body: `{ "opening_balance": 10000.00 }` $\rightarrow$ `200 OK` or `422 Unprocessable Entity`
 
@@ -87,10 +88,10 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Main Workflow:**
   1. User submits income transaction with destination Cash account ID, total amount, transaction date, and allocation to Income account.
   2. Server verifies account ownership and validates positive amount.
-  3. In a database transaction, server creates `Transaction` (Transaction 1 of Golden Journey) and linked `AllocationLine`.
+  3. In a database transaction, server creates `Transaction` (Transaction 1 of Golden Journey) and 1 linked `AllocationLine` targeting `Salary` account.
   4. System updates receiving bank balance and locks opening balance of bank account atomically.
 * **Acceptance Criteria:**
-  * `AC-04-1`: Submitting valid salary income (e.g., `20000.00 THB`) returns `201 Created` and increases bank balance by `20000.00`.
+  * `AC-04-1`: Recording salary of 20000.00 THB on date 2026-11-06 returns 201 Created and increases bank balance by 20000.00 (`TEST-INC-01`, `BR-03`).
   * `AC-04-2`: Submitting income transaction with invalid/missing date or non-positive amount returns `400 Bad Request`.
 * **API Specification:**
   * `POST /api/transactions/income`: Body: `{ "primary_account_id": "acc-bank", "total_amount": 20000.00, "transaction_date": "2026-11-06", "income_account_id": "acc-salary", "description": "Monthly Salary" }` $\rightarrow$ `201 Created`
@@ -106,7 +107,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
   2. Server verifies total amount is positive and creates the transaction (Transaction 2 of Golden Journey).
   3. System increases credit card debt balance by the total amount (`BR-04`).
 * **Acceptance Criteria:**
-  * `AC-05-1`: Submitting valid credit card purchase returns `201 Created` and increases credit card debt balance.
+  * `AC-05-1`: Submitting valid credit card purchase returns `201 Created` and increases credit card debt balance (`TEST-EXP-01`, `BR-04`).
   * `AC-05-2`: Omitting credit card primary account ID returns `400 Bad Request`.
 
 ---
@@ -118,11 +119,11 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Main Workflow:**
   1. User submits credit purchase with multiple allocation lines (Dining: `1000.00`, Grocery: `2000.00`).
   2. Server computes $\sum \text{allocations.amount}$.
-  3. If sum equals `total_amount` (`3000.00`), transaction succeeds and creates both lines (`BR-05`, `BR-06`).
+  3. If sum equals `total_amount` (`3000.00`), transaction succeeds and creates both allocation lines (`BR-05`, `BR-06`).
   4. If sum does not equal `total_amount`, server rolls back and rejects with `422 Unprocessable Entity` (`BR-06`).
 * **Acceptance Criteria:**
-  * `AC-06-1`: Multi-line allocation where sum equals total amount (e.g., `1000 + 2000 = 3000`) returns `201 Created` and creates both allocation lines.
-  * `AC-06-2`: Multi-line allocation where sum does not equal total amount (e.g., `1000 + 1500 != 3000`) returns `422 Unprocessable Entity` with error code `ALLOCATION_SUM_MISMATCH`.
+  * `AC-06-1`: Multi-line allocation where sum equals total amount (e.g., `1000 + 2000 = 3000`) returns `201 Created` and creates both allocation lines (`TEST-ALLOC-01`, `BR-05`).
+  * `AC-06-2`: Multi-line allocation where sum does not equal total amount (e.g., `1000 + 1500 != 3000`) returns `422 Unprocessable Entity` with error code `ALLOCATION_SUM_MISMATCH` (`TEST-ALLOC-02`, `BR-06`).
 * **API Specification:**
   * `POST /api/transactions/expense`: Body:
     ```json
@@ -144,15 +145,18 @@ This document establishes the binding engineering contracts for all nine Sprint 
 ### Feature F-07: Credit Card Repayment Engine
 * **Feature ID:** `F-07`
 * **Linked Requirements:** `FR-09`, `BR-07`, `BR-08`
-* **Preconditions:** Authenticated `USER` has Cash account (Bank) and Credit Card account with debt.
+* **Preconditions:** Authenticated `USER` has Cash account (Bank) and Credit Card account (`Loan Taken`) with debt.
+* **Repayment Allocation Specification:**
+  > Repayment records a Transaction (Transaction 3 of Golden Journey) with **1 Allocation Line** targeting the `Loan Taken` account of the credit card. Because the allocation target is of type `Loan Taken` (debt settlement) rather than `Expense`, the financial summary engine excludes this amount from the total expenses (`BR-08`).
 * **Main Workflow:**
-  1. User submits credit card repayment specifying funding bank account, target credit card account, repayment amount, and date.
+  1. User submits credit card repayment specifying funding bank account (`from_account_id`), target credit card account (`to_account_id`), repayment amount, and date.
   2. Server validates positive amount and verifies user owns both accounts.
-  3. Server records transaction (Transaction 3 of Golden Journey) reducing bank balance and reducing credit card debt by an equal amount (`BR-07`).
-  4. Server ensures repayment is classified as debt settlement and excluded from expense summary (`BR-08`).
+  3. Server records transaction (Transaction 3) with 1 allocation line targeting the credit card account.
+  4. Server atomically decreases bank balance by `3000.00` and decreases credit card debt by `3000.00` (`BR-07`).
+  5. Server ensures repayment is excluded from expense summaries (`BR-08`).
 * **Acceptance Criteria:**
-  * `AC-07-1`: Submitting valid repayment (e.g., `3000.00 THB`) returns `201 Created`, decreases bank balance by `3000.00`, and decreases credit debt by `3000.00`.
-  * `AC-07-2`: Verified that financial expense summary does not increase after repayment (`BR-08`).
+  * `AC-07-1`: Submitting valid repayment (e.g., `3000.00 THB`) returns `201 Created`, creates 1 allocation line targeting `Loan Taken`, decreases bank balance by `3000.00`, and decreases credit debt by `3000.00` (`TEST-REPAY-01`, `BR-07`).
+  * `AC-07-2`: Verified that financial expense summary does not increase after repayment (`TEST-REPAY-02`, `BR-08`).
 * **API Specification:**
   * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created`
 
@@ -171,8 +175,9 @@ This document establishes the binding engineering contracts for all nine Sprint 
      * Total Expense: $\text{Dining} + \text{Grocery} = 1000 + 2000 = 3000$ (Excludes Repayment per `BR-08`)
   3. Server returns computed figures with `200 OK`.
 * **Acceptance Criteria:**
-  * `AC-08-1`: Calling summary endpoint returns exact deterministic figures matching the Golden Journey state.
-  * `AC-08-2`: Opening balance is verified omitted from income summary; repayment is verified omitted from expense summary.
+  * `AC-08-1`: Calling summary endpoint returns exact deterministic figures matching the Golden Journey state: Bank = `27000.00`, Debt = `0.00`, Income = `20000.00`, Expense = `3000.00` (`TEST-BAL-01`, `FR-10`).
+* **API Specification:**
+  * `GET /api/reports/summary`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "bank_balance": 27000.00, "credit_debt": 0.00, "total_income": 20000.00, "total_expense": 3000.00 } }`
 
 ---
 
@@ -183,7 +188,9 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Main Workflow:**
   1. Client sends `GET /api/transactions`.
   2. Server queries transactions belonging to `req.user.id` ordered by `transaction_date DESC`.
-  3. Server returns exactly 3 transactions recorded in the Golden Journey (Salary, CC Purchase with 2 allocation lines, CC Repayment) with total of 4 allocation lines.
+  3. Server returns exactly 3 transactions recorded across the Golden Journey (Salary [1 allocation], CC Purchase [2 allocations], CC Repayment [1 allocation]) totaling 4 allocation lines.
 * **Acceptance Criteria:**
-  * `AC-09-1`: Calling endpoint returns `200 OK` with exactly 3 recorded transactions and their allocation lines.
-  * `AC-09-2`: Data persists and is returned identically across backend server process restarts (`NFR-DATA-01`).
+  * `AC-09-1`: Calling endpoint returns `200 OK` with exactly 3 recorded transactions and 4 allocation lines total (`TEST-HIST-01`, `FR-11`).
+  * `AC-09-2`: Data persists and is returned identically across backend server process restarts (`TEST-PERSIST-01`, `NFR-DATA-01`).
+* **API Specification:**
+  * `GET /api/transactions`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "transactions": [ ... ] } }`
