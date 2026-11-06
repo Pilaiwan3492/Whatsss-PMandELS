@@ -1,7 +1,7 @@
 # Whatsss — Personal Finance Management Web Application
 
-> **CPE 334 Introduction to Software Engineering in the Age of AI Agents**  
-> Semester 1/2026 | Group Project  
+> **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
+> **Semester:** 1/2026 | Group Project  
 > **Assigned Theme:** Theme 7 — Personal Money and Expense Logging System  
 
 ---
@@ -22,20 +22,20 @@
 
 ---
 
-## 3. Sprint 1 Goal & Golden Domain Journey
+## 3. Sprint 1 Goal & Golden Domain Journey (3 Recorded Transactions)
 
-The goal of Sprint 1 is to deliver a verified, runnable vertical slice that executes the complete Theme 7 domain journey through UI, API, and database:
+The goal of Sprint 1 is to deliver a verified, runnable vertical slice that executes the complete Theme 7 domain journey through UI, API, and database across exactly 3 recorded transactions and 4 allocation lines:
 
-1. **Opening Balance:** Record an opening balance for a Checking Bank Account (`10,000.00 THB`).
-2. **Salary Inflow:** Record salary received into the bank account (`20,000.00 THB` to `Salary` income).
-3. **Credit Card Purchase:** Record a credit card purchase (`3,000.00 THB`) with split allocations across `Dining` (`1,000.00 THB`) and `Grocery` (`2,000.00 THB`).
-4. **Credit Card Repayment:** Record full credit card debt repayment (`3,000.00 THB`) paid from the bank account.
-5. **Expected Verification Outcome:**
+1. **Opening Balance (Account Setup):** Record an initial starting balance for Checking Bank Account (`10,000.00 THB`). This establishes the starting cash balance and is strictly excluded from income/expense summaries per `BR-02`.
+2. **Transaction 1 — Salary Inflow:** Record salary received into the bank account (`20,000.00 THB` allocated to `Salary` income account) on date `2026-11-06`. Increases bank balance to `30,000.00 THB` and income summary to `20,000.00 THB`.
+3. **Transaction 2 — Credit Card Purchase:** Record a purchase charged to the credit card (`3,000.00 THB`) on date `2026-11-06` with split allocations across `Dining` (`1,000.00 THB`) and `Grocery` (`2,000.00 THB`). Increases credit card debt to `3,000.00 THB` and expense summary to `3,000.00 THB`.
+4. **Transaction 3 — Credit Card Debt Settlement:** Record full credit card debt repayment (`3,000.00 THB`) on date `2026-11-06` paid from the bank account. Decreases bank balance to `27,000.00 THB` and credit debt to `0.00 THB`. Excluded from expense summaries per `BR-08`.
+5. **Expected Final Verification State:**
    * **Bank Balance:** `27,000.00 THB`
    * **Credit Card Debt:** `0.00 THB`
    * **Income Summary:** `20,000.00 THB`
    * **Expense Summary:** `3,000.00 THB` (Repayment is strictly excluded from Expense per `BR-08`)
-   * **Category Breakdown:** Dining `1,000.00 THB`, Grocery `2,000.00 THB`
+   * **Transaction History:** Exactly 3 transactions with 4 allocation lines total.
    * **Security:** Unauthenticated requests rejected (`401`); ADMIN barred from user financial data (`403`); cross-tenant access concealed (`404`).
 
 ---
@@ -76,7 +76,7 @@ Whatsss-PMandELS/
 │       ├── plan.md                    # Part D: Three-Sprint Product Roadmap
 │       └── sprint-1/
 │           ├── scope.md               # Sprint 1 Frozen Scope Agreement
-│           ├── issue-backlog.md       # Sprint 1 Work Breakdown (6 Consolidated Issues)
+│           ├── issue-backlog.md       # Sprint 1 Implementation Backlog (6 Work Packages)
 │           ├── feature-contracts.md   # Part E: Feature SDS & API Contracts (F-01..F-09)
 │           ├── test-data.md           # Seed Data & Environment Setup Specification
 │           ├── test-specification.md  # Software Test Specification (STS)

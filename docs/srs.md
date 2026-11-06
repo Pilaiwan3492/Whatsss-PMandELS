@@ -4,7 +4,7 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part A: SRS and Product Scope)  
-> **Document Status:** Authoritative Baseline (Frozen)  
+> **Status:** Authoritative Baseline (Frozen)  
 
 ---
 
@@ -34,18 +34,18 @@ The system defines two authenticated user roles and recognizes one unauthenticat
    * **Boundary:** Barred from accessing, viewing, or modifying records belonging to any other user. Cross-user access attempts are rejected and resource existence is concealed.
 
 2. **Platform Administrator (`ADMIN`):**
-   * An authenticated administrative user responsible for platform governance and user account access.
-   * **Scope of Authority:** Authority to inspect the registered platform user directory and toggle user account activation status (`Active` / `Disabled`).
-   * **Boundary:** **Strictly barred from accessing, viewing, or modifying any user's financial accounts, transactions, balances, or summaries.** Backend access control enforces this separation.
+   * An authenticated administrative user responsible for platform operations and account governance.
+   * **Scope of Authority:** Authenticates via platform login. User directory and account activation governance are specified as product-level capabilities planned for Sprint 2.
+   * **Boundary:** **Strictly barred from accessing, viewing, or modifying any user's financial accounts, transactions, balances, or summaries.** Backend access control unconditionally enforces this separation (`BR-10`).
 
 3. **Unauthenticated Visitor:**
    * An anonymous client interacting with the system without valid authentication credentials.
    * **Scope of Authority:** Permitted only to view public landing/login interfaces and submit authentication credentials.
-   * **Boundary:** Excluded from all protected application resources and endpoints.
+   * **Boundary:** Excluded from all protected application resources and endpoints (`BR-09`).
 
 ### 2.2 Security and Privacy Boundaries
 * **Tenancy Isolation:** Financial data is partitioned strictly by user identity. Every financial query and mutation must enforce user ownership.
-* **Administrative Separation of Concerns:** Administrative authority is strictly organizational (platform user lifecycle) and grants zero privilege over private user ledgers.
+* **Administrative Separation of Concerns:** Administrative authority grants zero privilege over private user ledgers.
 
 ---
 
@@ -59,7 +59,7 @@ The system defines two authenticated user roles and recognizes one unauthenticat
   * *Receive Money:* Inflow into Cash, with allocation lines distributed across Income, debt borrowings, loan repayments received, or cash transfers.
 * **Transaction Date Support:** Every transaction includes a user-specified transaction date.
 * **Balance & Financial Reporting:** Real-time computed account balances, outstanding debt balances, and true income/expense summaries excluding transfers and repayments.
-* **Product Enhancements (Later Sprints):** User custom account creation, single-action internal cash transfers, peer lending (`Loan Given`), general borrowing (`Loan Taken`), favorite transactions, transaction duplication, search and filtering, and category spending distributions.
+* **Product Enhancements (Later Sprints):** User custom account creation, single-action internal cash transfers, peer lending (`Loan Given`), general borrowing (`Loan Taken`), favorite transactions, transaction duplication, search and filtering, category spending distributions, and platform user administration.
 
 ### 3.2 Out-of-Scope Capabilities (Explicit Exclusions)
 * Automatic bank feed integrations and real banking APIs.
@@ -81,8 +81,6 @@ Requirements are partitioned into **Sprint 1 Core Requirements** (the verified G
 |---|---|---|:---:|
 | **`FR-01`** | **User Authentication** | The system shall authenticate users using username/email and password credentials and provide session termination (logout). | **Sprint 1** |
 | **`FR-02`** | **Identity and Role Resolution** | The system shall identify the current authenticated user and return their system role (`USER` or `ADMIN`). | **Sprint 1** |
-| **`FR-03`** | **Platform User Directory** | The system shall allow an administrator to view the directory of registered platform user accounts. | **Sprint 1** |
-| **`FR-04`** | **User Access Governance** | The system shall allow an administrator to toggle user account access status (`Active` / `Disabled`). | **Sprint 1** |
 | **`FR-05`** | **Opening Balance Recording** | The system shall allow a user to record an initial opening balance for an eligible account (such as a bank account) before transactions reference it. | **Sprint 1** |
 | **`FR-06`** | **Income Transaction Processing** | The system shall allow a user to record received income (such as salary) into a Cash account with a transaction date, increasing the cash balance and income total. | **Sprint 1** |
 | **`FR-07`** | **Credit Card Purchase Recording** | The system shall allow a user to record an expense transaction charged to a credit card account with a transaction date, increasing outstanding debt and expense totals. | **Sprint 1** |
@@ -95,6 +93,8 @@ Requirements are partitioned into **Sprint 1 Core Requirements** (the verified G
 
 | Requirement ID | Requirement Title | Description | Target Sprint |
 |---|---|---|:---:|
+| **`FR-03`** | **Platform User Directory** | The system shall allow an administrator to view the directory of registered platform user accounts. | Sprint 2 |
+| **`FR-04`** | **User Access Governance** | The system shall allow an administrator to toggle user account access status (`Active` / `Disabled`). | Sprint 2 |
 | **`FR-12`** | **Custom Account Management** | The system shall allow users to create, update, and manage accounts across all five account types (`Cash`, `Loan Taken`, `Loan Given`, `Income`, `Expense`). | Sprint 2 |
 | **`FR-13`** | **Internal Cash Transfer** | The system shall allow users to record internal fund transfers between their own Cash accounts without impacting income or expense summaries. | Sprint 2 |
 | **`FR-14`** | **Peer Lending Management** | The system shall allow users to record loans given to third parties (`Loan Given`) and subsequent loan repayments received. | Sprint 2 |
@@ -139,8 +139,8 @@ The system must satisfy the following measurable non-functional requirements:
 * **Verification Method:** Automated API integration tests asserting proper access rejection and zero leakage of financial data payloads.
 
 ### `NFR-DATA-01: Data Persistence & Durability`
-* **Target:** All committed user accounts, opening balances, transactions, and allocation splits must be durably stored in a relational database and survive server restarts without data loss or corruption.
-* **Verification Method:** Automated persistence integration tests executing a write, disconnecting/restarting the connection, and verifying exact record retrieval.
+* **Target:** All committed user accounts, opening balances, transactions, and allocation splits must be durably stored in a relational database and survive backend server restarts without data loss or corruption.
+* **Verification Method:** Automated persistence integration tests executing a write, stopping/restarting the backend server process, and verifying exact record retrieval from the persistent database.
 
 ---
 

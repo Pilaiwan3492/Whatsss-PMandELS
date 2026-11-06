@@ -24,55 +24,57 @@ This document establishes the binding engineering contracts for all nine Sprint 
 ### Feature F-01: Authentication & Session Lifecycle
 * **Feature ID:** `F-01`
 * **Linked Requirements:** `FR-01`, `FR-02`, `NFR-SEC-01`, `BR-09`
-* **Preconditions:** User credentials exist in the database with hashed password.
+* **Preconditions:** User credentials exist in the database with salted password hash.
 * **Main Workflow:**
   1. Client sends username and plaintext password to `POST /api/auth/login`.
   2. Server verifies password against bcrypt hash (`NFR-SEC-01`).
-  3. Server generates signed JWT containing `userId` and `role`, returning it in an HTTP-only secure cookie and response body.
-  4. Authenticated client queries `GET /api/auth/me` to obtain user profile and verified role (`FR-02`).
-  5. Client sends `POST /api/auth/logout` to terminate the session; server clears the cookie.
+  3. Server sets signed JWT in an `HttpOnly`, `SameSite=Lax`, `Path=/` secure cookie named `token`. No token is returned in the response body.
+  4. Authenticated client queries `GET /api/auth/me` with cookie credentials to obtain user profile and verified role (`FR-02`).
+  5. Client sends `POST /api/auth/logout` to terminate the session; server clears the cookie (`Max-Age=0`).
 * **Acceptance Criteria:**
-  * `AC-01-1`: Valid credentials return `200 OK` with user profile and session token.
+  * `AC-01-1`: Valid credentials return `200 OK` with user profile and set HttpOnly session cookie.
   * `AC-01-2`: Invalid credentials return `401 Unauthorized` with error code `INVALID_CREDENTIALS`.
-  * `AC-01-3`: Calling `GET /api/auth/me` with valid session returns `200 OK` and current user identity and role.
-  * `AC-01-4`: Calling `POST /api/auth/logout` clears session and subsequent protected requests return `401 Unauthorized`.
+  * `AC-01-3`: Calling `GET /api/auth/me` with valid session cookie returns `200 OK` and current user identity and role.
+  * `AC-01-4`: Calling `POST /api/auth/logout` clears session cookie; subsequent protected requests return `401 Unauthorized`.
 * **API Specifications:**
-  * `POST /api/auth/login`: Body: `{ "username": "...", "password": "..." }` $\rightarrow$ `200 OK` or `401 Unauthorized`
-  * `GET /api/auth/me`: Headers: Cookie/Bearer $\rightarrow$ `200 OK` `{ "user": { "id": "...", "username": "...", "role": "..." } }`
-  * `POST /api/auth/logout`: Headers: Cookie/Bearer $\rightarrow$ `200 OK` `{ "message": "Logged out successfully" }`
+  * `POST /api/auth/login`: Body: `{ "username": "...", "password": "..." }` $\rightarrow$ `200 OK` (Sets `Set-Cookie: token=...; HttpOnly; SameSite=Lax; Path=/`) or `401 Unauthorized`
+  * `GET /api/auth/me`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "user": { "id": "...", "username": "...", "role": "..." } } }`
+  * `POST /api/auth/logout`: Cookie: `token=...` $\rightarrow$ `200 OK` (Sets `Set-Cookie: token=; Path=/; Max-Age=0`)
 
 ---
 
 ### Feature F-02: Server-Side Authorization & Privacy Guards
 * **Feature ID:** `F-02`
-* **Linked Requirements:** `FR-03`, `BR-01`, `BR-09`, `BR-10`, `NFR-SEC-02`
+* **Linked Requirements:** `BR-01`, `BR-09`, `BR-10`, `NFR-SEC-02`
 * **Preconditions:** Server receives request on a protected endpoint.
 * **Main Workflow:**
-  1. `AuthGuard` checks for valid session token; returns `401 Unauthorized` if absent or expired (`BR-09`).
+  1. `AuthGuard` checks for valid session cookie; returns `401 Unauthorized` if absent or expired (`BR-09`).
   2. If an `ADMIN` requests any financial endpoint (`/api/accounts/*`, `/api/transactions/*`, `/api/reports/*`), server intercepts and rejects with `403 Forbidden` (`BR-10`).
-  3. If an `ADMIN` requests `/api/admin/users`, server grants access and returns platform user directory (`FR-03`).
-  4. If a `USER` requests another user's financial record by ID, database query scopes to `userId: req.user.id` and returns `404 Not Found` (`BR-01`).
+  3. If a `USER` requests another user's financial record by ID, database query scopes to `userId: req.user.id` and returns `404 Not Found` (`BR-01`).
 * **Acceptance Criteria:**
   * `AC-02-1`: Unauthenticated requests to protected endpoints return `401 Unauthorized`.
   * `AC-02-2`: ADMIN requests to financial endpoints return `403 Forbidden` with zero sensitive payload leakage.
-  * `AC-02-3`: ADMIN requests to `/api/admin/users` return `200 OK` with the list of registered users.
-  * `AC-02-4`: USER requests attempting to read another user's account/transaction return `404 Not Found`.
+  * `AC-02-4`: USER requests attempting to read or modify another user's financial record return `404 Not Found`.
 
 ---
 
 ### Feature F-03: Account Opening Balance Lifecycle
 * **Feature ID:** `F-03`
 * **Linked Requirements:** `FR-05`, `BR-02`, `NFR-DATA-01`
-* **Preconditions:** Authenticated `USER` owns an unlocked eligible account (Bank Account).
+* **Preconditions:** Authenticated `USER` owns an eligible account (Checking Bank) with `is_opening_locked = false`.
+* **Locking Rule:**
+  > Opening Balance can be updated only before the first committed transaction references the account. The account's opening balance becomes locked atomically when the first referencing transaction is committed.
 * **Main Workflow:**
   1. User submits opening balance amount via `PATCH /api/accounts/:id/opening-balance`.
   2. Server verifies the account belongs to user and `is_opening_locked` is `false`.
-  3. Server updates `opening_balance` and sets `is_opening_locked = true` once a transaction is committed.
+  3. Server updates `opening_balance`.
   4. Balance calculation engine incorporates opening balance into account balance without counting it as income or expense (`BR-02`).
+  5. Once a transaction referencing the account commits, server atomically sets `is_opening_locked = true`. If a transaction fails or rolls back, the lock is not applied.
 * **Acceptance Criteria:**
   * `AC-03-1`: Submitting valid opening balance (e.g., `10000.00 THB`) on unlocked account returns `200 OK` and updates balance.
   * `AC-03-2`: Submitting negative amount or non-numeric balance returns `400 Bad Request`.
-  * `AC-03-3`: Opening balance updates on an account with committed transactions return `422 Unprocessable Entity`.
+  * `AC-03-3`: Opening balance updates on an account with committed transactions return `422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`).
+  * `AC-03-4`: Opening balance is verified omitted from income and expense summaries (`BR-02`).
 * **API Specification:**
   * `PATCH /api/accounts/:id/opening-balance`: Body: `{ "opening_balance": 10000.00 }` $\rightarrow$ `200 OK` or `422 Unprocessable Entity`
 
@@ -85,8 +87,8 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Main Workflow:**
   1. User submits income transaction with destination Cash account ID, total amount, transaction date, and allocation to Income account.
   2. Server verifies account ownership and validates positive amount.
-  3. In a database transaction, server creates `Transaction` and linked `AllocationLine`.
-  4. System updates receiving bank balance and marks opening balance of bank account as locked.
+  3. In a database transaction, server creates `Transaction` (Transaction 1 of Golden Journey) and linked `AllocationLine`.
+  4. System updates receiving bank balance and locks opening balance of bank account atomically.
 * **Acceptance Criteria:**
   * `AC-04-1`: Submitting valid salary income (e.g., `20000.00 THB`) returns `201 Created` and increases bank balance by `20000.00`.
   * `AC-04-2`: Submitting income transaction with invalid/missing date or non-positive amount returns `400 Bad Request`.
@@ -101,7 +103,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Preconditions:** Authenticated `USER` has an active `Loan Taken` account (Credit Card).
 * **Main Workflow:**
   1. User submits purchase transaction charged to credit card account with total amount, transaction date, and expense allocations.
-  2. Server verifies total amount is positive and creates the transaction.
+  2. Server verifies total amount is positive and creates the transaction (Transaction 2 of Golden Journey).
   3. System increases credit card debt balance by the total amount (`BR-04`).
 * **Acceptance Criteria:**
   * `AC-05-1`: Submitting valid credit card purchase returns `201 Created` and increases credit card debt balance.
@@ -114,9 +116,9 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Linked Requirements:** `FR-08`, `BR-05`, `BR-06`
 * **Preconditions:** Transaction payload includes one or more allocation lines.
 * **Main Workflow:**
-  1. User submits credit purchase with multiple allocation lines (e.g., Dining: `1000.00`, Grocery: `2000.00`).
+  1. User submits credit purchase with multiple allocation lines (Dining: `1000.00`, Grocery: `2000.00`).
   2. Server computes $\sum \text{allocations.amount}$.
-  3. If sum equals `total_amount` (`3000.00`), transaction succeeds (`BR-05`, `BR-06`).
+  3. If sum equals `total_amount` (`3000.00`), transaction succeeds and creates both lines (`BR-05`, `BR-06`).
   4. If sum does not equal `total_amount`, server rolls back and rejects with `422 Unprocessable Entity` (`BR-06`).
 * **Acceptance Criteria:**
   * `AC-06-1`: Multi-line allocation where sum equals total amount (e.g., `1000 + 2000 = 3000`) returns `201 Created` and creates both allocation lines.
@@ -142,11 +144,11 @@ This document establishes the binding engineering contracts for all nine Sprint 
 ### Feature F-07: Credit Card Repayment Engine
 * **Feature ID:** `F-07`
 * **Linked Requirements:** `FR-09`, `BR-07`, `BR-08`
-* **Preconditions:** Authenticated `USER` has Cash account (Bank) with sufficient funds and Credit Card account with debt.
+* **Preconditions:** Authenticated `USER` has Cash account (Bank) and Credit Card account with debt.
 * **Main Workflow:**
   1. User submits credit card repayment specifying funding bank account, target credit card account, repayment amount, and date.
   2. Server validates positive amount and verifies user owns both accounts.
-  3. Server records transaction reducing bank balance and reducing credit card debt by an equal amount (`BR-07`).
+  3. Server records transaction (Transaction 3 of Golden Journey) reducing bank balance and reducing credit card debt by an equal amount (`BR-07`).
   4. Server ensures repayment is classified as debt settlement and excluded from expense summary (`BR-08`).
 * **Acceptance Criteria:**
   * `AC-07-1`: Submitting valid repayment (e.g., `3000.00 THB`) returns `201 Created`, decreases bank balance by `3000.00`, and decreases credit debt by `3000.00`.
@@ -181,7 +183,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Main Workflow:**
   1. Client sends `GET /api/transactions`.
   2. Server queries transactions belonging to `req.user.id` ordered by `transaction_date DESC`.
-  3. Server returns list of transactions including nested allocation lines.
+  3. Server returns exactly 3 transactions recorded in the Golden Journey (Salary, CC Purchase with 2 allocation lines, CC Repayment) with total of 4 allocation lines.
 * **Acceptance Criteria:**
-  * `AC-09-1`: Calling endpoint returns `200 OK` with all recorded transactions and allocation lines.
-  * `AC-09-2`: Data persists and is returned identically across database reconnects / server restarts (`NFR-DATA-01`).
+  * `AC-09-1`: Calling endpoint returns `200 OK` with exactly 3 recorded transactions and their allocation lines.
+  * `AC-09-2`: Data persists and is returned identically across backend server process restarts (`NFR-DATA-01`).

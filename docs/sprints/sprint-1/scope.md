@@ -15,15 +15,15 @@ Develop a working, tested personal finance management system vertical slice that
 
 | Feature ID | Feature Name | Core Functionality |
 |:---:|---|---|
-| **`F-01`** | **Authentication & Session** | User login, logout, and current user identity/role verification. |
+| **`F-01`** | **Authentication & Session** | User login, logout, and current user identity/role verification via HttpOnly cookies. |
 | **`F-02`** | **Authorization & Privacy** | Backend-enforced tenancy isolation (`BR-01`) and administrator financial privacy exclusion (`BR-10`). |
-| **`F-03`** | **Opening Balance** | Record initial starting balance on eligible accounts (Bank Account). |
+| **`F-03`** | **Opening Balance** | Record initial starting balance on eligible accounts (Bank Account); atomic locking upon first referencing committed transaction. |
 | **`F-04`** | **Income Transaction** | Record salary received into bank account with date, updating cash balance and income summary. |
 | **`F-05`** | **Credit Card Purchase** | Record purchase charged to credit card with date, increasing debt and expense summary. |
 | **`F-06`** | **Multiple Allocations** | Split credit card purchase into Dining and Grocery allocations; enforce sum validation (`BR-06`). |
 | **`F-07`** | **Credit Card Repayment** | Repay credit card balance from bank account; decrease cash and debt; exclude from expenses (`BR-08`). |
 | **`F-08`** | **Balance & Summary** | Real-time computation of bank balance, credit debt, total income, and total expenses. |
-| **`F-09`** | **Transaction History** | Display chronological list of persisted transactions and allocation breakdowns. |
+| **`F-09`** | **Transaction History** | Display chronological list of persisted transactions (3 transactions across Golden Journey) and allocation breakdowns. |
 
 ---
 
@@ -35,5 +35,5 @@ Develop a working, tested personal finance management system vertical slice that
 * Multi-criteria transaction search and filtering (`F-15`).
 * Transaction adjustments and reversals (`F-16`).
 * Category spending distribution reports (`F-17`).
-* Advanced platform administration dashboards and user self-registration.
+* Platform user directory inspection (`FR-03`) and user access governance (`FR-04`).
 * Completed Docker, CI/CD, and GCP cloud deployment (scheduled for Lab 5).

@@ -1,4 +1,4 @@
-# Sprint 1 Issue Backlog & Work Breakdown
+# Sprint 1 Work Packages & Implementation Backlog
 
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Project:** Whatsss — Personal Finance Management Web Application (Theme 7)  
@@ -9,24 +9,25 @@
 
 ## 1. Overview & Pair Work Protocol
 
-Sprint 1 development is organized into 6 consolidated, vertical engineering issues. In accordance with course guidelines:
+Sprint 1 development is organized into 6 consolidated, vertical engineering work packages. In accordance with course guidelines:
 * Both students actively participate across design, implementation, automated testing, and peer review.
 * Authors do not approve their own Pull Requests.
 * Development follows a sequential batch model:
-  * **Batch 1 (Issues #1 to #3):** Implemented consecutively by **Pilaiwan Churdchu**; reviewed and approved by **Aphichaya Klinhual**.
-  * **Batch 2 (Issues #4 to #6):** Implemented consecutively by **Aphichaya Klinhual**; reviewed and approved by **Pilaiwan Churdchu**.
-* All feature branches branch from and merge into `sprint-1` staging via reviewed pull requests.
+  * **Batch 1 (Work Packages 1 to 3):** Implemented consecutively by **Pilaiwan Churdchu**; reviewed and approved by **Aphichaya Klinhual**.
+  * **Batch 2 (Work Packages 4 to 6):** Implemented consecutively by **Aphichaya Klinhual**; reviewed and approved by **Pilaiwan Churdchu**.
+* All feature branches branch from and merge into `sprint-1` staging via reviewed pull requests. GitHub Issue IDs will be assigned sequentially upon issue creation.
 
 ---
 
-## 2. Issue Specifications & Descriptions
+## 2. Work Package Specifications
 
-### Issue #1: User Authentication, Authorization & Security Boundaries
-* **Issue Title:** `feat(auth): User Authentication, Authorization & Security Boundaries`
+### Work Package 1: User Authentication, Authorization & Security Boundaries
+* **Work Package ID:** `WP-01`
+* **Target Issue Title:** `feat(auth): User Authentication, Authorization & Security Boundaries`
 * **Assignee:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Reviewer:** Aphichaya Klinhual (`@Aphichaya`)
 * **Linked Features:** `F-01` (Authentication & Session), `F-02` (Authorization & Privacy)
-* **Linked Requirements:** `FR-01`, `FR-02`, `FR-03`, `BR-01`, `BR-09`, `BR-10`, `NFR-SEC-01`, `NFR-SEC-02`
+* **Linked Requirements:** `FR-01`, `FR-02`, `BR-01`, `BR-09`, `BR-10`, `NFR-SEC-01`, `NFR-SEC-02`
 * **Target Branch:** `feat/auth-session-security`
 * **Target Merge Branch:** `sprint-1`
 
@@ -36,28 +37,29 @@ As a user or platform administrator, I want to authenticate securely and have th
 #### Implementation Tasks
 - [ ] Initialize Express and TypeScript application structure with configuration loader.
 - [ ] Implement `User` model in Prisma schema (`id`, `username`, `email`, `password_hash`, `role`, `is_active`).
-- [ ] Implement `POST /api/auth/login` with bcrypt password verification and JWT token issuance.
-- [ ] Implement `GET /api/auth/me` returning current user profile and role.
-- [ ] Implement `POST /api/auth/logout` clearing session context.
+- [ ] Implement `POST /api/auth/login` with bcrypt password verification and signed JWT set in an HttpOnly, SameSite=Lax cookie (no token in body).
+- [ ] Implement `GET /api/auth/me` returning current user profile and role from cookie credentials.
+- [ ] Implement `POST /api/auth/logout` clearing session cookie.
 - [ ] Implement `AuthGuard` middleware rejecting unauthenticated requests with HTTP 401 (`BR-09`).
 - [ ] Implement `RoleGuard` middleware rejecting ADMIN access to financial routes with HTTP 403 (`BR-10`).
 - [ ] Implement tenant scoping ensuring user requests access only own records (`BR-01`).
-- [ ] Implement `GET /api/admin/users` providing user directory inspection for ADMIN (`FR-03`).
-- [ ] Implement automated integration tests (`TEST-AUTH-01..04`, `TEST-SEC-01..03`, `TEST-ADMIN-01`).
+- [ ] Implement automated integration tests (`TEST-AUTH-01..05`, `TEST-SEC-01..03`).
 
 #### Acceptance Criteria Checklist
-- [ ] `AC-01-1`: Valid credentials return 200 OK with session token (`TEST-AUTH-01`).
+- [ ] `AC-01-1`: Valid credentials return 200 OK with user profile and set HttpOnly session cookie (`TEST-AUTH-01`).
 - [ ] `AC-01-2`: Invalid credentials return 401 Unauthorized (`TEST-AUTH-02`).
 - [ ] `AC-01-3`: `GET /api/auth/me` returns verified identity and role (`TEST-AUTH-03`).
 - [ ] `AC-01-4`: Passwords stored as salted one-way hashes (`TEST-AUTH-04`, `NFR-SEC-01`).
-- [ ] `AC-02-1`: Missing/invalid token returns 401 Unauthorized (`TEST-SEC-02`, `BR-09`).
+- [ ] `AC-01-4`: Calling logout clears cookie and subsequent protected call returns 401 (`TEST-AUTH-05`).
+- [ ] `AC-02-1`: Missing/invalid cookie returns 401 Unauthorized (`TEST-SEC-02`, `BR-09`).
 - [ ] `AC-02-2`: ADMIN calling financial endpoints returns 403 Forbidden with zero data leak (`TEST-SEC-03`, `BR-10`).
-- [ ] `AC-02-3`: ADMIN calling `/api/admin/users` receives user directory (`TEST-ADMIN-01`, `FR-03`).
+- [ ] `AC-02-4`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
 
 ---
 
-### Issue #2: Financial Account Model, Seed Environment & Opening Balance
-* **Issue Title:** `feat(account): Financial Account Model, Seed Environment & Opening Balance`
+### Work Package 2: Financial Account Model, Seed Environment & Opening Balance
+* **Work Package ID:** `WP-02`
+* **Target Issue Title:** `feat(account): Financial Account Model, Seed Environment & Opening Balance`
 * **Assignee:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Reviewer:** Aphichaya Klinhual (`@Aphichaya`)
 * **Linked Features:** `F-03` (Opening Balance)
@@ -73,19 +75,21 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 - [ ] Implement seed script (`server/prisma/seed.ts`) populating `user_demo`, `user_other`, `admin_demo`, and the 5 accounts for each user (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`).
 - [ ] Implement `GET /api/accounts` returning accounts belonging to the authenticated user.
 - [ ] Implement `PATCH /api/accounts/:id/opening-balance` to set opening balance on eligible unlocked accounts.
-- [ ] Enforce opening balance immutability locking once transactions reference the account.
+- [ ] Enforce opening balance locking rule: Opening Balance can be updated only before the first committed transaction references the account. The account's opening balance becomes locked atomically when the first referencing transaction is committed.
 - [ ] Implement automated integration tests (`TEST-OPEN-01..02`, `TEST-SEC-01`).
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-03-1`: Setting opening balance of 10000.00 THB returns 200 OK and updates balance (`TEST-OPEN-01`).
 - [ ] `AC-03-2`: Negative opening balance rejected with 400 Bad Request.
-- [ ] `AC-03-1`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
+- [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422.
+- [ ] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 - [ ] `AC-02-4`: Accessing another user's account returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
 
 ---
 
-### Issue #3: Income Transaction Processing (Salary Inflow)
-* **Issue Title:** `feat(transaction): Income Transaction Processing (Salary Inflow)`
+### Work Package 3: Income Transaction Processing (Salary Inflow)
+* **Work Package ID:** `WP-03`
+* **Target Issue Title:** `feat(transaction): Income Transaction Processing (Salary Inflow)`
 * **Assignee:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Reviewer:** Aphichaya Klinhual (`@Aphichaya`)
 * **Linked Features:** `F-04` (Income Transaction)
@@ -99,7 +103,7 @@ As an authenticated user, I want to record my received salary into my bank accou
 #### Implementation Tasks
 - [ ] Implement `Transaction` and `AllocationLine` models in Prisma schema.
 - [ ] Implement `POST /api/transactions/income` endpoint accepting destination cash account, amount, date, and income category account.
-- [ ] Enforce database transaction wrapping transaction insertion, allocation line insertion, and opening balance lock.
+- [ ] Enforce database transaction wrapping transaction insertion (Transaction 1 of Golden Journey), allocation line insertion, and atomic opening balance lock.
 - [ ] Verify cash account balance increases by the received amount (`BR-03`).
 - [ ] Implement automated integration tests (`TEST-INC-01`).
 
@@ -111,8 +115,9 @@ As an authenticated user, I want to record my received salary into my bank accou
 
 ---
 
-### Issue #4: Credit Card Purchase & Split Allocation Engine
-* **Issue Title:** `feat(transaction): Credit Card Purchase & Split Allocation Engine`
+### Work Package 4: Credit Card Purchase & Split Allocation Engine
+* **Work Package ID:** `WP-04`
+* **Target Issue Title:** `feat(transaction): Credit Card Purchase & Split Allocation Engine`
 * **Assignee:** Aphichaya Klinhual (`@Aphichaya`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Linked Features:** `F-05` (Credit Card Purchase), `F-06` (Multiple Allocations)
@@ -127,18 +132,19 @@ As an authenticated user, I want to record an expense charged to my credit card 
 - [ ] Implement `POST /api/transactions/expense` endpoint accepting credit card primary account, total amount, date, and allocation lines.
 - [ ] Implement split allocation validation engine: verify that sum of allocation lines strictly equals total amount (`BR-05`, `BR-06`).
 - [ ] Reject unbalanced allocation submissions with HTTP 422 Unprocessable Entity (`ALLOCATION_SUM_MISMATCH`).
-- [ ] Increase credit card debt balance upon successful transaction creation (`BR-04`).
+- [ ] Record purchase transaction (Transaction 2 of Golden Journey) and increase credit card debt balance (`BR-04`).
 - [ ] Implement unit and integration tests (`TEST-EXP-01`, `TEST-ALLOC-01..02`) including TDD evidence for allocation validation.
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-05-1`: Recording credit purchase of 3000.00 THB returns 201 Created and increases debt (`TEST-EXP-01`).
-- [ ] `AC-06-1`: Split allocation with Dining 1000.00 + Grocery 2000.00 = 3000.00 THB persists successfully (`TEST-ALLOC-01`).
+- [ ] `AC-06-1`: Split allocation with Dining 1000.00 + Grocery 2000.00 = 3000.00 THB persists successfully with 2 allocation lines (`TEST-ALLOC-01`).
 - [ ] `AC-06-2`: Unbalanced allocation sum rejected with 422 Unprocessable Entity (`TEST-ALLOC-02`, `BR-06`).
 
 ---
 
-### Issue #5: Credit Card Debt Settlement (Repayment)
-* **Issue Title:** `feat(transaction): Credit Card Debt Settlement (Repayment)`
+### Work Package 5: Credit Card Debt Settlement (Repayment)
+* **Work Package ID:** `WP-05`
+* **Target Issue Title:** `feat(transaction): Credit Card Debt Settlement (Repayment)`
 * **Assignee:** Aphichaya Klinhual (`@Aphichaya`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Linked Features:** `F-07` (Credit Card Repayment)
@@ -151,7 +157,7 @@ As an authenticated user, I want to record repayment of my credit card debt from
 
 #### Implementation Tasks
 - [ ] Implement `POST /api/transactions/repayment` endpoint accepting funding cash account, destination loan taken account, amount, and date.
-- [ ] Enforce atomic update decreasing cash balance and decreasing debt balance by identical amount (`BR-07`).
+- [ ] Enforce atomic update recording repayment (Transaction 3 of Golden Journey), decreasing cash balance and decreasing debt balance by identical amount (`BR-07`).
 - [ ] Ensure repayment transactions are classified as debt settlement and excluded from expense summaries (`BR-08`).
 - [ ] Implement automated integration tests (`TEST-REPAY-01..02`).
 
@@ -163,12 +169,14 @@ As an authenticated user, I want to record repayment of my credit card debt from
 
 ---
 
-### Issue #6: Financial Summaries, Transaction History & Golden Journey UI
-* **Issue Title:** `feat(report): Financial Summaries, Transaction History & Golden Journey UI`
+### Work Package 6: Financial Summaries, Transaction History & Golden Journey UI
+* **Work Package ID:** `WP-06`
+* **Target Issue Title:** `feat(report): Financial Summaries, Transaction History & Golden Journey UI`
 * **Assignee:** Aphichaya Klinhual (`@Aphichaya`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Linked Features:** `F-08` (Balance & Summary), `F-09` (Transaction History)
 * **Linked Requirements:** `FR-10`, `FR-11`, `NFR-DATA-01`, All Sprint 1 ACs
+* **Dependencies:** WP-01, WP-02, WP-03, WP-04, WP-05
 * **Target Branch:** `feat/summaries-history-e2e`
 * **Target Merge Branch:** `sprint-1`
 
@@ -177,17 +185,17 @@ As an authenticated user, I want to view my real-time balances, income/expense s
 
 #### Implementation Tasks
 - [ ] Implement `GET /api/reports/summary` returning computed cash balance, credit debt, total income, and total expense (`FR-10`).
-- [ ] Implement `GET /api/transactions` returning chronological transaction history with nested allocation lines (`FR-11`).
+- [ ] Implement `GET /api/transactions` returning chronological transaction history (verifying exactly 3 transactions and 4 allocation lines total) (`FR-11`).
 - [ ] Implement frontend client slice in `client/` (React + Vite + Bootstrap):
-  - Login view supporting session storage.
+  - Login view supporting authenticated HttpOnly cookie session (no localStorage token storage).
   - Dashboard displaying real-time balance cards (Bank: 27000, Debt: 0, Income: 20000, Expense: 3000).
   - Transaction submission forms for Opening Balance, Salary, Split Expense, and Repayment.
   - Transaction history table displaying recorded entries.
 - [ ] Implement E2E / Golden Journey integration test verifying complete sequential workflow (`TEST-E2E-01`).
-- [ ] Implement persistence test asserting exact data retrieval after database reconnect (`TEST-PERSIST-01`, `NFR-DATA-01`).
+- [ ] Implement persistence test asserting exact data retrieval after stopping/restarting backend server process against persistent database (`TEST-PERSIST-01`, `NFR-DATA-01`).
 
 #### Acceptance Criteria Checklist
 - [ ] `AC-08-1`: Summary endpoint returns Bank 27000.00, Debt 0.00, Income 20000.00, Expense 3000.00 (`TEST-BAL-01`).
-- [ ] `AC-09-1`: Transaction history returns all 3 recorded transactions with allocation breakdown (`TEST-HIST-01`).
-- [ ] `AC-09-2`: Records persist accurately across connection restarts (`TEST-PERSIST-01`, `NFR-DATA-01`).
+- [ ] `AC-09-1`: Transaction history returns exactly 3 recorded transactions with 4 allocation lines total (`TEST-HIST-01`).
+- [ ] `AC-09-2`: Records persist accurately across backend server process restarts (`TEST-PERSIST-01`, `NFR-DATA-01`).
 - [ ] `TEST-E2E-01`: End-to-end Golden Domain Journey executes successfully.

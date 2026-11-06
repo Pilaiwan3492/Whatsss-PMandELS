@@ -20,16 +20,16 @@ This document provides end-to-end traceability across all baseline Functional Re
 
 | Requirement ID | Requirement Description | Implementing Feature(s) | Planned Sprint | Verification Method / Planned Test |
 |---|---|---|:---:|---|
-| **`FR-01`** | User login and session termination (logout) | `F-01` | **Sprint 1** | Automated API Integration (`TEST-AUTH-01`, `TEST-AUTH-03`) |
-| **`FR-02`** | Current user identity and role resolution | `F-01` | **Sprint 1** | Automated API Integration (`TEST-AUTH-02`) |
-| **`FR-03`** | Platform user directory inspection | `F-02` | **Sprint 1** | Automated API Integration (`TEST-ADMIN-01`) |
-| **`FR-04`** | Platform user status governance | `F-02` | Later Sprints | Deferred to Sprint 2 / Lab 6 |
-| **`FR-05`** | Opening balance recording on eligible accounts | `F-03` | **Sprint 1** | Automated Integration (`TEST-OPEN-01`) |
+| **`FR-01`** | User login and session termination (logout) | `F-01` | **Sprint 1** | Automated API Integration (`TEST-AUTH-01`, `TEST-AUTH-05`) |
+| **`FR-02`** | Current user identity and role resolution | `F-01` | **Sprint 1** | Automated API Integration (`TEST-AUTH-03`) |
+| **`FR-03`** | Platform user directory inspection | `F-02` | Sprint 2 | Planned Sprint 2 Contract |
+| **`FR-04`** | Platform user status governance | `F-02` | Sprint 2 | Planned Sprint 2 Contract |
+| **`FR-05`** | Opening balance recording on eligible accounts | `F-03` | **Sprint 1** | Automated Integration (`TEST-OPEN-01`, `TEST-OPEN-02`) |
 | **`FR-06`** | Income transaction processing with date | `F-04` | **Sprint 1** | Automated Integration (`TEST-INC-01`) |
 | **`FR-07`** | Credit card purchase recording with date | `F-05`, `F-06` | **Sprint 1** | Automated Integration (`TEST-EXP-01`) |
 | **`FR-08`** | Multi-line split allocations (Dining & Grocery) | `F-06` | **Sprint 1** | Unit & Integration (`TEST-ALLOC-01`, `TEST-ALLOC-02`) |
-| **`FR-09`** | Credit card debt repayment from bank | `F-07` | **Sprint 1** | Automated Integration (`TEST-REPAY-01`) |
-| **`FR-10`** | Deterministic balance and summary calculation | `F-08` | **Sprint 1** | Unit & Integration (`TEST-BAL-01`, `TEST-BAL-02`) |
+| **`FR-09`** | Credit card debt repayment from bank | `F-07` | **Sprint 1** | Automated Integration (`TEST-REPAY-01`, `TEST-REPAY-02`) |
+| **`FR-10`** | Deterministic balance and summary calculation | `F-08` | **Sprint 1** | Unit Integration (`TEST-BAL-01`) |
 | **`FR-11`** | Transaction history retrieval | `F-09` | **Sprint 1** | Automated Integration (`TEST-HIST-01`) |
 | **`FR-12`** | Custom account lifecycle across 5 types | `F-10` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-13`** | Internal cash transfers between accounts | `F-11` | Sprint 2 | Planned Sprint 2 Contract |
@@ -66,4 +66,4 @@ This document provides end-to-end traceability across all baseline Functional Re
 |---|---|---|:---:|---|
 | **`NFR-SEC-01`** | Password hashing (Salted one-way hash) | Auth Service (`F-01`) | **Sprint 1** | Direct schema and password verification test (`TEST-AUTH-04`) |
 | **`NFR-SEC-02`** | Backend boundary & tenancy enforcement | AuthGuard & RoleGuard (`F-02`) | **Sprint 1** | Automated API tests asserting rejection & zero data leak (`TEST-SEC-01..03`) |
-| **`NFR-DATA-01`** | Data persistence & durability across restarts | PostgreSQL & Prisma ORM (`F-03..F-09`) | **Sprint 1** | Automated database persistence test across session restart (`TEST-PERSIST-01`) |
+| **`NFR-DATA-01`** | Data persistence & durability across server restarts | PostgreSQL & Prisma ORM (`F-03..F-09`) | **Sprint 1** | Automated database persistence test across server process restart (`TEST-PERSIST-01`) |

@@ -20,9 +20,10 @@
 | **DEC-01** | Technology Stack Selection (React + Express + PostgreSQL + Prisma) | **Approved Baseline** | `NFR-DATA-01`, Architecture |
 | **DEC-02** | Five Account Types & Instance Mapping Model | **Approved Baseline** | `FR-05`, `BR-02`, Theme 7 Spec |
 | **DEC-03** | Tenancy Isolation & Cross-User Resource Concealment | **Approved Baseline** | `BR-01`, `NFR-SEC-02` |
-| **DEC-04** | Administrative Separation & Financial Privacy Barrier | **Approved Baseline** | `BR-10`, `FR-03`, `NFR-SEC-02` |
+| **DEC-04** | Administrative Separation & Financial Privacy Barrier | **Approved Baseline** | `BR-10`, `NFR-SEC-02` |
 | **DEC-05** | Split Allocation Balance Integrity Validation | **Approved Baseline** | `BR-05`, `BR-06`, `FR-08` |
 | **DEC-06** | Debt Repayment Invariant & Expense Double-Count Exclusion | **Approved Baseline** | `BR-07`, `BR-08`, `FR-09`, `FR-10` |
+| **DEC-07** | Session Authentication Transport via HttpOnly Cookies | **Approved Baseline** | `FR-01`, `NFR-SEC-02`, Security |
 
 ---
 
@@ -44,9 +45,9 @@
 * **Rationale:** Prevents ID enumeration attacks by concealing whether the targeted private record exists.
 
 ### DEC-04: Administrative Separation & Financial Privacy Barrier
-* **Context:** Theme 7 requires an Administrator role to manage platform users while barring administrators from accessing user financial data (`BR-10`).
-* **Decision:** Financial route handlers strictly reject requests where `req.user.role === 'ADMIN'` with HTTP `403 Forbidden`. Admin routes (`/api/admin/*`) grant access only to user directory inspection.
-* **Rationale:** Enforces strict role boundary isolation at the backend routing level.
+* **Context:** Theme 7 specifies an Administrator role while strictly barring administrators from accessing user financial records (`BR-10`).
+* **Decision:** In Sprint 1, all financial endpoints strictly reject requests from users with `role === 'ADMIN'` with HTTP `403 Forbidden`. Advanced platform user administration and directory views are scheduled as product baseline capabilities in Sprint 2.
+* **Rationale:** Enforces strict role boundary isolation at the backend routing level while keeping Sprint 1 focused on the Golden Journey.
 
 ### DEC-05: Split Allocation Balance Integrity Validation
 * **Context:** Real-world purchases can be split across multiple categories (`BR-05`). The system must enforce mathematical balance (`BR-06`).
@@ -57,3 +58,8 @@
 * **Context:** Paying off a credit card debt reduces bank balance and reduces debt (`BR-07`), but must not be recorded as a new expense (`BR-08`).
 * **Decision:** Credit card repayment transactions are categorized as debt settlement events. The summary calculation engine includes only allocations pointing to `Expense` accounts in the expense total, ignoring repayments.
 * **Rationale:** Preserves financial metric accuracy and prevents artificial inflation of user expenditures.
+
+### DEC-07: Session Authentication Transport via HttpOnly Cookies
+* **Context:** The application requires secure session credential transport resistant to client-side script interception (XSS).
+* **Decision:** The team standardized on HttpOnly, SameSite=Lax cookies for JWT session transport. JWT is not returned in the JSON response body and client applications do not use localStorage or sessionStorage for token storage.
+* **Rationale:** Eliminates token handling discrepancies between services and provides clean, browser-native credential handling.

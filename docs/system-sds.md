@@ -25,27 +25,25 @@ The application adheres to clean separation of concerns:
 flowchart TD
     subgraph ClientLayer ["Client Presentation Layer (Browser)"]
         UI["React 18 SPA (Vite + TypeScript)"]
-        State["Client State & Auth Context"]
-        UI --> State
+        UIAuth["Auth Context (HttpOnly Cookie Transport)"]
+        UI --> UIAuth
     end
 
     subgraph ServerLayer ["Application / API Layer (Node.js + Express)"]
         Router["Express Router & Dispatcher"]
-        AuthM["AuthGuard Middleware (JWT / Session)"]
+        AuthM["AuthGuard Middleware (Cookie Verification)"]
         RoleM["RoleGuard Middleware (USER vs ADMIN)"]
         
         subgraph DomainServices ["Domain Service Layer"]
             AuthSvc["Auth Service"]
             AccSvc["Account & Balance Service"]
             TxnSvc["Transaction & Allocation Engine"]
-            AdminSvc["Admin Platform Service"]
         end
         
         Router --> AuthM --> RoleM
         RoleM --> AuthSvc
         RoleM --> AccSvc
         RoleM --> TxnSvc
-        RoleM --> AdminSvc
     end
 
     subgraph DataLayer ["Persistence Layer (PostgreSQL 16)"]
@@ -56,7 +54,7 @@ flowchart TD
         Prisma --> DB
     end
 
-    State -- "HTTP/JSON Requests (REST)" --> Router
+    UIAuth -- "HTTP/JSON Requests (Credentials via Cookie)" --> Router
 ```
 
 ---
@@ -129,7 +127,7 @@ erDiagram
 
 ### Data Dictionary & Constraints
 1. **User Table:** Holds authentication credentials and system role. Plaintext passwords are strictly forbidden (`NFR-SEC-01`).
-2. **Account Table:** Scoped to `user_id`. `type` is an enum of the five Theme 7 types. `opening_balance` defaults to `0.00`. `is_opening_locked` becomes `true` once a committed transaction references the account (`BR-02`).
+2. **Account Table:** Scoped to `user_id`. `type` is an enum of the five Theme 7 types. `opening_balance` defaults to `0.00`. `is_opening_locked` becomes `true` atomically when the first referencing transaction is committed (`BR-02`).
 3. **Transaction Table:** Represents the financial event header. `total_amount` must be positive (> 0.00). Includes `transaction_date` and references the primary account.
 4. **AllocationLine Table:** Represents individual split lines. Foreign key points to `transaction_id` (CASCADE delete) and `target_account_id`.
 
@@ -200,18 +198,23 @@ All error responses adhere to a consistent error schema:
 
 ---
 
-## 7. Authentication and Authorization
+## 7. Authentication and Authorization (Unified HttpOnly Cookie Approach)
 
-### 7.1 Authentication Mechanism
-* Users authenticate via username/email and password (`POST /api/auth/login`).
-* Upon credential verification, the server issues a signed JSON Web Token (JWT) encapsulating `userId` and `role`.
-* Token transport: Stored in an HTTP-only secure cookie or Authorization Bearer header.
-* Session termination (`POST /api/auth/logout`) clears the authentication cookie and context.
+To ensure robust security and avoid token handling inconsistencies, the application standardizes exclusively on **HttpOnly Cookies**:
 
-### 7.2 Backend Authorization Guards
-1. **`AuthGuard`:** Intercepts incoming requests, validates token signature and expiry, and attaches the authenticated user context (`req.user`) to the request object.
-2. **`RoleGuard`:** Verifies whether `req.user.role` is authorized to access the invoked route.
-3. **`TenantGuard / Tenancy Filter`:** In all financial domain queries, the database query filter unconditionally appends `userId: req.user.id`.
+1. **Token Transport:**
+   * Upon successful login (`POST /api/auth/login`), the server issues a signed JWT containing `userId` and `role`.
+   * The token is set in an `HttpOnly`, `SameSite=Lax`, `Path=/` secure cookie named `token`.
+   * The JWT is **never returned in the JSON response body** and is **never stored in `localStorage` or `sessionStorage`** on the client.
+2. **Session Identification:**
+   * Browser requests include the cookie automatically with credentials.
+   * `GET /api/auth/me` validates the cookie and returns the user's public profile and role.
+3. **Session Termination:**
+   * `POST /api/auth/logout` clears the authentication cookie (`Max-Age=0`). Subsequent requests to protected endpoints return `401 Unauthorized`.
+4. **Backend Authorization Guards:**
+   * **`AuthGuard`:** Intercepts incoming requests, verifies cookie JWT, and attaches `req.user`.
+   * **`RoleGuard`:** Verifies whether `req.user.role` is authorized (rejects ADMIN access to financial routes with `403 Forbidden`).
+   * **`Tenant Filter`:** Financial domain queries unconditionally enforce `userId: req.user.id` (returns `404 Not Found` on mismatch).
 
 ---
 
@@ -222,7 +225,7 @@ All error responses adhere to a consistent error schema:
 | Authenticate (`/api/auth/login`) | Allowed | Allowed | Allowed |
 | Terminate Session (`/api/auth/logout`) | Allowed | Allowed | `401 Unauthorized` |
 | Get Current User (`/api/auth/me`) | Allowed (Own Profile) | Allowed (Own Profile) | `401 Unauthorized` |
-| View Platform User Directory (`/api/admin/users`) | `403 Forbidden` | Allowed | `401 Unauthorized` |
+| View Platform User Directory (`/api/admin/users`) | `403 Forbidden` | Planned (Sprint 2) | `401 Unauthorized` |
 | Financial Accounts (`/api/accounts/*`) | Allowed (Own Accounts Only) | **`403 Forbidden`** | `401 Unauthorized` |
 | Financial Transactions (`/api/transactions/*`) | Allowed (Own Transactions Only) | **`403 Forbidden`** | `401 Unauthorized` |
 | Financial Summaries (`/api/reports/summary`) | Allowed (Own Summary Only) | **`403 Forbidden`** | `401 Unauthorized` |
@@ -233,12 +236,12 @@ All error responses adhere to a consistent error schema:
 
 All runtime configuration is managed through externalized environment variables (`.env`). No secrets are committed to version control:
 
-| Variable | Description | Default Local Value |
+| Variable | Description | Example Placeholder Value |
 |---|---|---|
 | `PORT` | Backend HTTP service port | `5000` |
 | `NODE_ENV` | Runtime environment | `development` |
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/whatsss_db?schema=public` |
-| `JWT_SECRET` | Secret key for signing session tokens | `supersecret_local_dev_key_whatsss_2026` |
+| `JWT_SECRET` | Secret key for signing session tokens | `replace_with_a_long_random_secret_for_local_development` |
 | `JWT_EXPIRES_IN` | Token duration | `1d` |
 
 ---

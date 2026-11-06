@@ -22,9 +22,9 @@ Features are partitioned into:
 
 | Feature ID | Feature Name | Primary Actor | Target Sprint | Category / Status | Summary Description |
 |:---:|---|:---:|:---:|:---:|---|
-| **`F-01`** | **Authentication & Session** | `USER`, `ADMIN` | **Sprint 1** | Required (Sprint 1) | User login, logout, and current user identity/role verification. |
+| **`F-01`** | **Authentication & Session** | `USER`, `ADMIN` | **Sprint 1** | Required (Sprint 1) | User login, logout, and current user identity/role verification via HttpOnly cookies. |
 | **`F-02`** | **Authorization & Privacy** | `USER`, `ADMIN` | **Sprint 1** | Required (Sprint 1) | Backend tenancy isolation (`BR-01`) and admin financial privacy enforcement (`BR-10`). |
-| **`F-03`** | **Opening Balance** | `USER` | **Sprint 1** | Required (Sprint 1) | Record starting balance on eligible accounts (Bank) prior to transactions (`BR-02`). |
+| **`F-03`** | **Opening Balance** | `USER` | **Sprint 1** | Required (Sprint 1) | Record starting balance on eligible accounts (Bank) prior to first transaction (`BR-02`). |
 | **`F-04`** | **Income Transaction** | `USER` | **Sprint 1** | Required (Sprint 1) | Record salary received into bank account with date; updates cash balance and income summary (`BR-03`). |
 | **`F-05`** | **Credit Card Purchase** | `USER` | **Sprint 1** | Required (Sprint 1) | Record purchase charged to credit card with date; increases debt and expense summary (`BR-04`). |
 | **`F-06`** | **Multiple Allocations** | `USER` | **Sprint 1** | Required (Sprint 1) | Split credit purchase into Dining & Grocery lines; validates allocation sum equals total (`BR-05`, `BR-06`). |
@@ -47,7 +47,7 @@ Features are partitioned into:
 
 ### Feature F-01: Authentication & Session
 * **User Goal:** As a user or admin, I want to authenticate securely and terminate my session so my identity is verified.
-* **Scope (Sprint 1):** Login with credentials, token generation, logout, and identity resolution endpoint (`/api/auth/me`).
+* **Scope (Sprint 1):** Login with credentials, secure HttpOnly cookie session management, logout, and identity resolution endpoint (`/api/auth/me`).
 * **Linked Requirements:** `FR-01`, `FR-02`, `NFR-SEC-01`, `BR-09`.
 
 ### Feature F-02: Authorization & Privacy
@@ -57,7 +57,7 @@ Features are partitioned into:
 
 ### Feature F-03: Opening Balance
 * **User Goal:** As a user, I want to set an initial starting balance on my bank account before recording transactions.
-* **Scope (Sprint 1):** Record opening balance on seeded bank account; exclude opening balance from income/expense calculations.
+* **Scope (Sprint 1):** Record opening balance on seeded bank account; lock balance upon first committed transaction; exclude opening balance from income/expense calculations.
 * **Linked Requirements:** `FR-05`, `BR-02`, `NFR-DATA-01`.
 
 ### Feature F-04: Income Transaction
