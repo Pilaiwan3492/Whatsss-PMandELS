@@ -81,11 +81,13 @@ export const LoginPage: React.FC = () => {
           </button>
         </form>
 
-        <div className="mt-4 pt-3 border-top text-muted small text-center">
-          <p className="mb-1">Demo Credentials:</p>
-          <code>user_demo / Password123!</code> (USER)<br />
-          <code>admin_demo / Password123!</code> (ADMIN)
-        </div>
+        {import.meta.env.DEV && (
+          <div className="mt-4 pt-3 border-top text-muted small text-center" data-testid="demo-credentials-box">
+            <p className="mb-1">Demo Credentials (Development Only):</p>
+            <code>user_demo / Password123!</code> (USER)<br />
+            <code>admin_demo / Password123!</code> (ADMIN)
+          </div>
+        )}
       </div>
     </div>
   );

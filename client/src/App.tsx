@@ -8,7 +8,7 @@ import { ProtectedRoute } from './components/ProtectedRoute.js';
 import { useAuth } from './context/AuthContext.js';
 
 export const App: React.FC = () => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, role, isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -20,6 +20,8 @@ export const App: React.FC = () => {
     );
   }
 
+  const defaultAuthenticatedRoute = role === 'ADMIN' ? '/access-denied' : '/dashboard';
+
   return (
     <div className="min-vh-100 bg-light">
       <Navbar />
@@ -27,16 +29,16 @@ export const App: React.FC = () => {
         <Routes>
           <Route
             path="/"
-            element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />}
+            element={isAuthenticated ? <Navigate to={defaultAuthenticatedRoute} replace /> : <Navigate to="/login" replace />}
           />
           <Route
             path="/login"
-            element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+            element={isAuthenticated ? <Navigate to={defaultAuthenticatedRoute} replace /> : <LoginPage />}
           />
           <Route
             path="/dashboard"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute disallowAdmin={true}>
                 <DashboardPage />
               </ProtectedRoute>
             }

@@ -28,9 +28,11 @@ import { app } from '../../src/app.js';
 const TRUSTED_ORIGIN = 'http://localhost:5173';
 
 describe('System API Contract: Content-Type Validation and JSON Body Parsing (TEST-SEC-06)', () => {
-  it('Condition 1: JSON endpoint with missing Content-Type returns 400 INVALID_CONTENT_TYPE', async () => {
+  const loginEndpoint = '/api/auth/login';
+
+  it('Condition 1: Missing Content-Type header on mutating JSON endpoint returns 400 INVALID_CONTENT_TYPE', async () => {
     const res = await request(app)
-      .post('/api/auth/login')
+      .post(loginEndpoint)
       .set('Origin', TRUSTED_ORIGIN)
       .send('{"username":"user_demo","password":"Password123!"}')
       .unset('Content-Type');
@@ -42,7 +44,7 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
 
   it('Condition 2: Unsupported application/x-www-form-urlencoded returns 400 INVALID_CONTENT_TYPE', async () => {
     const res = await request(app)
-      .post('/api/auth/login')
+      .post(loginEndpoint)
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/x-www-form-urlencoded')
       .send('username=user_demo&password=Password123!');
@@ -54,7 +56,7 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
 
   it('Condition 3: Unsupported multipart/form-data returns 400 INVALID_CONTENT_TYPE', async () => {
     const res = await request(app)
-      .post('/api/auth/login')
+      .post(loginEndpoint)
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'multipart/form-data; boundary=---boundary')
       .send('-----boundary\r\nContent-Disposition: form-data; name="username"\r\n\r\nuser_demo\r\n-----boundary--');
@@ -66,7 +68,7 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
 
   it('Condition 4: Malformed JSON body returns 400 INVALID_JSON_BODY', async () => {
     const res = await request(app)
-      .post('/api/auth/login')
+      .post(loginEndpoint)
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/json')
       .send('{ "username": "user_demo", "password": invalid_json_syntax');
@@ -76,9 +78,9 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
     expect(res.body.error.code).toBe('INVALID_JSON_BODY');
   });
 
-  it('Condition 5: Valid JSON payload proceeds to domain handler', async () => {
+  it('Condition 5a: Exact application/json passes to domain handler', async () => {
     const res = await request(app)
-      .post('/api/auth/login')
+      .post(loginEndpoint)
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/json')
       .send({ username: 'user_demo', password: DEMO_PASSWORD });
@@ -87,9 +89,56 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
     expect(res.body.success).toBe(true);
   });
 
-  it('Condition 6: Bodyless POST /api/auth/logout proceeds without Content-Type rejection', async () => {
+  it('Condition 5b: application/json with charset parameter (e.g. charset=utf-8) passes', async () => {
+    const res = await request(app)
+      .post(loginEndpoint)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json; charset=utf-8')
+      .send({ username: 'user_demo', password: DEMO_PASSWORD });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
+
+  it('Condition 5c: application/jsonp substring spoof is rejected with 400 INVALID_CONTENT_TYPE', async () => {
+    const res = await request(app)
+      .post(loginEndpoint)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/jsonp')
+      .send(JSON.stringify({ username: 'user_demo', password: DEMO_PASSWORD }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe('INVALID_CONTENT_TYPE');
+  });
+
+  it('Condition 5d: application/json-invalid spoof is rejected with 400 INVALID_CONTENT_TYPE', async () => {
+    const res = await request(app)
+      .post(loginEndpoint)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json-invalid')
+      .send(JSON.stringify({ username: 'user_demo', password: DEMO_PASSWORD }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe('INVALID_CONTENT_TYPE');
+  });
+
+  it('Condition 5e: text/plain is rejected with 400 INVALID_CONTENT_TYPE on JSON endpoint', async () => {
+    const res = await request(app)
+      .post(loginEndpoint)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'text/plain')
+      .send('username=user_demo');
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe('INVALID_CONTENT_TYPE');
+  });
+
+  it('Condition 6: Bodyless POST /api/auth/logout proceeds without requiring JSON Content-Type', async () => {
     const loginRes = await request(app)
-      .post('/api/auth/login')
+      .post(loginEndpoint)
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/json')
       .send({ username: 'user_demo', password: DEMO_PASSWORD });

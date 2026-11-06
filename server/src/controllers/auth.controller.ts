@@ -88,29 +88,14 @@ export async function getCurrentUser(req: Request, res: Response): Promise<void>
     return;
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: req.user.id }
-  });
-
-  if (!user || !user.is_active) {
-    res.status(401).json({
-      success: false,
-      error: {
-        code: 'UNAUTHORIZED',
-        message: 'Authentication required'
-      }
-    });
-    return;
-  }
-
   res.status(200).json({
     success: true,
     data: {
       user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role
+        id: req.user.id,
+        username: req.user.username,
+        email: req.user.email,
+        role: req.user.role
       }
     }
   });

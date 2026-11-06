@@ -9,14 +9,28 @@ export function requireJsonContentType(req: Request, res: Response, next: NextFu
 
   // Only validate mutating methods
   if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
-    const contentType = req.headers['content-type'];
+    const rawContentType = req.headers['content-type'];
 
-    if (!contentType || !contentType.toLowerCase().includes('application/json')) {
+    if (!rawContentType || rawContentType.trim() === '') {
       res.status(400).json({
         success: false,
         error: {
           code: 'INVALID_CONTENT_TYPE',
           message: 'Content-Type header is required and must be application/json'
+        }
+      });
+      return;
+    }
+
+    // Parse exact media type before any parameter (e.g. charset=utf-8)
+    const mediaType = rawContentType.split(';')[0].trim().toLowerCase();
+
+    if (mediaType !== 'application/json') {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_CONTENT_TYPE',
+          message: 'Content-Type must be application/json'
         }
       });
       return;
