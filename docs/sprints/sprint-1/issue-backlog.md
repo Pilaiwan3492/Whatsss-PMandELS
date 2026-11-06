@@ -15,7 +15,7 @@ Sprint 1 development is organized into 6 consolidated, vertical engineering work
 * Development follows a sequential batch model:
   * **Batch 1 (Work Packages 1 to 3):** Implemented consecutively by **Pilaiwan Churdchu**; reviewed and approved by **Aphichaya Klinhual**.
   * **Batch 2 (Work Packages 4 to 6):** Implemented consecutively by **Aphichaya Klinhual**; reviewed and approved by **Pilaiwan Churdchu**.
-* All feature branches branch from and merge into `sprint-1` staging via reviewed pull requests. GitHub Issue IDs will be assigned sequentially upon issue creation.
+* All feature branches branch from and merge into `sprint-1` staging via reviewed pull requests. Implementation tasks are tracked under sequential GitHub Issues [#2](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/2) through [#7](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/7).
 
 ---
 
@@ -23,9 +23,10 @@ Sprint 1 development is organized into 6 consolidated, vertical engineering work
 
 ### Work Package 1: User Authentication, Authorization & Security Boundaries
 * **Work Package ID:** `WP-01`
+* **Target Issue:** [GitHub Issue #2](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/2)
 * **Target Issue Title:** `feat(auth): User Authentication, Authorization & Security Boundaries`
 * **Assignee:** Pilaiwan Churdchu (`@Pilaiwan3492`)
-* **Reviewer:** Aphichaya Klinhual (`@Aphichaya`)
+* **Reviewer:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Linked Features:** `F-01` (Authentication & Session), `F-02` (Authorization & Privacy)
 * **Linked Requirements:** `FR-01`, `FR-02`, `BR-01`, `BR-09`, `BR-10`, `NFR-SEC-01`, `NFR-SEC-02`
 * **Target Branch:** `feat/auth-session-security`
@@ -63,9 +64,10 @@ As a user or platform administrator, I want to authenticate securely and have th
 
 ### Work Package 2: Financial Account Model, Seed Environment & Opening Balance
 * **Work Package ID:** `WP-02`
+* **Target Issue:** [GitHub Issue #3](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/3)
 * **Target Issue Title:** `feat(account): Financial Account Model, Seed Environment & Opening Balance`
 * **Assignee:** Pilaiwan Churdchu (`@Pilaiwan3492`)
-* **Reviewer:** Aphichaya Klinhual (`@Aphichaya`)
+* **Reviewer:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Linked Features:** `F-03` (Opening Balance)
 * **Linked Requirements:** `FR-05`, `BR-02`, `NFR-DATA-01`
 * **Target Branch:** `feat/account-opening-balance`
@@ -92,9 +94,10 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 
 ### Work Package 3: Income Transaction Processing (Salary Inflow)
 * **Work Package ID:** `WP-03`
+* **Target Issue:** [GitHub Issue #4](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/4)
 * **Target Issue Title:** `feat(transaction): Income Transaction Processing (Salary Inflow)`
 * **Assignee:** Pilaiwan Churdchu (`@Pilaiwan3492`)
-* **Reviewer:** Aphichaya Klinhual (`@Aphichaya`)
+* **Reviewer:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Linked Features:** `F-04` (Income Transaction)
 * **Linked Requirements:** `FR-06`, `BR-03`, `NFR-DATA-01`
 * **Target Branch:** `feat/income-transaction`
@@ -120,8 +123,9 @@ As an authenticated user, I want to record my received salary into my bank accou
 
 ### Work Package 4: Credit Card Purchase & Split Allocation Engine
 * **Work Package ID:** `WP-04`
+* **Target Issue:** [GitHub Issue #5](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/5)
 * **Target Issue Title:** `feat(transaction): Credit Card Purchase & Split Allocation Engine`
-* **Assignee:** Aphichaya Klinhual (`@Aphichaya`)
+* **Assignee:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Linked Features:** `F-05` (Credit Card Purchase), `F-06` (Multiple Allocations)
 * **Linked Requirements:** `FR-07`, `FR-08`, `BR-04`, `BR-05`, `BR-06`, `NFR-DATA-01`
@@ -148,8 +152,9 @@ As an authenticated user, I want to record an expense charged to my credit card 
 
 ### Work Package 5: Credit Card Debt Settlement (Repayment)
 * **Work Package ID:** `WP-05`
+* **Target Issue:** [GitHub Issue #6](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/6)
 * **Target Issue Title:** `feat(transaction): Credit Card Debt Settlement (Repayment)`
-* **Assignee:** Aphichaya Klinhual (`@Aphichaya`)
+* **Assignee:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Linked Features:** `F-07` (Credit Card Repayment)
 * **Linked Requirements:** `FR-09`, `BR-07`, `BR-08`, `NFR-DATA-01`
@@ -179,8 +184,9 @@ As an authenticated user, I want to record repayment of my credit card debt from
 
 ### Work Package 6: Financial Summaries, Transaction History & Golden Journey UI
 * **Work Package ID:** `WP-06`
+* **Target Issue:** [GitHub Issue #7](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/7)
 * **Target Issue Title:** `feat(report): Financial Summaries, Transaction History & Golden Journey UI`
-* **Assignee:** Aphichaya Klinhual (`@Aphichaya`)
+* **Assignee:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Linked Features:** `F-08` (Balance & Summary), `F-09` (Transaction History)
 * **Linked Requirements:** `FR-10`, `FR-11`, `NFR-DATA-01`, All Sprint 1 ACs
