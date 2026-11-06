@@ -214,7 +214,7 @@ To ensure robust security and avoid token handling inconsistencies, the applicat
    * Browser requests include the cookie automatically with credentials.
    * `GET /api/auth/me` validates the cookie and returns the user's public profile and role.
 3. **Session Termination:**
-   * `POST /api/auth/logout` clears the authentication cookie (`Max-Age=0`). Subsequent requests to protected endpoints return `401 Unauthorized`.
+   * `POST /api/auth/logout` clears the authentication cookie by returning an expired cookie (`Max-Age=0`) with matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production). Subsequent requests to protected endpoints return `401 Unauthorized`.
 4. **Backend Authorization Guards:**
    * **`AuthGuard`:** Intercepts incoming requests, verifies cookie JWT, and attaches `req.user`.
    * **`RoleGuard`:** Verifies whether `req.user.role` is authorized (rejects ADMIN access to financial routes with `403 Forbidden`).

@@ -30,7 +30,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
   2. Server verifies password against bcrypt hash (`NFR-SEC-01`).
   3. Server sets signed JWT in an `HttpOnly`, `SameSite=Lax`, `Path=/` cookie named `token`. In production (`NODE_ENV === 'production'`), the `Secure` flag is enabled; in local HTTP development, `Secure` is omitted so the cookie persists over local HTTP. No token is returned in the response body.
   4. Authenticated client queries `GET /api/auth/me` with cookie credentials to obtain user profile and verified role (`FR-02`).
-  5. Client sends `POST /api/auth/logout` to terminate the session; server clears the cookie with matching `Path=/` and `Max-Age=0`.
+  5. Client sends `POST /api/auth/logout` to terminate the session; server clears the cookie with matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production) and `Max-Age=0`.
 * **Acceptance Criteria:**
   * `AC-01-1`: Valid credentials return `200 OK` with user profile and set HttpOnly session cookie (`TEST-AUTH-01`).
   * `AC-01-2`: Invalid credentials return `401 Unauthorized` with error code `INVALID_CREDENTIALS` (`TEST-AUTH-02`).
@@ -40,7 +40,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **API Specifications:**
   * `POST /api/auth/login`: Body: `{ "username": "...", "password": "..." }` $\rightarrow$ `200 OK` `{ "success": true, "data": { "user": { "id": "...", "username": "...", "role": "..." } } }` (Sets Header: `Set-Cookie: token=...; HttpOnly; SameSite=Lax; Path=/` with conditional `Secure` in production) or `401 Unauthorized`
   * `GET /api/auth/me`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "user": { "id": "...", "username": "...", "role": "..." } } }`
-  * `POST /api/auth/logout`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "message": "Logged out successfully" } }` (Sets Header: `Set-Cookie: token=; Path=/; Max-Age=0`)
+  * `POST /api/auth/logout`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "message": "Logged out successfully" } }` (Sets Header: `Set-Cookie: token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` with conditional `Secure` in production)
 
 ---
 

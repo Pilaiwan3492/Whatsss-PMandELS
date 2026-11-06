@@ -22,8 +22,8 @@ This document provides end-to-end traceability across all baseline Functional Re
 |---|---|---|:---:|---|
 | **`FR-01`** | User login and session termination (logout) | `F-01` | **Sprint 1** | Automated API Integration (`TEST-AUTH-01`, `TEST-AUTH-05`) |
 | **`FR-02`** | Current user identity and role resolution | `F-01` | **Sprint 1** | Automated API Integration (`TEST-AUTH-03`) |
-| **`FR-03`** | Platform user directory inspection | `F-02` | Sprint 2 | Planned Sprint 2 Contract |
-| **`FR-04`** | Platform user status governance | `F-02` | Sprint 2 | Planned Sprint 2 Contract |
+| **`FR-03`** | Platform user directory inspection | *Unassigned (Pending Sprint 2 Backlog definition)* | Sprint 2 | Planned Sprint 2 Contract |
+| **`FR-04`** | Platform user status governance | *Unassigned (Pending Sprint 2 Backlog definition)* | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-05`** | Opening balance recording on eligible accounts | `F-03` | **Sprint 1** | Automated Integration (`TEST-OPEN-01`, `TEST-OPEN-02`) |
 | **`FR-06`** | Income transaction processing with date | `F-04` | **Sprint 1** | Automated Integration (`TEST-INC-01`) |
 | **`FR-07`** | Credit card purchase recording with date | `F-05`, `F-06` | **Sprint 1** | Automated Integration (`TEST-EXP-01`) |
@@ -40,6 +40,8 @@ This document provides end-to-end traceability across all baseline Functional Re
 | **`FR-18`** | Transaction search and multi-criteria filtering | `F-15` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-19`** | Transaction corrections and adjustments | `F-16` | Sprint 2 | Planned Sprint 2 Contract |
 | **`FR-20`** | Category spending distribution reports | `F-17` | Sprint 3 | Planned Sprint 3 Contract |
+
+> **Traceability Note on FR-03 and FR-04:** Feature mapping for administrative user management (`FR-03` Platform user directory and `FR-04` User access governance) is deliberately left unassigned in Sprint 1 to prevent conflation with `F-02` (which is dedicated exclusively to Sprint 1 Authorization & Privacy Isolation). Dedicated administrative feature definitions and verification contracts will be formally defined during Sprint 2 Product Backlog refinement before overall traceability for later sprints is finalized.
 
 ---
 
