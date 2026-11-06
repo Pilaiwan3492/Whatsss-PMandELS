@@ -6,13 +6,13 @@
 
 ---
 
-## 👥 Development Team (Pair Arrangement)
+## 1. Development Team (Pair Arrangement)
 * **Pilaiwan Churdchu** (Student ID: 67070503492)
 * **Aphichaya Klinhual** (Student ID: 67070503447)
 
 ---
 
-## 📌 Project Overview
+## 2. Project Overview
 
 **Whatsss** is a personal finance management web application engineered for multi-user environments. Each user maintains complete privacy over their personal ledgers. The platform supports five distinct account categories (Cash, Loan Taken, Loan Given, Income, and Expense), enforces mathematical balance validation via multi-line allocation splits, and strictly separates platform administration from private user financial data.
 
@@ -22,7 +22,7 @@
 
 ---
 
-## 🎯 Sprint 1 Goal & Golden Domain Journey
+## 3. Sprint 1 Goal & Golden Domain Journey
 
 The goal of Sprint 1 is to deliver a verified, runnable vertical slice that executes the complete Theme 7 domain journey through UI, API, and database:
 
@@ -40,7 +40,7 @@ The goal of Sprint 1 is to deliver a verified, runnable vertical slice that exec
 
 ---
 
-## 🛠 Technology Stack (Team Decision)
+## 4. Technology Stack (Team Decision)
 
 * **Frontend:** React 18, Vite, TypeScript, Bootstrap 5
 * **Backend:** Node.js, Express.js, TypeScript
@@ -50,7 +50,7 @@ The goal of Sprint 1 is to deliver a verified, runnable vertical slice that exec
 
 ---
 
-## 📁 Repository Structure
+## 5. Repository Structure
 
 ```text
 Whatsss-PMandELS/
@@ -76,6 +76,7 @@ Whatsss-PMandELS/
 │       ├── plan.md                    # Part D: Three-Sprint Product Roadmap
 │       └── sprint-1/
 │           ├── scope.md               # Sprint 1 Frozen Scope Agreement
+│           ├── issue-backlog.md       # Sprint 1 Work Breakdown (6 Consolidated Issues)
 │           ├── feature-contracts.md   # Part E: Feature SDS & API Contracts (F-01..F-09)
 │           ├── test-data.md           # Seed Data & Environment Setup Specification
 │           ├── test-specification.md  # Software Test Specification (STS)
@@ -87,14 +88,14 @@ Whatsss-PMandELS/
 
 ---
 
-## 🚀 Local Setup & Development Guide
+## 6. Local Setup & Development Guide
 
-### 1. Prerequisites
+### 6.1 Prerequisites
 * **Node.js**: v20 LTS or higher (`node -v`)
 * **npm**: v10 or higher (`npm -v`)
 * **Docker & Docker Compose**: Docker Desktop installed and running (`docker compose version`)
 
-### 2. Configure Environment Variables
+### 6.2 Configure Environment Variables
 ```bash
 # Clone the repository
 git clone https://github.com/Pilaiwan3492/Whatsss-PMandELS.git
@@ -104,7 +105,7 @@ cd Whatsss-PMandELS
 cp .env.example .env
 ```
 
-### 3. Start Local PostgreSQL Database
+### 6.3 Start Local PostgreSQL Database
 ```bash
 # Start PostgreSQL service in background
 docker compose up -d
@@ -113,6 +114,6 @@ docker compose up -d
 docker compose ps
 ```
 
-### 4. Development Workspaces (Planned for Feature Implementation)
+### 6.4 Development Workspaces
 * **Backend:** Located in `server/` (runs on port 5000)
 * **Frontend:** Located in `client/` (runs on port 5173)

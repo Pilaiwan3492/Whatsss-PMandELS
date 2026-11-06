@@ -15,19 +15,30 @@
 
 ---
 
-## 2. Shared Collaborative Responsibilities
+## 2. Planned Sequential Sprint 1 Work Allocation (6-Issue Structure)
 
-Both team members actively participated in:
-* Verifying alignment with CPE 334 Group Work Specifications (Theme 7) and Deliverable 1 rubrics.
-* Establishing the frozen Sprint 1 Golden Domain Journey scenario and test data baseline.
-* Agreeing on the technology stack (React + Express + PostgreSQL + Prisma).
-* Defining the Definition of Done (DoD) and engineering contract standards.
+In accordance with course pair-engineering guidelines, development responsibilities are distributed across two consecutive execution batches ensuring both students gain full-stack implementation, testing, and review experience:
+
+### Batch 1: Issues #1 to #3
+* **Primary Developer:** Pilaiwan Churdchu
+* **Peer Reviewer:** Aphichaya Klinhual
+* **Assigned Issues:**
+  1. `Issue #1`: `feat(auth): User Authentication, Authorization & Security Boundaries` (`F-01`, `F-02`)
+  2. `Issue #2`: `feat(account): Financial Account Model, Seed Environment & Opening Balance` (`F-03`)
+  3. `Issue #3`: `feat(transaction): Income Transaction Processing (Salary Inflow)` (`F-04`)
+
+### Batch 2: Issues #4 to #6
+* **Primary Developer:** Aphichaya Klinhual
+* **Peer Reviewer:** Pilaiwan Churdchu
+* **Assigned Issues:**
+  4. `Issue #4`: `feat(transaction): Credit Card Purchase & Split Allocation Engine` (`F-05`, `F-06`)
+  5. `Issue #5`: `feat(transaction): Credit Card Debt Settlement (Repayment)` (`F-07`)
+  6. `Issue #6`: `feat(report): Financial Summaries, Transaction History & Golden Journey UI` (`F-08`, `F-09`)
 
 ---
 
-## 3. Contribution Verification Policy
+## 3. Review & Governance Principles
 
-Detailed task execution, issue assignees, and pull request reviews will be maintained incrementally throughout implementation:
-* No feature branch will be merged without substantive peer review from the teammate.
-* Authors do not approve their own pull requests.
-* Equal commit counts are not required, but both students share accountability for explaining all sampled requirements, code, and test designs.
+1. **Substantive Peer Review:** No branch is merged into `sprint-1` without a documented pull request review containing substantive verification feedback from the designated reviewer.
+2. **Author Isolation:** Authors never approve their own pull requests.
+3. **Collective Ownership:** Both students must be prepared to explain any sampled requirement, architectural decision, test case, or implementation detail during course assessments.

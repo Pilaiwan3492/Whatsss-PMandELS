@@ -17,10 +17,10 @@
 
 | Engineering Activity | Actual AI Assistance to Date | Human Verification & Oversight Status | Status |
 |---|---|---|:---:|
-| **Repository Scaffolding & Configuration** | Assisted in drafting `README.md`, `.gitignore`, `.env.example`, `docker-compose.yml`, and `.github/` templates. | Both students inspected generated configuration files and verified paths locally. | 🟢 Verified |
-| **Requirements Baseline Structuring (Part A)** | Formatted SRS document (`docs/srs.md`) ensuring separation between full product scope and Sprint 1 Golden Slice. | Students validated domain logic against Theme 7 brief and adjusted account/role boundaries. | 🟢 Verified |
-| **Feature Inventory & Traceability (Part B)** | Structured `docs/features.md` and `docs/traceability.md` mapping requirements to features and sprints. | Students confirmed feature IDs (`F-01..F-18`) and verified that DevOps was excluded from product features. | 🟢 Verified |
-| **Engineering Contracts & Test Specifications (Part E)** | Drafted `docs/sprints/sprint-1/feature-contracts.md`, `test-specification.md`, and `dod.md`. | Students calibrated acceptance criteria and test preconditions against the Golden Journey. | 🟢 Verified |
+| **Repository Scaffolding & Configuration** | Assisted in drafting `README.md`, `.gitignore`, `.env.example`, `docker-compose.yml`, and `.github/` templates. | Both students inspected generated configuration files and verified paths locally. | [Verified] |
+| **Requirements Baseline Structuring (Part A)** | Formatted SRS document (`docs/srs.md`) ensuring separation between full product scope and Sprint 1 Golden Slice. | Students validated domain logic against Theme 7 brief and adjusted account/role boundaries. | [Verified] |
+| **Feature Inventory & Traceability (Part B)** | Structured `docs/features.md` and `docs/traceability.md` mapping requirements to features and sprints. | Students confirmed feature IDs (`F-01..F-18`) and verified that DevOps was excluded from product features. | [Verified] |
+| **Engineering Contracts & Test Specifications (Part E)** | Drafted `docs/sprints/sprint-1/feature-contracts.md`, `test-specification.md`, and `dod.md`. | Students calibrated acceptance criteria and test preconditions against the Golden Journey. | [Verified] |
 
 ---
 

@@ -1,4 +1,4 @@
-## 📌 Pull Request Overview
+## 1. Pull Request Overview
 
 * **Linked Issue:** Resolves #[Issue-Number]
 * **Feature / Contract ID:** `F-XX` (or Deliverable Part: [Part A/B/C/D/E/F])
@@ -8,12 +8,12 @@
 
 ---
 
-## 🛠 Summary of Changes
+## 2. Summary of Changes
 * *Concise description of changes, behavior implemented, or documentation updated.*
 
 ---
 
-## 🧪 Verification & Automated Test Evidence
+## 3. Verification & Automated Test Evidence
 * **Test Command:** `npm test` (or relevant test execution command)
 * **Tested Commit:** `[Commit Hash]`
 * **Results:** Passing: X, Failing: 0, Skipped: 0
@@ -28,7 +28,7 @@
 
 ---
 
-## 📋 Peer Review Checklist (Mandatory for Reviewer)
+## 4. Peer Review Checklist (Mandatory for Reviewer)
 - [ ] Code/documentation conforms to frozen engineering baseline
 - [ ] No extraneous scope outside Sprint 1 is introduced
 - [ ] Business rules and security boundaries are enforced on the backend
