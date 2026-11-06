@@ -36,8 +36,8 @@
 | `TEST-SEC-02` | `AC-02-1` | `server/tests/integration/access.test.ts` | Pending Execution | Pending Execution |
 | `TEST-SEC-03` | `AC-02-2` | `server/tests/integration/access.test.ts` | Pending Execution | Pending Execution |
 | `TEST-SEC-04` | `AC-02-4` | `server/tests/integration/csrf.test.ts` | Pending Execution | Pending Execution |
-| `TEST-SEC-05` | `AC-02-4` | `server/tests/integration/cors.test.ts` | Pending Execution | Pending Execution |
-| `TEST-SEC-06` | `AC-01-1`, `AC-02-4` | `server/tests/integration/content-type.test.ts` | Pending Execution | Pending Execution |
+| `TEST-SEC-05` | `System Security Contract (CORS Preflight), NFR-SEC-02` | `server/tests/integration/cors.test.ts` | Pending Execution | Pending Execution |
+| `TEST-SEC-06` | `System API Contract (Content-Type Validation and JSON Body Parsing)` | `server/tests/integration/content-type.test.ts` | Pending Execution | Pending Execution |
 | `TEST-OPEN-01` | `AC-03-1` | `server/tests/integration/account.test.ts` | Pending Execution | Pending Execution |
 | `TEST-OPEN-02` | `AC-03-4` | `server/tests/integration/summary.test.ts` | Pending Execution | Pending Execution |
 | `TEST-OPEN-03` | `AC-03-2` | `server/tests/integration/account.test.ts` | Pending Execution | Pending Execution |

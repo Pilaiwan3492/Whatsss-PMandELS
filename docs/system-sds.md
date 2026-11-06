@@ -323,7 +323,13 @@ To ensure robust security, avoid token leakage, and eliminate token storage inco
    * **Dedicated Validation Middleware:** Standard `express.json()` alone does not guarantee rejection of all unsupported request content types. A dedicated validation middleware (`RequireJsonContentType`) is deployed for endpoints that require a JSON request body.
    * **Rejection of Unsupported Content Types:** For endpoints expecting a JSON request body, requests with missing or unsupported `Content-Type` values (e.g., standard HTML form submissions `application/x-www-form-urlencoded` or `multipart/form-data`) are rejected with HTTP `400 Bad Request` and error code `INVALID_CONTENT_TYPE`.
    * **Malformed JSON Body Handling:** The Express JSON parser (`express.json({ limit: '100kb' })`) processes JSON streams for validated requests; any malformed JSON body triggers the centralized error handler, returning HTTP `400 Bad Request` with error code `INVALID_JSON_BODY` (`{ "success": false, "error": { "code": "INVALID_JSON_BODY", "message": "Malformed JSON in request body", "details": [] } }`). These responses preserve HTTP 400 per existing API conventions and are not changed to HTTP 415.
-   * **Conditional Scope:** The `RequireJsonContentType` middleware is applied conditionally based on the endpoint's request-body contract. It is applied to endpoints requiring a JSON request body (`POST /api/auth/login`, `POST /api/accounts/:id/opening-balance`, `POST /api/transactions`, `POST /api/transactions/repayment`) and must not be applied indiscriminately to endpoints that do not require a request body.
+   * **Conditional Scope:** It is applied conditionally to endpoints requiring a JSON request body, based on their defined API contracts:
+     * `POST /api/auth/login`
+     * `PATCH /api/accounts/:id/opening-balance`
+     * `POST /api/transactions/income`
+     * `POST /api/transactions/expense`
+     * `POST /api/transactions/repayment`
+     The middleware must not be applied indiscriminately to endpoints that do not require a JSON request body. Bodyless `POST /api/auth/logout` is explicitly excluded from JSON Content-Type validation.
    * **Bodyless Logout Compatibility (`POST /api/auth/logout`):** `POST /api/auth/logout` is a bodyless endpoint. It is not required to send `Content-Type: application/json` when it has no JSON request body. The logout endpoint must still undergo CSRF validation and applicable authentication/session checks; `RequireJsonContentType` must not incorrectly reject this bodyless request.
 
 5. **Session Identification & Verification:**
