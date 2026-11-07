@@ -25,10 +25,10 @@
 * **Execution Commands:**
   * Backend: `npm test` (within `server/`)
   * Frontend: `npm test` (within `client/`)
-* **Automated Test Execution Summary (184 Tests across 16 Suites):**
-  * Backend Unit Tests: 66 passed across 6 suites
+* **Automated Test Execution Summary (187 Tests across 16 Suites):**
+  * Backend Unit Tests: 69 passed across 6 suites
     * `accountLock.test.ts`: 9 passed (hardened ID validation, deduplication, atomic abort without partial lock, and count mismatch concurrency conflict detection)
-    * `testSafety.test.ts`: 24 passed (isolated test database exact match verification [whatsss_test], rejection of whatsss_db and production_test regardless of GITHUB_ACTIONS/CI flags, bounded-retry snapshot restoration with failure reporting, user/account snapshot restoration, and local environment guard)
+    * `testSafety.test.ts`: 27 passed (immutable test database exact match verification [whatsss_test], rejection of whatsss_db, rejection of custom TEST_DATABASE_NAME and expectedDbName overrides, rejection of production_test regardless of GITHUB_ACTIONS/CI flags, bounded-retry snapshot restoration with failure reporting, user/account snapshot restoration, and local environment guard)
     * `decimal.test.ts`: 16 passed (Prisma.Decimal validation, boundary checks, micro-precision rejection)
     * `config.test.ts`: 5 passed
     * `seed.test.ts`: 8 passed
@@ -46,8 +46,8 @@
     * `ProtectedRoute.test.tsx`: 4 passed
     * `AccountListPage.test.tsx`: 7 passed (5 grouped account sections, decimal validation, and maximum allowed limit enforcement)
   * Execution Environment Totals:
-    * Local Environment (without live PostgreSQL): 172 passed | 12 skipped (184 total)
-    * CI Environment (with live PostgreSQL 16 container): 184 passed | 0 skipped (184 total)
+    * Local Environment (without live PostgreSQL): 175 passed | 12 skipped (187 total)
+    * CI Environment (with live PostgreSQL 16 container): 187 passed | 0 skipped (187 total)
 
 ### 2.1 Completed Work Package Evidence (WP-01: Authentication & Access Control)
 | Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |

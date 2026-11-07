@@ -342,6 +342,42 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
       expect(result.reason).toContain('Live database tests are not enabled in local developer environment');
     });
 
+    it('custom TEST_DATABASE_NAME environment variable cannot authorize another database', () => {
+      const origEnv = process.env.TEST_DATABASE_NAME;
+      try {
+        process.env.TEST_DATABASE_NAME = 'custom_test_db';
+        const customUrl = 'postgresql://whatsss_user:password@localhost:5432/custom_test_db';
+        const result = validateTestDatabaseUrl(customUrl, { isCI: true });
+        expect(result.isValid).toBe(false);
+        expect(result.reason).toContain('Expected exact match: "whatsss_test"');
+      } finally {
+        if (origEnv !== undefined) {
+          process.env.TEST_DATABASE_NAME = origEnv;
+        } else {
+          delete process.env.TEST_DATABASE_NAME;
+        }
+      }
+    });
+
+    it('custom expectedDbName option cannot authorize another database', () => {
+      const customUrl = 'postgresql://whatsss_user:password@localhost:5432/custom_db';
+      const result = validateTestDatabaseUrl(customUrl, { isCI: true, expectedDbName: 'custom_db' });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('cannot override the immutable test database requirement ("whatsss_test")');
+    });
+
+    it('arbitrary local database name is rejected even when allowLiveDb is true', () => {
+      const arbitraryUrl = 'postgresql://whatsss_user:password@localhost:5432/arbitrary_dev_db';
+      const result = validateTestDatabaseUrl(arbitraryUrl, { isCI: false, allowLiveDb: true });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toMatch(/contains forbidden production\/development keyword|Expected exact match: "whatsss_test"/);
+
+      const arbitraryTestUrl = 'postgresql://whatsss_user:password@localhost:5432/arbitrary_test';
+      const result2 = validateTestDatabaseUrl(arbitraryTestUrl, { isCI: false, allowLiveDb: true });
+      expect(result2.isValid).toBe(false);
+      expect(result2.reason).toContain('Expected exact match: "whatsss_test"');
+    });
+
     it('assertTestDatabase throws immediately with fatal error when verification fails', () => {
       const badUrl = 'postgresql://admin:secret@production-db.internal:5432/prod_db';
       expect(() => {

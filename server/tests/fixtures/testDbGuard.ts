@@ -91,13 +91,23 @@ export function validateTestDatabaseUrl(
     };
   }
 
-  const designatedDb = (options.expectedDbName || process.env.TEST_DATABASE_NAME || DESIGNATED_TEST_DB).toLowerCase();
-  if (dbName !== designatedDb) {
+  // Caller options (e.g. expectedDbName) cannot override the immutable test database requirement
+  if (options.expectedDbName && options.expectedDbName.toLowerCase() !== DESIGNATED_TEST_DB) {
     return {
       isValid: false,
       reason:
-        `Database name "${dbName}" is not the authorized test database. Expected exact match: "${designatedDb}". ` +
-        `Generic database names or non-test databases are strictly prohibited.`
+        `Custom expectedDbName "${options.expectedDbName}" cannot override the immutable test database requirement ("${DESIGNATED_TEST_DB}").`
+    };
+  }
+
+  // The authorized test database name is strictly immutable: exactly 'whatsss_test'.
+  // Environment variables (such as TEST_DATABASE_NAME) and caller options cannot override this invariant.
+  if (dbName !== DESIGNATED_TEST_DB) {
+    return {
+      isValid: false,
+      reason:
+        `Database name "${dbName}" is not the authorized test database. Expected exact match: "${DESIGNATED_TEST_DB}". ` +
+        'Generic database names, non-test databases, and configuration overrides are strictly prohibited.'
     };
   }
 
@@ -107,7 +117,7 @@ export function validateTestDatabaseUrl(
       isValid: false,
       reason:
         'Live database tests are not enabled in local developer environment. ' +
-        `Set ALLOW_LIVE_DB_TESTS="true" with dedicated test database "${designatedDb}" to run live tests.`
+        `Set ALLOW_LIVE_DB_TESTS="true" with dedicated test database "${DESIGNATED_TEST_DB}" to run live tests.`
     };
   }
 
