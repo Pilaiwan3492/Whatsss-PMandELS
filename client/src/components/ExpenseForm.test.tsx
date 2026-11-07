@@ -409,4 +409,39 @@ describe('Frontend Component: ExpenseForm Split Allocation Engine (WP-04, F-05, 
     });
     expect(transactionApi.recordExpense).not.toHaveBeenCalled();
   });
+
+  it('TEST-UI-EXP-13: directly rejects non-numeric amounts like 1000abc on total and allocation amounts (AC-05-3)', async () => {
+    render(
+      <ExpenseForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    // Test non-numeric on total amount
+    fireEvent.change(screen.getByLabelText(/Total Amount/i), { target: { value: '1000abc' } });
+    const form = screen.getByRole('dialog').querySelector('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText('Transaction amount must be a valid positive number.')).toBeDefined();
+    });
+    expect(transactionApi.recordExpense).not.toHaveBeenCalled();
+
+    // Test non-numeric 1000abc on allocation line
+    fireEvent.change(screen.getByLabelText(/Total Amount/i), { target: { value: '3000.00' } });
+    fireEvent.change(screen.getByLabelText('Category for line 1'), { target: { value: 'expense-dining-1' } });
+    fireEvent.change(screen.getByLabelText('Amount for line 1'), { target: { value: '1000abc' } });
+    fireEvent.change(screen.getByLabelText('Category for line 2'), { target: { value: 'expense-grocery-2' } });
+    fireEvent.change(screen.getByLabelText('Amount for line 2'), { target: { value: '2000.00' } });
+
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText('Allocation amount for line 1 must be a valid positive number.')).toBeDefined();
+    });
+    expect(transactionApi.recordExpense).not.toHaveBeenCalled();
+  });
 });

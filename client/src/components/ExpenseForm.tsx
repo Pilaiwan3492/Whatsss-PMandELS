@@ -137,16 +137,15 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
     if (/[eE]/.test(trimmedTotal)) {
       return 'Exponent notation is not allowed for transaction amounts.';
     }
-    if (!/^-?\d+(\.\d+)?$/.test(trimmedTotal)) {
+    if (!/^\d+(\.\d+)?$/.test(trimmedTotal) || trimmedTotal.startsWith('-')) {
       return 'Transaction amount must be a valid positive number.';
-    }
-    const num = parseFloat(trimmedTotal);
-    if (isNaN(num) || num <= 0) {
-      return 'Transaction amount must be strictly greater than 0.00.';
     }
     const parts = trimmedTotal.split('.');
     if (parts.length === 2 && parts[1].length > 2) {
       return 'Transaction amount allows at most 2 decimal places.';
+    }
+    if (toCents(trimmedTotal) <= 0) {
+      return 'Transaction amount must be strictly greater than 0.00.';
     }
 
     if (!transactionDate || transactionDate.trim().length === 0) {
@@ -175,16 +174,15 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
       if (/[eE]/.test(rawAmount)) {
         return `Exponent notation is not allowed for allocation line ${i + 1}.`;
       }
-      if (!/^-?\d+(\.\d+)?$/.test(rawAmount)) {
+      if (!/^\d+(\.\d+)?$/.test(rawAmount) || rawAmount.startsWith('-')) {
         return `Allocation amount for line ${i + 1} must be a valid positive number.`;
-      }
-      const rowNum = parseFloat(rawAmount);
-      if (isNaN(rowNum) || rowNum <= 0) {
-        return `Allocation amount for line ${i + 1} must be strictly greater than 0.00.`;
       }
       const rowParts = rawAmount.split('.');
       if (rowParts.length === 2 && rowParts[1].length > 2) {
         return `Allocation line ${i + 1} allows at most 2 decimal places.`;
+      }
+      if (toCents(rawAmount) <= 0) {
+        return `Allocation amount for line ${i + 1} must be strictly greater than 0.00.`;
       }
     }
 
@@ -324,8 +322,8 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
                 <div className="expense-amount-wrapper">
                   <span className="expense-currency-symbol">฿</span>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     id="totalAmount"
                     className="expense-input expense-amount-input"
                     placeholder="0.00"
@@ -447,8 +445,8 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
                           <div className="expense-amount-wrapper">
                             <span className="expense-card-currency-symbol">฿</span>
                             <input
-                              type="number"
-                              step="0.01"
+                              type="text"
+                              inputMode="decimal"
                               id={amountId}
                               className="expense-input expense-alloc-amount-input"
                               placeholder="0.00"
