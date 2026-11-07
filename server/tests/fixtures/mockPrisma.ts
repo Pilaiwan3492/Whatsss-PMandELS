@@ -28,6 +28,27 @@ export interface MockAccountRecord {
   updated_at: Date;
 }
 
+export type TransactionForm = 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
+
+export interface MockTransactionRecord {
+  id: string;
+  user_id: string;
+  primary_account_id: string;
+  form: TransactionForm;
+  total_amount: Prisma.Decimal;
+  transaction_date: Date;
+  description: string | null;
+  created_at: Date;
+}
+
+export interface MockAllocationLineRecord {
+  id: string;
+  transaction_id: string;
+  target_account_id: string;
+  amount: Prisma.Decimal;
+  notes: string | null;
+}
+
 export const mockUsers: MockUserRecord[] = [
   {
     id: 'user-a-uuid',
@@ -224,6 +245,52 @@ export let mockAccounts: MockAccountRecord[] = JSON.parse(JSON.stringify(INITIAL
   updated_at: new Date(acc.updated_at)
 }));
 
+export let mockTransactions: MockTransactionRecord[] = [];
+export let mockAllocationLines: MockAllocationLineRecord[] = [];
+
+export const MOCK_UUIDS = {
+  DEMO_CHECKING: '11111111-1111-4111-8111-111111111101',
+  DEMO_CC: '11111111-1111-4111-8111-111111111102',
+  DEMO_SALARY: '11111111-1111-4111-8111-111111111103',
+  DEMO_DINING: '11111111-1111-4111-8111-111111111104',
+  DEMO_GROCERY: '11111111-1111-4111-8111-111111111105',
+  OTHER_CHECKING: '22222222-2222-4222-8222-222222222201',
+  OTHER_CC: '22222222-2222-4222-8222-222222222202',
+  OTHER_SALARY: '22222222-2222-4222-8222-222222222203',
+  OTHER_DINING: '22222222-2222-4222-8222-222222222204',
+  OTHER_GROCERY: '22222222-2222-4222-8222-222222222205',
+  ADMIN_CHECKING: '33333333-3333-4333-8333-333333333301',
+  ADMIN_CC: '33333333-3333-4333-8333-333333333302',
+  ADMIN_SALARY: '33333333-3333-4333-8333-333333333303',
+  ADMIN_DINING: '33333333-3333-4333-8333-333333333304',
+  ADMIN_GROCERY: '33333333-3333-4333-8333-333333333305'
+};
+
+export function useMockUuidAccounts(): void {
+  const idMap: Record<string, string> = {
+    'acc-demo-checking': MOCK_UUIDS.DEMO_CHECKING,
+    'acc-demo-cc': MOCK_UUIDS.DEMO_CC,
+    'acc-demo-salary': MOCK_UUIDS.DEMO_SALARY,
+    'acc-demo-dining': MOCK_UUIDS.DEMO_DINING,
+    'acc-demo-grocery': MOCK_UUIDS.DEMO_GROCERY,
+    'acc-other-checking': MOCK_UUIDS.OTHER_CHECKING,
+    'acc-other-cc': MOCK_UUIDS.OTHER_CC,
+    'acc-other-salary': MOCK_UUIDS.OTHER_SALARY,
+    'acc-other-dining': MOCK_UUIDS.OTHER_DINING,
+    'acc-other-grocery': MOCK_UUIDS.OTHER_GROCERY,
+    'acc-admin-checking': MOCK_UUIDS.ADMIN_CHECKING,
+    'acc-admin-cc': MOCK_UUIDS.ADMIN_CC,
+    'acc-admin-salary': MOCK_UUIDS.ADMIN_SALARY,
+    'acc-admin-dining': MOCK_UUIDS.ADMIN_DINING,
+    'acc-admin-grocery': MOCK_UUIDS.ADMIN_GROCERY
+  };
+  for (const acc of mockAccounts) {
+    if (idMap[acc.id]) {
+      acc.id = idMap[acc.id];
+    }
+  }
+}
+
 export function resetMockUsers(): void {
   mockUsers[0].is_active = true;
   mockUsers[0].role = 'USER';
@@ -241,6 +308,11 @@ export function resetMockAccounts(): void {
     created_at: new Date(acc.created_at),
     updated_at: new Date(acc.updated_at)
   }));
+}
+
+export function resetMockTransactions(): void {
+  mockTransactions = [];
+  mockAllocationLines = [];
 }
 
 export function findMockUser(criteria: { username?: string; email?: string; id?: string }) {

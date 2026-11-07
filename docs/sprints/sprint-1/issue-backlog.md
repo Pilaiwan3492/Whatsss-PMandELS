@@ -89,15 +89,15 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
   5. Once locked, any subsequent opening balance update returns HTTP 422 (`OPENING_BALANCE_LOCKED`).
 - [x] Implement atomic account lock service (`accountLock.service.ts` with batch validation, ID deduplication, and atomic abort).
 - [x] Verify lock service commit/rollback at service-level against live PostgreSQL (`TEST-OPEN-04`).
-- [ ] Integrate lock service into actual transaction creation workflow in WP-03.
-- [ ] Verify transaction-triggered locking end-to-end in WP-03.
+- [x] Integrate lock service into actual transaction creation workflow in WP-03.
+- [x] Verify transaction-triggered locking end-to-end in WP-03 (`TEST-OPEN-04`).
 - [x] Implement automated integration tests (`TEST-OPEN-01..04`, `TEST-SEC-01`).
 
 #### Acceptance Criteria Checklist
 - [x] `AC-03-1`: Setting opening balance of 10000.00 THB returns 200 OK and updates balance (`TEST-OPEN-01`).
 - [x] `AC-03-2`: Negative, non-numeric, or invalid decimal balance (e.g., `100.123`) rejected with 400 Bad Request (`INVALID_OPENING_BALANCE`) (`TEST-OPEN-03`).
-- [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).  
-  *(Boundary Note: In WP-02, the atomic lock service `accountLock.service.ts` is implemented and verified for batch deduplication, foreign ID rejection without partial locks, and commit/rollback behavior in live PostgreSQL. The transaction creation workflow calling it will be wired in WP-03 / Issue #4 when `POST /api/transactions` is introduced. End-to-end transaction-triggered locking will be marked complete upon WP-03 verification).*
+- [x] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).  
+  *(Boundary Note: In WP-02, the atomic lock service `accountLock.service.ts` was implemented and service-verified. In WP-03, it is integrated into `POST /api/transactions/income` inside the atomic `prisma.$transaction`, locking the destination Cash account permanently upon commit).*
 - [x] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 
 ---
@@ -117,17 +117,18 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 As an authenticated user, I want to record my received salary into my bank account with a transaction date, so that my cash balance and income summary increase accordingly.
 
 #### Implementation Tasks
-- [ ] Implement `Transaction` and `AllocationLine` models in Prisma schema.
-- [ ] Implement `POST /api/transactions/income` endpoint accepting destination cash account, amount, date, and income category account.
-- [ ] Enforce database transaction wrapping transaction insertion (Transaction 1 of Golden Journey), 1 allocation line targeting `Salary`, and atomic opening balance lock.
-- [ ] Verify cash account balance increases by the received amount (`BR-03`).
-- [ ] Implement automated integration tests (`TEST-INC-01..02`).
+- [x] Implement `Transaction` and `AllocationLine` models in Prisma schema (`TransactionForm` enum, foreign keys, indexes).
+- [x] Implement `POST /api/transactions/income` endpoint accepting destination cash account, amount, date, and income category account.
+- [x] Enforce database transaction wrapping transaction insertion (Transaction 1 of Golden Journey), 1 allocation line targeting `Salary`, and atomic opening balance lock.
+- [x] Verify cash account balance increases by the received amount (`BR-03`).
+- [x] Implement frontend `IncomeForm` component and API client integration (`client/src/components/IncomeForm.tsx`).
+- [x] Implement automated integration and unit tests (`TEST-INC-01..02`, `TEST-OPEN-04`, `TEST-SEC-01`, `TEST-SEC-03`, `TEST-INC-DECIMAL`, `TEST-INC-ATOM`, `TEST-INC-CONCURRENT`, `TEST-UI-INC`).
 
 #### Acceptance Criteria Checklist
-- [ ] `AC-04-1`: Recording salary of 20000.00 THB on date 2026-11-06 returns 201 Created (`TEST-INC-01`).
-- [ ] Bank balance increases from 10000.00 THB to 30000.00 THB.
-- [ ] Income summary reflects 20000.00 THB.
-- [ ] `AC-04-2`: Invalid dates or non-positive amounts rejected with 400 Bad Request (`TEST-INC-02`).
+- [x] `AC-04-1`: Recording salary of 20000.00 THB on date 2026-11-06 returns 201 Created (`TEST-INC-01`).
+- [x] Bank balance increases from 10000.00 THB to 30000.00 THB.
+- [x] Income summary reflects 20000.00 THB.
+- [x] `AC-04-2`: Invalid dates or non-positive amounts rejected with 400 Bad Request (`TEST-INC-02`).
 
 ---
 

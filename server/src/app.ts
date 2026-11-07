@@ -6,6 +6,7 @@ import { requireJsonContentType } from './middlewares/contentType.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import authRoutes from './routes/auth.routes.js';
 import accountRoutes from './routes/account.routes.js';
+import transactionRoutes from './routes/transaction.routes.js';
 import financialRoutes from './routes/financial.routes.js';
 
 export const app = express();
@@ -28,6 +29,7 @@ app.use(cookieParser());
 // 6. Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/accounts', accountRoutes);
+app.use('/api/transactions', transactionRoutes);
 app.use('/api', financialRoutes);
 
 // 7. Global Error Handler

@@ -47,6 +47,7 @@ export function validateOpeningBalanceDecimal(val: unknown): {
 /**
  * GET /api/accounts
  * Retrieves all accounts owned by the authenticated tenant.
+ * Dynamically computes current_balance for CASH accounts using exact Decimal arithmetic.
  * Scoped strictly to authenticated req.user.id.
  */
 export async function getAccounts(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -65,19 +66,60 @@ export async function getAccounts(req: Request, res: Response, next: NextFunctio
       orderBy: { created_at: 'asc' }
     });
 
+    const zero = new Prisma.Decimal('0.00');
+    const cashAccountIds = accounts.filter((a) => a.type === 'CASH').map((a) => a.id);
+
+    const receiveMap = new Map<string, Prisma.Decimal>();
+    const paymentMap = new Map<string, Prisma.Decimal>();
+
+    if (typeof prisma.transaction?.groupBy === 'function' && cashAccountIds.length > 0) {
+      const grouped = await prisma.transaction.groupBy({
+        by: ['primary_account_id', 'form'],
+        where: {
+          user_id: userId,
+          primary_account_id: { in: cashAccountIds }
+        },
+        _sum: {
+          total_amount: true
+        }
+      });
+
+      for (const row of grouped) {
+        if (!row.primary_account_id) continue;
+        const sumVal = row._sum?.total_amount
+          ? new Prisma.Decimal(row._sum.total_amount.toString())
+          : zero;
+        if (row.form === 'RECEIVE_MONEY') {
+          receiveMap.set(row.primary_account_id, sumVal);
+        } else if (row.form === 'PAYMENT_CHARGE') {
+          paymentMap.set(row.primary_account_id, sumVal);
+        }
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: {
-        accounts: accounts.map((acc) => ({
-          id: acc.id,
-          user_id: acc.user_id,
-          name: acc.name,
-          type: acc.type,
-          opening_balance: Number(acc.opening_balance),
-          is_opening_locked: acc.is_opening_locked,
-          created_at: acc.created_at.toISOString(),
-          updated_at: acc.updated_at.toISOString()
-        }))
+        accounts: accounts.map((acc) => {
+          const openingDecimal = new Prisma.Decimal(acc.opening_balance.toString());
+          let currentBalanceDecimal = openingDecimal;
+          if (acc.type === 'CASH') {
+            const received = receiveMap.get(acc.id) || zero;
+            const paid = paymentMap.get(acc.id) || zero;
+            currentBalanceDecimal = openingDecimal.add(received).sub(paid);
+          }
+          return {
+            id: acc.id,
+            user_id: acc.user_id,
+            name: acc.name,
+            type: acc.type,
+            opening_balance: Number(openingDecimal.toFixed(2)),
+            current_balance: Number(currentBalanceDecimal.toFixed(2)),
+            is_opening_locked: acc.is_opening_locked,
+            created_at: acc.created_at.toISOString(),
+            updated_at: acc.updated_at.toISOString()
+          };
+        })
       }
     });
   } catch (err) {
@@ -122,6 +164,37 @@ export async function getAccountById(req: Request, res: Response, next: NextFunc
       return;
     }
 
+    const zero = new Prisma.Decimal('0.00');
+    const openingDecimal = new Prisma.Decimal(account.opening_balance.toString());
+    let currentBalanceDecimal = openingDecimal;
+
+    if (account.type === 'CASH' && typeof prisma.transaction?.aggregate === 'function') {
+      const receiveAgg = await prisma.transaction.aggregate({
+        where: {
+          user_id: userId,
+          primary_account_id: account.id,
+          form: 'RECEIVE_MONEY'
+        },
+        _sum: { total_amount: true }
+      });
+      const paymentAgg = await prisma.transaction.aggregate({
+        where: {
+          user_id: userId,
+          primary_account_id: account.id,
+          form: 'PAYMENT_CHARGE'
+        },
+        _sum: { total_amount: true }
+      });
+
+      const received = receiveAgg._sum?.total_amount
+        ? new Prisma.Decimal(receiveAgg._sum.total_amount.toString())
+        : zero;
+      const paid = paymentAgg._sum?.total_amount
+        ? new Prisma.Decimal(paymentAgg._sum.total_amount.toString())
+        : zero;
+      currentBalanceDecimal = openingDecimal.add(received).sub(paid);
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -130,7 +203,8 @@ export async function getAccountById(req: Request, res: Response, next: NextFunc
           user_id: account.user_id,
           name: account.name,
           type: account.type,
-          opening_balance: Number(account.opening_balance),
+          opening_balance: Number(openingDecimal.toFixed(2)),
+          current_balance: Number(currentBalanceDecimal.toFixed(2)),
           is_opening_locked: account.is_opening_locked,
           created_at: account.created_at.toISOString(),
           updated_at: account.updated_at.toISOString()
@@ -293,6 +367,7 @@ export async function updateOpeningBalance(req: Request, res: Response, next: Ne
           name: updatedAccount!.name,
           type: updatedAccount!.type,
           opening_balance: Number(updatedAccount!.opening_balance),
+          current_balance: Number(updatedAccount!.opening_balance),
           is_opening_locked: updatedAccount!.is_opening_locked,
           created_at: updatedAccount!.created_at.toISOString(),
           updated_at: updatedAccount!.updated_at.toISOString()

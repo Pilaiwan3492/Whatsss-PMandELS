@@ -8,6 +8,7 @@ export interface Account {
   name: string;
   type: AccountType;
   opening_balance: number;
+  current_balance?: number;
   is_opening_locked: boolean;
   created_at: string;
   updated_at: string;
