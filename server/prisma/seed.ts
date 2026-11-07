@@ -65,7 +65,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   const passwordHash = await bcrypt.hash(demoPassword, saltRounds);
 
   // Seed user_demo (USER)
-  await client.user.upsert({
+  const userDemo = await client.user.upsert({
     where: { username: 'user_demo' },
     update: { password_hash: passwordHash, role: 'USER', is_active: true },
     create: {
@@ -78,7 +78,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   });
 
   // Seed user_other (USER)
-  await client.user.upsert({
+  const userOther = await client.user.upsert({
     where: { username: 'user_other' },
     update: { password_hash: passwordHash, role: 'USER', is_active: true },
     create: {
@@ -93,7 +93,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   // NOTE: Hardcoded demo credentials are for local development/testing environments only.
   // Production admin account provisioning must be configured using environment secrets.
   // Seed admin_demo (ADMIN)
-  await client.user.upsert({
+  const adminDemo = await client.user.upsert({
     where: { username: 'admin_demo' },
     update: { password_hash: passwordHash, role: 'ADMIN', is_active: true },
     create: {
@@ -104,6 +104,39 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
       is_active: true
     }
   });
+
+  // Seed standard financial accounts for all demo users (user_demo, user_other, admin_demo)
+  // In accordance with WP-02 and Issue #3 backlog specifications.
+  // Note: While admin_demo has seeded baseline accounts in the database, API access to
+  // financial endpoints remains strictly blocked with 403 Forbidden under BR-10.
+  const standardAccounts = [
+    { name: 'Checking Bank', type: 'CASH' as const },
+    { name: 'Visa Credit Card', type: 'LOAN_TAKEN' as const },
+    { name: 'Salary', type: 'INCOME' as const },
+    { name: 'Dining', type: 'EXPENSE' as const },
+    { name: 'Grocery', type: 'EXPENSE' as const }
+  ];
+
+  for (const user of [userDemo, userOther, adminDemo]) {
+    for (const acc of standardAccounts) {
+      await client.account.upsert({
+        where: {
+          user_id_name: {
+            user_id: user.id,
+            name: acc.name
+          }
+        },
+        update: {},
+        create: {
+          user_id: user.id,
+          name: acc.name,
+          type: acc.type,
+          opening_balance: 0.00,
+          is_opening_locked: false
+        }
+      });
+    }
+  }
 
   console.log('Development seeding completed successfully.');
 }

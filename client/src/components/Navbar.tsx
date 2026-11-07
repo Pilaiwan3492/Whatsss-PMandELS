@@ -20,6 +20,16 @@ export const Navbar: React.FC = () => {
         <div className="d-flex align-items-center ms-auto">
           {isAuthenticated && user ? (
             <div className="d-flex align-items-center gap-3">
+              {user.role !== 'ADMIN' && (
+                <>
+                  <Link className="btn btn-outline-light btn-sm" to="/dashboard">
+                    Dashboard
+                  </Link>
+                  <Link className="btn btn-outline-light btn-sm" to="/accounts">
+                    Accounts
+                  </Link>
+                </>
+              )}
               <span className="text-light small">
                 Signed in as: <strong>{user.username}</strong>
               </span>

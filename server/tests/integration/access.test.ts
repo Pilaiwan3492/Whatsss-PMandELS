@@ -1,9 +1,25 @@
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import express from 'express';
+import cookieParser from 'cookie-parser';
 import { config } from '../../src/config/env.js';
 import { findMockUser } from '../fixtures/mockPrisma.js';
-import { testAccounts } from '../../src/controllers/mockFinancial.controller.js';
+import {
+  getAccountById as getStubAccountById,
+  updateAccount as updateStubAccount,
+  deleteAccount as deleteStubAccount,
+  createExpenseTransaction,
+  getTransactions,
+  getSummary,
+  testAccounts
+} from '../../src/controllers/mockFinancial.controller.js';
+import { corsMiddleware } from '../../src/middlewares/cors.js';
+import { csrfGuard } from '../../src/middlewares/csrfGuard.js';
+import { requireJsonContentType } from '../../src/middlewares/contentType.js';
+import { authGuard } from '../../src/middlewares/authGuard.js';
+import { roleGuard } from '../../src/middlewares/roleGuard.js';
+import { errorHandler } from '../../src/middlewares/errorHandler.js';
 
 vi.mock('../../src/prisma.js', () => {
   return {
@@ -27,6 +43,28 @@ vi.mock('../../src/prisma.js', () => {
 });
 
 import { app } from '../../src/app.js';
+
+// Dedicated isolated stub application for testing WP-01 tenancy boundary fixture
+// This fixture isolates legacy stub tests from production database-backed routes
+const stubApp = express();
+stubApp.use(corsMiddleware);
+stubApp.use(csrfGuard);
+stubApp.use(requireJsonContentType);
+stubApp.use(express.json());
+stubApp.use(cookieParser());
+
+const stubRouter = express.Router();
+stubRouter.use(authGuard);
+stubRouter.use(roleGuard);
+stubRouter.get('/accounts/:id', getStubAccountById);
+stubRouter.put('/accounts/:id', updateStubAccount);
+stubRouter.delete('/accounts/:id', deleteStubAccount);
+stubRouter.post('/transactions/expense', createExpenseTransaction);
+stubRouter.get('/transactions', getTransactions);
+stubRouter.get('/reports/summary', getSummary);
+
+stubApp.use('/api', stubRouter);
+stubApp.use(errorHandler);
 
 const TRUSTED_ORIGIN = 'http://localhost:5173';
 
@@ -57,7 +95,7 @@ function createAuthCookie(userId: string, username: string, role: 'USER' | 'ADMI
  * cross-tenant primary_account_id and allocation target_account_id references).
  *
  * Full database-backed relational query isolation (`where: { userId: req.user.id }` executed against PostgreSQL)
- * must be verified in WP-02 (Account table ownership) and WP-04 (Allocation cross-tenant target_account_id).
+ * is verified in WP-02 (`server/tests/integration/db-account.test.ts`) and WP-04.
  */
 describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 02, 03)', () => {
   const userACookie = createAuthCookie('user-a-uuid', 'user_demo', 'USER');
@@ -66,7 +104,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
 
   describe('TEST-SEC-01: Application-Tier Tenancy Isolation Stub Verification (AC-02-3, BR-01)', () => {
     it('allows User A to read their own account (acc-user-a)', async () => {
-      const readRes = await request(app)
+      const readRes = await request(stubApp)
         .get('/api/accounts/acc-user-a')
         .set('Cookie', userACookie);
 
@@ -76,7 +114,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
     });
 
     it('allows User A to send an update request for their own account', async () => {
-      const response = await request(app)
+      const response = await request(stubApp)
         .put('/api/accounts/acc-user-a')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
@@ -88,7 +126,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
     });
 
     it('allows User A to send a delete request for their own account', async () => {
-      const response = await request(app)
+      const response = await request(stubApp)
         .delete('/api/accounts/acc-user-a')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
@@ -99,7 +137,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
     });
 
     it('rejects User A attempting to read User B account with 404 RESOURCE_NOT_FOUND', async () => {
-      const foreignRes = await request(app)
+      const foreignRes = await request(stubApp)
         .get('/api/accounts/acc-user-b')
         .set('Cookie', userACookie);
 
@@ -111,7 +149,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
     });
 
     it('rejects User A attempting to update User B account with 404 RESOURCE_NOT_FOUND', async () => {
-      const updateRes = await request(app)
+      const updateRes = await request(stubApp)
         .put('/api/accounts/acc-user-b')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
@@ -124,7 +162,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
     });
 
     it('rejects User A attempting to delete User B account with 404 RESOURCE_NOT_FOUND', async () => {
-      const deleteRes = await request(app)
+      const deleteRes = await request(stubApp)
         .delete('/api/accounts/acc-user-b')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
@@ -136,7 +174,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
     });
 
     it('allows User B to read their own account (acc-user-b)', async () => {
-      const userBOwnRes = await request(app)
+      const userBOwnRes = await request(stubApp)
         .get('/api/accounts/acc-user-b')
         .set('Cookie', userBCookie);
 
@@ -149,7 +187,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
       const initialUserBBalance = testAccounts['acc-user-b'].balance;
       const initialUserABalance = testAccounts['acc-user-a'].balance;
 
-      const crossTenantRes = await request(app)
+      const crossTenantRes = await request(stubApp)
         .post('/api/transactions/expense')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
@@ -179,7 +217,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
       const initialUserBTargetBalance = testAccounts['acc-target-b'].balance;
       const initialUserABalance = testAccounts['acc-user-a'].balance;
 
-      const crossTenantRes = await request(app)
+      const crossTenantRes = await request(stubApp)
         .post('/api/transactions/expense')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
@@ -206,7 +244,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
     });
 
     it('TEST-SEC-01 Client User ID Spoofing: ignores userId in request body and derives identity exclusively from req.user.id', async () => {
-      const spoofingRes = await request(app)
+      const spoofingRes = await request(stubApp)
         .post('/api/transactions/expense')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
@@ -228,7 +266,7 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
     });
 
     it('TEST-SEC-01 Happy Path: allows User A transaction referencing only their own primary and target accounts', async () => {
-      const validRes = await request(app)
+      const validRes = await request(stubApp)
         .post('/api/transactions/expense')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')

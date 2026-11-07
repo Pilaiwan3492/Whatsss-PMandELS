@@ -52,6 +52,7 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
   testApp.use(express.json());
   testApp.put('/api/test/put-endpoint', (_req, res) => res.status(200).json({ success: true }));
   testApp.patch('/api/test/patch-endpoint', (_req, res) => res.status(200).json({ success: true }));
+  testApp.delete('/api/test/delete-endpoint', (_req, res) => res.status(200).json({ success: true, data: { message: 'Account deleted successfully' } }));
   testApp.use(errorHandler);
 
   describe('Case C: Endpoints Requiring a JSON Body (e.g. POST /api/auth/login)', () => {
@@ -311,8 +312,7 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
 
   describe('DELETE & CORS Preflight Behaviors', () => {
     it('DELETE bodyless endpoint with no Content-Type proceeds', async () => {
-      const res = await request(app)
-        .delete('/api/accounts/acc-user-a')
+      const res = await request(testApp).delete('/api/test/delete-endpoint')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Cookie', userCookie);
 
@@ -322,8 +322,7 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
     });
 
     it('DELETE bodyless endpoint with Content-Type: text/plain proceeds without restriction', async () => {
-      const res = await request(app)
-        .delete('/api/accounts/acc-user-a')
+      const res = await request(testApp).delete('/api/test/delete-endpoint')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'text/plain')
         .set('Cookie', userCookie);

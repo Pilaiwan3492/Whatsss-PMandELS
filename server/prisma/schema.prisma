@@ -12,15 +12,40 @@ enum Role {
   ADMIN
 }
 
+enum AccountType {
+  CASH
+  LOAN_TAKEN
+  LOAN_GIVEN
+  INCOME
+  EXPENSE
+}
+
 model User {
-  id            String   @id @default(uuid())
-  username      String   @unique
-  email         String   @unique
+  id            String    @id @default(uuid())
+  username      String    @unique
+  email         String    @unique
   password_hash String
-  role          Role     @default(USER)
-  is_active     Boolean  @default(true)
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  role          Role      @default(USER)
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+  accounts      Account[]
 
   @@map("users")
+}
+
+model Account {
+  id                String      @id @default(uuid())
+  user_id           String
+  user              User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  name              String      @db.VarChar(100)
+  type              AccountType
+  opening_balance   Decimal     @default(0.00) @db.Decimal(12, 2)
+  is_opening_locked Boolean     @default(false)
+  created_at        DateTime    @default(now())
+  updated_at        DateTime    @default(now()) @updatedAt
+
+  @@unique([user_id, name])
+  @@index([user_id])
+  @@map("accounts")
 }

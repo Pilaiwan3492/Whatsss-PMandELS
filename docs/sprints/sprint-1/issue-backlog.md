@@ -43,7 +43,7 @@ As a user or platform administrator, I want to authenticate securely and have th
 - [x] Implement `POST /api/auth/logout` clearing session cookie with matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production) and `Max-Age=0`.
 - [x] Implement `AuthGuard` middleware rejecting unauthenticated requests with HTTP 401 (`BR-09`).
 - [x] Implement `RoleGuard` middleware rejecting ADMIN access to financial routes with HTTP 403 (`BR-10`).
-- [ ] Implement tenant scoping ensuring user requests access only own records (`BR-01`).
+- [x] Implement tenant scoping ensuring user requests access only own records (`BR-01`).
 - [x] Implement CSRF Origin/Referer validation middleware rejecting untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
 - [x] Configure and verify CORS preflight (`OPTIONS`) handling ensuring preflights terminate before CSRF and auth without executing business operations (`TEST-SEC-05`).
 - [x] Implement conditional `RequireJsonContentType` middleware and malformed JSON error handling returning HTTP 400 (`INVALID_CONTENT_TYPE`, `INVALID_JSON_BODY`) while preserving bodyless logout compatibility (`TEST-SEC-06`).
@@ -57,7 +57,7 @@ As a user or platform administrator, I want to authenticate securely and have th
 - [x] `AC-01-5`: Calling logout clears cookie and subsequent protected call returns 401 (`TEST-AUTH-05`, `FR-01`).
 - [x] `AC-02-1`: Missing/invalid cookie returns 401 Unauthorized (`TEST-SEC-02`, `BR-09`).
 - [x] `AC-02-2`: ADMIN calling financial endpoints returns 403 Forbidden with zero data leak (`TEST-SEC-03`, `BR-10`).
-- [ ] `AC-02-3`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
+- [x] `AC-02-3`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
 - [x] `AC-02-4`: Origin/Referer validation rejects untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
 
 ---
@@ -77,24 +77,28 @@ As a user or platform administrator, I want to authenticate securely and have th
 As an authenticated user, I want to access my pre-seeded financial accounts and set an initial opening balance on my bank account before recording transactions, so that my starting cash position is accurately established without being counted as income.
 
 #### Implementation Tasks
-- [ ] Implement `Account` model in Prisma schema (`id`, `user_id`, `name`, `type`, `opening_balance`, `is_opening_locked` default `false`).
-- [ ] Implement seed script (`server/prisma/seed.ts`) populating `user_demo`, `user_other`, `admin_demo`, and the 5 accounts for each user (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`).
-- [ ] Implement `GET /api/accounts` returning accounts belonging to the authenticated user.
-- [ ] Implement `PATCH /api/accounts/:id/opening-balance` to set opening balance on eligible unlocked accounts (`opening_balance >= 0.00`, max 2 decimals).
-- [ ] Enforce opening balance locking rules:
+- [x] Implement `Account` model in Prisma schema (`id`, `user_id`, `name`, `type`, `opening_balance`, `is_opening_locked` default `false`).
+- [x] Implement seed script (`server/prisma/seed.ts`) populating `user_demo`, `user_other`, `admin_demo`, and the 5 accounts for each user (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`).
+- [x] Implement `GET /api/accounts` returning accounts belonging to the authenticated user.
+- [x] Implement `PATCH /api/accounts/:id/opening-balance` to set opening balance on eligible unlocked accounts (`opening_balance >= 0.00`, max 2 decimals).
+- [x] Enforce opening balance locking rules:
   1. Account initializes with `is_opening_locked = false`.
   2. User can update opening balance only before the first referencing transaction commits.
-  3. When first referencing transaction commits, account is locked atomically (`is_opening_locked = true`).
-  4. Locking executes atomically within the same database transaction (`prisma.$transaction`).
-  5. If transaction fails or rolls back, account is not locked.
-  6. Once locked, any subsequent opening balance update returns HTTP 422 (`OPENING_BALANCE_LOCKED`).
-- [ ] Implement automated integration tests (`TEST-OPEN-01..04`, `TEST-SEC-01`).
+  3. Locking executes atomically within the same database transaction (`prisma.$transaction`).
+  4. If transaction fails or rolls back, account is not locked.
+  5. Once locked, any subsequent opening balance update returns HTTP 422 (`OPENING_BALANCE_LOCKED`).
+- [x] Implement atomic account lock service (`accountLock.service.ts` with batch validation, ID deduplication, and atomic abort).
+- [x] Verify lock service commit/rollback at service-level against live PostgreSQL (`TEST-OPEN-04`).
+- [ ] Integrate lock service into actual transaction creation workflow in WP-03.
+- [ ] Verify transaction-triggered locking end-to-end in WP-03.
+- [x] Implement automated integration tests (`TEST-OPEN-01..04`, `TEST-SEC-01`).
 
 #### Acceptance Criteria Checklist
-- [ ] `AC-03-1`: Setting opening balance of 10000.00 THB returns 200 OK and updates balance (`TEST-OPEN-01`).
-- [ ] `AC-03-2`: Negative, non-numeric, or invalid decimal balance (e.g., `100.123`) rejected with 400 Bad Request (`INVALID_OPENING_BALANCE`) (`TEST-OPEN-03`).
-- [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).
-- [ ] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
+- [x] `AC-03-1`: Setting opening balance of 10000.00 THB returns 200 OK and updates balance (`TEST-OPEN-01`).
+- [x] `AC-03-2`: Negative, non-numeric, or invalid decimal balance (e.g., `100.123`) rejected with 400 Bad Request (`INVALID_OPENING_BALANCE`) (`TEST-OPEN-03`).
+- [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).  
+  *(Boundary Note: In WP-02, the atomic lock service `accountLock.service.ts` is implemented and verified for batch deduplication, foreign ID rejection without partial locks, and commit/rollback behavior in live PostgreSQL. The transaction creation workflow calling it will be wired in WP-03 / Issue #4 when `POST /api/transactions` is introduced. End-to-end transaction-triggered locking will be marked complete upon WP-03 verification).*
+- [x] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 
 ---
 

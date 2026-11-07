@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Navbar } from './components/Navbar.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
+import { AccountListPage } from './pages/AccountListPage.js';
 import { AccessDeniedPage } from './pages/AccessDeniedPage.js';
 import { ProtectedRoute } from './components/ProtectedRoute.js';
 import { useAuth } from './context/AuthContext.js';
@@ -40,6 +41,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute disallowAdmin={true}>
                 <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/accounts"
+            element={
+              <ProtectedRoute disallowAdmin={true}>
+                <AccountListPage />
               </ProtectedRoute>
             }
           />
