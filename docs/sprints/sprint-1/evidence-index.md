@@ -12,72 +12,64 @@
 
 * **Assessed Implementation Baseline Commit:** `887ebab6f478e4c979ac1e1e3055cf00cc856686` (`feat/auth-session-security` / PR #8)
 * **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
-* **Test Environment:** Node.js v20+, PostgreSQL 16 (GitHub Actions Service Container / Docker Compose), local development environment
-* **CI Verification Run for Implementation Baseline:** GitHub Actions Run [#42336172166](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42336172166) (Pull Request #8) / [Run #42336168757](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42336168757) (Push)
-* **Documentation Commit Distinction:** This index records the test verification of the implementation baseline commit. Edits to documentation (including this file) generate subsequent documentation commits on branch `feat/auth-session-security` (PR #8), each validated by its own automated CI execution.
+* **Test Environment:** Node.js v20+, PostgreSQL 16 (GitHub Actions Service Container / Docker Compose)
+* **CI Verification Run:** GitHub Actions Run [#42336172166](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42336172166) (PR #8)
 
-> **Important Scope Note:** Deliverable 1 / Sprint 1 is IN PROGRESS. Only WP-01 (Authentication & Session Security) is assessed in this PR. Financial domain work packages WP-02 through WP-06 (Opening Balance, Income, Expense, Allocations, Repayments, Summary) are pending implementation in subsequent work packages.
+> **Sprint 1 Scope Notice:** Work Package 1 (WP-01: Authentication & Session Security) is verified. Financial domain work packages WP-02 through WP-06 (Opening Balance, Income, Expense, Allocations, Repayments, Summary) are pending implementation in subsequent work packages.
 
 ---
 
 ## 2. Automated Test Execution Results
 
 * **Execution Commands:**
-  * Backend: `npm test` (within `server/` directory)
-  * Frontend: `npm test` (within `client/` directory)
+  * Backend: `npm test` (within `server/`)
+  * Frontend: `npm test` (within `client/`)
 * **WP-01 Automated Test Execution Summary (92 Tests across 10 Suites):**
-  * **Backend Unit Tests (17 tests across 3 suites):**
-    * `server/tests/unit/config.test.ts` (5 passed)
-    * `server/tests/unit/seed.test.ts` (8 passed)
-    * `server/tests/unit/password.test.ts` (4 passed — real bcrypt on in-memory fixtures; verifies bcrypt hash format, zero plaintext, cost factor >= 10)
-  * **Backend Integration Tests (71 tests across 6 suites):**
-    * `server/tests/integration/auth.test.ts` (11 passed — Mocked Prisma)
-    * `server/tests/integration/access.test.ts` (17 passed — Application-tier Stub)
-    * `server/tests/integration/csrf.test.ts` (12 passed — Mocked Prisma)
-    * `server/tests/integration/content-type.test.ts` (26 passed — Mocked Prisma)
-    * `server/tests/integration/cors.test.ts` (3 passed — Mocked Prisma)
-    * `server/tests/integration/db-password.test.ts` (2 passed in CI against live PostgreSQL 16; tests database password persistence and cryptographic hashing invariants; skipped locally when DB daemon is absent)
-  * **Frontend Component Tests (4 tests across 1 suite):**
-    * `client/src/components/ProtectedRoute.test.tsx` (4 passed)
-  * **CI Status:** 92 passing (88 backend + 4 frontend), 0 failing, 0 skipped in CI.
+  * Backend Unit Tests: 17 passed (`config.test.ts`: 5, `seed.test.ts`: 8, `password.test.ts`: 4)
+  * Backend Integration Tests: 71 passed (`auth.test.ts`: 11, `access.test.ts`: 17, `csrf.test.ts`: 12, `content-type.test.ts`: 26, `cors.test.ts`: 3, `db-password.test.ts`: 2)
+  * Frontend Component Tests: 4 passed (`ProtectedRoute.test.tsx`: 4)
+  * CI Status: 92 passed, 0 failed, 0 skipped in CI (88 backend + 4 frontend).
 
-### Test-to-Requirement Results Mapping
-| Test ID | Linked AC / System Contract | Test Name / Location | Execution Result | Tested Commit |
-|---|---|---|:---:|:---:|
+### 2.1 Completed Work Package Evidence (WP-01: Authentication & Security)
+| Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Commit |
+|---|---|---|---|:---:|
 | `TEST-AUTH-01` | `AC-01-1` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `887ebab` |
 | `TEST-AUTH-02` | `AC-01-2` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `887ebab` |
 | `TEST-AUTH-03` | `AC-01-3` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-AUTH-04` | `AC-01-4` | `server/tests/integration/db-password.test.ts`, `server/tests/unit/password.test.ts` | Passed — Live PostgreSQL (db-password) / In-memory Fixture (password.test.ts) | `887ebab` |
+| `TEST-AUTH-04` | `AC-01-4` | `server/tests/integration/db-password.test.ts`, `server/tests/unit/password.test.ts` | Passed — Live PostgreSQL / In-memory Fixture | `887ebab` |
 | `TEST-AUTH-05` | `AC-01-5` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `887ebab` |
 | `TEST-SEC-01` | `AC-02-3` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `887ebab` |
 | `TEST-SEC-02` | `AC-02-1` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `887ebab` |
 | `TEST-SEC-03` | `AC-02-2` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `887ebab` |
 | `TEST-SEC-04` | `AC-02-4` | `server/tests/integration/csrf.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-SEC-05` | `System Security Contract (CORS Preflight)` | `server/tests/integration/cors.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-SEC-06` | `System API Contract (Content-Type Validation and JSON Body Parsing)` | `server/tests/integration/content-type.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-OPEN-01` | `AC-03-1` | `server/tests/integration/account.test.ts` | Pending Execution | Pending Execution |
-| `TEST-OPEN-02` | `AC-03-4` | `server/tests/integration/summary.test.ts` | Pending Execution | Pending Execution |
-| `TEST-OPEN-03` | `AC-03-2` | `server/tests/integration/account.test.ts` | Pending Execution | Pending Execution |
-| `TEST-OPEN-04` | `AC-03-3` | `server/tests/integration/account.test.ts` | Pending Execution | Pending Execution |
-| `TEST-INC-01` | `AC-04-1` | `server/tests/integration/transaction.test.ts` | Pending Execution | Pending Execution |
-| `TEST-INC-02` | `AC-04-2` | `server/tests/integration/transaction.test.ts` | Pending Execution | Pending Execution |
-| `TEST-EXP-01` | `AC-05-1` | `server/tests/integration/transaction.test.ts` | Pending Execution | Pending Execution |
-| `TEST-EXP-02` | `AC-05-2` | `server/tests/integration/transaction.test.ts` | Pending Execution | Pending Execution |
-| `TEST-ALLOC-01`| `AC-06-1` | `server/tests/integration/transaction.test.ts` | Pending Execution | Pending Execution |
-| `TEST-ALLOC-02`| `AC-06-2` | `server/tests/integration/allocation.test.ts` | Pending Execution | Pending Execution |
-| `TEST-REPAY-01`| `AC-07-1` | `server/tests/integration/transaction.test.ts` | Pending Execution | Pending Execution |
-| `TEST-REPAY-02`| `AC-07-2` | `server/tests/integration/summary.test.ts` | Pending Execution | Pending Execution |
-| `TEST-REPAY-03`| `AC-07-4` | `server/tests/integration/repayment.test.ts` | Pending Execution | Pending Execution |
-| `TEST-REPAY-04`| `AC-07-5` | `server/tests/integration/repayment.test.ts` | Pending Execution | Pending Execution |
-| `TEST-REPAY-05`| `AC-07-3` | `server/tests/integration/repayment.test.ts` | Pending Execution | Pending Execution |
-| `TEST-REPAY-06`| `AC-07-6` | `server/tests/integration/repayment.test.ts` | Pending Execution | Pending Execution |
-| `TEST-BAL-01` | `AC-08-1` | `server/tests/unit/balance.test.ts` | Pending Execution | Pending Execution |
-| `TEST-HIST-01` | `AC-09-1` | `server/tests/integration/transaction.test.ts` | Pending Execution | Pending Execution |
-| `TEST-PERSIST-01`| `AC-09-2`| `server/tests/integration/persistence.test.ts` | Pending Execution | Pending Execution |
-| `TEST-E2E-01` | All Golden ACs | `server/tests/e2e/golden-journey.test.ts` | Pending Execution | Pending Execution |
+| `TEST-SEC-05` | System Contract (CORS) | `server/tests/integration/cors.test.ts` | Passed — Mocked Prisma | `887ebab` |
+| `TEST-SEC-06` | System Contract (Content-Type) | `server/tests/integration/content-type.test.ts` | Passed — Mocked Prisma | `887ebab` |
 
-> **Note on Pending Tests (`TEST-OPEN-01` through `TEST-E2E-01`):**  
-> Tests listed as `Pending Execution` belong to work packages WP-02 through WP-06 (financial account creation, transactions, allocations, repayments, and end-to-end golden domain journey). These tests are not part of WP-01 scope and will be implemented, executed, and recorded in their corresponding work packages once financial database models and endpoints are developed.
+### 2.2 Pending Work Packages (WP-02 through WP-06: Financial Domain)
+> **Note:** Financial models and domain endpoints are scheduled for subsequent work packages. The following tests remain pending implementation and execution.
+
+| Test ID | Linked AC / Feature | Test Location | Status |
+|---|---|---|:---:|
+| `TEST-OPEN-01` | `AC-03-1` (Account Opening) | `server/tests/integration/account.test.ts` | Pending Execution |
+| `TEST-OPEN-02` | `AC-03-4` (Opening Balance in Summary) | `server/tests/integration/summary.test.ts` | Pending Execution |
+| `TEST-OPEN-03` | `AC-03-2` (Invalid Opening Balance) | `server/tests/integration/account.test.ts` | Pending Execution |
+| `TEST-OPEN-04` | `AC-03-3` (Account Type Validation) | `server/tests/integration/account.test.ts` | Pending Execution |
+| `TEST-INC-01` | `AC-04-1` (Income Transaction) | `server/tests/integration/transaction.test.ts` | Pending Execution |
+| `TEST-INC-02` | `AC-04-2` (Income Balance Update) | `server/tests/integration/transaction.test.ts` | Pending Execution |
+| `TEST-EXP-01` | `AC-05-1` (Expense Transaction) | `server/tests/integration/transaction.test.ts` | Pending Execution |
+| `TEST-EXP-02` | `AC-05-2` (Expense Balance Deduction) | `server/tests/integration/transaction.test.ts` | Pending Execution |
+| `TEST-ALLOC-01`| `AC-06-1` (Equal Split Allocation) | `server/tests/integration/transaction.test.ts` | Pending Execution |
+| `TEST-ALLOC-02`| `AC-06-2` (Exact Split Allocation) | `server/tests/integration/allocation.test.ts` | Pending Execution |
+| `TEST-REPAY-01`| `AC-07-1` (Credit Repayment) | `server/tests/integration/transaction.test.ts` | Pending Execution |
+| `TEST-REPAY-02`| `AC-07-2` (Repayment Balance Update) | `server/tests/integration/summary.test.ts` | Pending Execution |
+| `TEST-REPAY-03`| `AC-07-4` (Target Account Validation) | `server/tests/integration/repayment.test.ts` | Pending Execution |
+| `TEST-REPAY-04`| `AC-07-5` (Negative Amount Validation) | `server/tests/integration/repayment.test.ts` | Pending Execution |
+| `TEST-REPAY-05`| `AC-07-3` (Zero Repayment Amount) | `server/tests/integration/repayment.test.ts` | Pending Execution |
+| `TEST-REPAY-06`| `AC-07-6` (Overpayment Handling) | `server/tests/integration/repayment.test.ts` | Pending Execution |
+| `TEST-BAL-01` | `AC-08-1` (Balance Invariant Formula) | `server/tests/unit/balance.test.ts` | Pending Execution |
+| `TEST-HIST-01` | `AC-09-1` (Transaction History Order) | `server/tests/integration/transaction.test.ts` | Pending Execution |
+| `TEST-PERSIST-01`| `AC-09-2` (Relational DB Persistence) | `server/tests/integration/persistence.test.ts` | Pending Execution |
+| `TEST-E2E-01` | All Golden ACs (E2E Domain Flow) | `server/tests/e2e/golden-journey.test.ts` | Pending Execution |
 
 ---
 
