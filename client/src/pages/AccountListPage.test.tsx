@@ -319,6 +319,50 @@ describe('Frontend Financial Accounts & Opening Balance Suite (WP-02)', () => {
     expect(patchSpy).not.toHaveBeenCalled();
   });
 
+  it('validates client-side input and rejects numbers exceeding maximum allowed limit', async () => {
+    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/auth/me') {
+        return { data: { success: true, data: { user: mockUserDemo } } };
+      }
+      if (url === '/accounts') {
+        return { data: { success: true, data: { accounts: mockAccountsList } } };
+      }
+      throw new Error(`Unhandled get url: ${url}`);
+    });
+
+    const patchSpy = vi.spyOn(axiosClient, 'patch');
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Checking Bank')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set Opening Balance' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Set Opening Balance: Checking Bank')).toBeDefined();
+    });
+
+    const input = screen.getByLabelText('Opening Balance (THB)');
+    fireEvent.change(input, { target: { value: '10000000000.00' } });
+
+    const form = input.closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText('Opening balance exceeds maximum allowed limit (9,999,999,999.99).')).toBeDefined();
+    });
+
+    expect(patchSpy).not.toHaveBeenCalled();
+  });
+
   it('redirects ADMIN attempting to access /accounts to /access-denied', async () => {
     vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/auth/me') {

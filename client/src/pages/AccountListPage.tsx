@@ -99,6 +99,11 @@ export const AccountListPage: React.FC = () => {
       return;
     }
 
+    if (num > 9999999999.99) {
+      setModalError('Opening balance exceeds maximum allowed limit (9,999,999,999.99).');
+      return;
+    }
+
     setIsSubmitting(true);
     setModalError(null);
     try {

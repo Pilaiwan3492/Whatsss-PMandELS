@@ -5,7 +5,8 @@ import {
   validateTestDatabaseUrl,
   assertTestDatabase,
   executeCleanupsSafely,
-  TestDbOptions
+  TestDbOptions,
+  DESIGNATED_TEST_DB
 } from '../fixtures/testDbGuard.js';
 
 /**
@@ -17,7 +18,9 @@ import {
  * 4. Cleanup failures are rethrown and not silently swallowed with console.error.
  * 5. Local environment guard skips live database integration tests unless ALLOW_LIVE_DB_TESTS=true is set.
  * 6. User snapshot captures and restores exact updated_at timestamp, password hash, role, and active status.
- * 7. Database URL verification strictly verifies isolated test database and rejects production/remote databases.
+ * 7. Database URL verification strictly enforces dedicated test database (whatsss_test) via exact matching
+ *    and rejects production, development (whatsss_db), and generic names regardless of CI/GitHub Actions flags.
+ * 8. Bounded-retry snapshot restoration executes safely and reports failures without claiming impossible guarantees.
  */
 describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)', () => {
   interface AccountSnapshot {
@@ -240,89 +243,114 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
     });
   });
 
-  describe('Database URL Safety Verification (Test DB Guard)', () => {
-    it('accepts CI service container database URL on localhost in GitHub Actions', () => {
-      const ciUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_db?schema=public';
-      const result = validateTestDatabaseUrl(ciUrl, { isGitHubActions: true, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
-      expect(result.isValid).toBe(true);
-    });
-
-    it('accepts GitHub Actions container database containing "test"', () => {
+  describe('Database URL Safety Verification (Test DB Guard — Part 1)', () => {
+    it('accepts dedicated test database (whatsss_test) in CI environment', () => {
       const ciUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_test?schema=public';
-      const result = validateTestDatabaseUrl(ciUrl, { isGitHubActions: true, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+      const result = validateTestDatabaseUrl(ciUrl, { isCI: true, allowLiveDb: false, nodeEnv: 'test' });
       expect(result.isValid).toBe(true);
     });
 
-    it('rejects whatsss_db in generic CI without GitHub Actions to prevent local bypass', () => {
-      const genericCiUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_db?schema=public';
-      const result = validateTestDatabaseUrl(genericCiUrl, { isGitHubActions: false, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
-      expect(result.isValid).toBe(false);
-      expect(result.reason).toContain('Setting CI=true on a generic/local machine does not grant access to "whatsss_db"');
-    });
-
-    it('accepts test-named database in generic CI', () => {
-      const genericCiTestUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_test?schema=public';
-      const result = validateTestDatabaseUrl(genericCiTestUrl, { isGitHubActions: false, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
-      expect(result.isValid).toBe(true);
-    });
-
-    it('accepts local dedicated test database containing "test" keyword when allowLiveDb is true', () => {
+    it('accepts dedicated test database (whatsss_test) in local environment when allowLiveDb is true', () => {
       const localTestUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_test?schema=public';
       const result = validateTestDatabaseUrl(localTestUrl, { isCI: false, allowLiveDb: true, nodeEnv: 'test' });
       expect(result.isValid).toBe(true);
     });
 
-    it('rejects local dev database without "test" keyword to prevent developer data mutation', () => {
+    it('rejects whatsss_db in CI environment (no special bypass for development database)', () => {
+      const ciUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_db?schema=public';
+      const result = validateTestDatabaseUrl(ciUrl, { isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('is the development database, not an isolated test database');
+    });
+
+    it('rejects whatsss_db even when GITHUB_ACTIONS=true is spoofed', () => {
+      const devUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_db?schema=public';
+      const result = validateTestDatabaseUrl(devUrl, { isGitHubActions: true, isCI: true, allowLiveDb: true, nodeEnv: 'test' });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('is the development database, not an isolated test database');
+    });
+
+    it('rejects whatsss_db in local environment even when allowLiveDb is true', () => {
       const devUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_db?schema=public';
       const result = validateTestDatabaseUrl(devUrl, { isCI: false, allowLiveDb: true, nodeEnv: 'test' });
       expect(result.isValid).toBe(false);
-      expect(result.reason).toContain('is not verified as a test database');
+      expect(result.reason).toContain('is the development database, not an isolated test database');
     });
 
-    it('rejects remote or non-loopback host to prevent external database corruption', () => {
+    it('rejects production_test database (forbidden production keyword)', () => {
+      const prodTestUrl = 'postgresql://whatsss_user:password@localhost:5432/production_test';
+      const result = validateTestDatabaseUrl(prodTestUrl, { isCI: true, allowLiveDb: true });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toMatch(/contains forbidden production\/development keyword/);
+    });
+
+    it('rejects generic database containing test that does not exactly match designated test db (e.g. whatsss_db_test)', () => {
+      const genericUrl = 'postgresql://whatsss_user:password@localhost:5432/whatsss_db_test';
+      const result = validateTestDatabaseUrl(genericUrl, { isCI: true, allowLiveDb: true });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('Expected exact match: "whatsss_test"');
+    });
+
+    it('rejects non-test database (e.g. dev_database, finance_prod) regardless of environment flags', () => {
+      const devUrl = 'postgresql://whatsss_user:password@localhost:5432/dev_finance';
+      const result = validateTestDatabaseUrl(devUrl, { isCI: true, isGitHubActions: true, allowLiveDb: true });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('contains forbidden production/development keyword "dev"');
+    });
+
+    it('rejects unparseable or invalid DATABASE_URL strings', () => {
+      expect(validateTestDatabaseUrl('', { isCI: true }).isValid).toBe(false);
+      expect(validateTestDatabaseUrl('   ', { isCI: true }).isValid).toBe(false);
+      expect(validateTestDatabaseUrl('not_a_valid_url', { isCI: true }).isValid).toBe(false);
+      expect(validateTestDatabaseUrl('http://localhost:5432/whatsss_test', { isCI: true }).isValid).toBe(false);
+    });
+
+    it('rejects remote or non-loopback host to prevent external database corruption even if CI is true', () => {
       const remoteUrl = 'postgresql://admin:secret@db.whatsss.com:5432/whatsss_test';
-      const result = validateTestDatabaseUrl(remoteUrl, { isCI: false, allowLiveDb: true });
+      const result = validateTestDatabaseUrl(remoteUrl, { isCI: true, isGitHubActions: true });
       expect(result.isValid).toBe(false);
       expect(result.reason).toContain('restricted to local/container test instances');
     });
 
-    it('rejects database names containing production keywords', () => {
-      const prodDbUrl = 'postgresql://whatsss_user:password@localhost:5432/whatsss_production';
-      const result = validateTestDatabaseUrl(prodDbUrl, { isGitHubActions: true, isCI: true, allowLiveDb: true });
-      expect(result.isValid).toBe(false);
-      expect(result.reason).toContain('forbidden production keyword');
+    it('rejects database names containing production keywords (prod, production, live, staging)', () => {
+      for (const kw of ['whatsss_prod', 'production_data', 'whatsss_live', 'staging_db']) {
+        const prodUrl = `postgresql://whatsss_user:password@localhost:5432/${kw}`;
+        const result = validateTestDatabaseUrl(prodUrl, { isCI: true, allowLiveDb: true });
+        expect(result.isValid).toBe(false);
+        expect(result.reason).toMatch(/forbidden production\/development keyword/);
+      }
     });
 
-    it('rejects execution when NODE_ENV is production', () => {
+    it('rejects execution when NODE_ENV is production even with valid test database name', () => {
       const url = 'postgresql://whatsss_user:password@localhost:5432/whatsss_test';
       const result = validateTestDatabaseUrl(url, { isCI: true, allowLiveDb: true, nodeEnv: 'production' });
       expect(result.isValid).toBe(false);
       expect(result.reason).toContain('strictly forbidden in production');
     });
 
-    it('assertTestDatabase throws immediately when verification fails', () => {
-      const badUrl = 'postgresql://admin:secret@production-db.internal:5432/prod_db';
-      expect(() => {
-        assertTestDatabase(badUrl, { isCI: false, allowLiveDb: true });
-      }).toThrow(/FATAL: Test database verification failed/);
-    });
-
-    it('rejects URL in GitHub Actions CI when host passes allowlist but database is not provisioned service database', () => {
-      const foreignDbInCi = 'postgresql://whatsss_user:password@localhost:5432/foreign_unrelated_db?schema=public';
-      const result = validateTestDatabaseUrl(foreignDbInCi, { isGitHubActions: true, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+    it('rejects NODE_ENV=test alone if database name is not whatsss_test', () => {
+      const url = 'postgresql://whatsss_user:password@localhost:5432/other_db';
+      const result = validateTestDatabaseUrl(url, { isCI: true, nodeEnv: 'test' });
       expect(result.isValid).toBe(false);
-      expect(result.reason).toContain('does not match the provisioned CI service container');
+      expect(result.reason).toContain('Expected exact match: "whatsss_test"');
     });
 
-    it('rejects local execution when allowLiveDb is false even if database contains "test"', () => {
+    it('rejects local execution when allowLiveDb is false even with whatsss_test', () => {
       const testDbUrl = 'postgresql://whatsss_user:password@localhost:5432/whatsss_test';
       const result = validateTestDatabaseUrl(testDbUrl, { isCI: false, allowLiveDb: false, nodeEnv: 'test' });
       expect(result.isValid).toBe(false);
       expect(result.reason).toContain('Live database tests are not enabled in local developer environment');
     });
+
+    it('assertTestDatabase throws immediately with fatal error when verification fails', () => {
+      const badUrl = 'postgresql://admin:secret@production-db.internal:5432/prod_db';
+      expect(() => {
+        assertTestDatabase(badUrl, { isCI: true, allowLiveDb: true });
+      }).toThrow(/FATAL: Test database verification failed/);
+    });
   });
 
-  describe('Cleanup Failure Isolation & Guaranteed Restoration', () => {
+  describe('Cleanup Failure Isolation & Bounded-Retry Restoration with Failure Reporting (Part 3)', () => {
     it('executes restoreUsers even when restoreAccount throws an error (failure isolation)', async () => {
       const mockPrisma = {
         account: {
@@ -360,7 +388,7 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
       // Execute cleanups: must throw error because restoreAccount failed after bounded retries,
       // but restoreUsers MUST still execute!
       await expect(executeCleanupsSafely(queue)).rejects.toThrow(
-        'PostgreSQL connection dropped during account cleanup'
+        /FATAL: Bounded-retry cleanup failed for 1 task\(s\)/
       );
 
       // Verify that restoreAccount was attempted with retry (2 times)
@@ -417,7 +445,7 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
       );
     });
 
-    it('guarantees user snapshot is restored when real seed execution throws an error', async () => {
+    it('attempts bounded-retry snapshot restoration and restores user state when real seed execution throws an error', async () => {
       // Mock client that simulates successful user upserts but failure during account upsert in real seed()
       const updatedUsers: any[] = [];
       const mockPrisma = {

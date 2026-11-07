@@ -48,7 +48,7 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
   let initialOtherAccountsSnapshot: AccountSnapshot[] = [];
   let initialDemoUntouchedAccountsSnapshot: AccountSnapshot[] = [];
 
-  // Track pending cleanup tasks to ensure guaranteed restoration in afterEach
+  // Track pending cleanup tasks using bounded-retry snapshot restoration with failure reporting
   const pendingCleanups: Array<() => Promise<void>> = [];
 
   beforeAll(async () => {
@@ -56,16 +56,15 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
     if (!isCI && !allowLiveDb) {
       console.warn(
         '[WP-02 NOTICE] Live PostgreSQL tests are disabled locally by default to protect developer databases. ' +
-        'Set ALLOW_LIVE_DB_TESTS=true with a dedicated test database to run locally.'
+        'Set ALLOW_LIVE_DB_TESTS=true with a dedicated test database ("whatsss_test") to run locally.'
       );
       isDbConnected = false;
       return;
     }
 
-    // 2. Validate that DATABASE_URL points to a verified, isolated test database
+    // 2. Validate that DATABASE_URL points to the dedicated, verified test database (whatsss_test)
     // If verification fails, ABORT IMMEDIATELY (throw Error, do not just warn)
     assertTestDatabase(databaseUrl, {
-      isGitHubActions,
       isCI,
       allowLiveDb,
       nodeEnv: process.env.NODE_ENV
@@ -123,8 +122,7 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
   });
 
   afterEach(async () => {
-    // Execute all registered cleanups safely; guarantees every cleanup is attempted
-    // even if an earlier cleanup throws, then collects and rethrows any errors
+    // Execute all registered cleanups safely using bounded-retry snapshot restoration with failure reporting
     await executeCleanupsSafely(pendingCleanups);
   });
 
@@ -323,7 +321,7 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       }
     });
 
-    it('guarantees database snapshot is restored when real seed execution encounters an error (Task 3 Real Seed Failure)', async (ctx) => {
+    it('attempts bounded-retry snapshot restoration and restores database state when real seed execution encounters an error (Task 3 Real Seed Failure)', async (ctx) => {
       if (!isDbConnected) {
         ctx.skip();
         return;
@@ -404,6 +402,100 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
         expect(u!.is_active).toBe(snap.is_active);
         expect(u!.updated_at.getTime()).toBe(snap.updated_at.getTime());
       }
+    });
+  });
+
+  describe('Live PostgreSQL Decimal Precision Verification (Part 2, F-03, AC-03-2)', () => {
+    it('verifies accepted and rejected boundary Decimal values through live API and asserts exact Prisma.Decimal in PostgreSQL', async (ctx) => {
+      if (!isDbConnected) {
+        ctx.skip();
+        return;
+      }
+
+      // Authenticate user_demo via real HTTP login
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .send({ username: 'user_demo', password: 'Password123!' });
+
+      expect(loginRes.status).toBe(200);
+      const userCookies = loginRes.headers['set-cookie'];
+
+      const userDemo = await prisma.user.findUnique({ where: { username: 'user_demo' } });
+      const checking = await prisma.account.findFirst({
+        where: { user_id: userDemo!.id, name: 'Checking Bank' }
+      });
+      expect(checking).toBeDefined();
+
+      // Snapshot checking account and register bounded-retry cleanup before mutation
+      const checkingSnap = await snapshotAccount(checking!.id);
+      pendingCleanups.push(async () => {
+        await restoreAccount(checkingSnap);
+      });
+
+      // 1. Accepted boundary values: 0.01, 0.29, 100.10, 9999999999.99
+      const acceptedValues = [
+        { input: 0.01, expectedStr: '0.01' },
+        { input: 0.29, expectedStr: '0.29' },
+        { input: 100.10, expectedStr: '100.10' },
+        { input: 9999999999.99, expectedStr: '9999999999.99' }
+      ];
+
+      for (const { input, expectedStr } of acceptedValues) {
+        const patchRes = await request(app)
+          .patch(`/api/accounts/${checking!.id}/opening-balance`)
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', userCookies)
+          .send({ opening_balance: input });
+
+        expect(patchRes.status, `Failed for accepted input ${input}`).toBe(200);
+        expect(patchRes.body.success).toBe(true);
+
+        // Query PostgreSQL directly using Prisma
+        const dbAcc = await prisma.account.findUniqueOrThrow({ where: { id: checking!.id } });
+        const expectedDecimal = new Prisma.Decimal(expectedStr);
+
+        // Verify exact Prisma.Decimal equality (no floating-point comparison)
+        expect(
+          dbAcc.opening_balance.equals(expectedDecimal),
+          `Prisma.Decimal comparison failed for ${input}: stored ${dbAcc.opening_balance.toString()} vs expected ${expectedStr}`
+        ).toBe(true);
+
+        // Verify trailing zeros and decimal precision format
+        expect(dbAcc.opening_balance.toFixed(2)).toBe(expectedStr);
+      }
+
+      // Capture current stored balance as baseline for rejected value tests
+      const baselineAcc = await prisma.account.findUniqueOrThrow({ where: { id: checking!.id } });
+      const baselineDecimal = baselineAcc.opening_balance;
+
+      // 2. Rejected boundary values: 100.123, 10000000000.00, -0.01
+      const rejectedValues = [100.123, 10000000000.00, -0.01];
+
+      for (const invalidInput of rejectedValues) {
+        const patchRes = await request(app)
+          .patch(`/api/accounts/${checking!.id}/opening-balance`)
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', userCookies)
+          .send({ opening_balance: invalidInput });
+
+        expect(patchRes.status, `Expected HTTP 400 for input ${invalidInput}`).toBe(400);
+        expect(patchRes.body.success).toBe(false);
+        expect(patchRes.body.error.code).toBe('INVALID_OPENING_BALANCE');
+
+        // Verify no unintended database update occurred; opening balance remains unchanged in PostgreSQL
+        const afterAcc = await prisma.account.findUniqueOrThrow({ where: { id: checking!.id } });
+        expect(
+          afterAcc.opening_balance.equals(baselineDecimal),
+          `Database was mutated on rejected input ${invalidInput}`
+        ).toBe(true);
+      }
+
+      // Clean up account back to original pre-test snapshot
+      await restoreAccount(checkingSnap);
     });
   });
 
