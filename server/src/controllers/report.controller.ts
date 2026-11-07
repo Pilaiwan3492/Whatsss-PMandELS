@@ -97,16 +97,25 @@ export async function getSummary(req: Request, res: Response, next: NextFunction
       }
     }
 
-    // Settlements/repayments targeting LOAN_TAKEN accounts decrease debt (BR-07)
+    // Settlements/repayments targeting LOAN_TAKEN accounts decrease debt (BR-07, WP-05)
+    // Repayments are explicitly PAYMENT_CHARGE transactions originating from a CASH account targeting a LOAN_TAKEN account
     if (typeof prisma.allocationLine?.aggregate === 'function' && loanTakenAccounts.length > 0) {
       const loanTakenIds = loanTakenAccounts.map((a) => a.id);
       const settlementAgg = await prisma.allocationLine.aggregate({
         where: {
           transaction: {
             user_id: userId,
-            form: 'PAYMENT_CHARGE'
+            form: 'PAYMENT_CHARGE',
+            primary_account: {
+              type: 'CASH',
+              user_id: userId
+            }
           },
-          target_account_id: { in: loanTakenIds }
+          target_account_id: { in: loanTakenIds },
+          target_account: {
+            type: 'LOAN_TAKEN',
+            user_id: userId
+          }
         },
         _sum: { amount: true }
       });

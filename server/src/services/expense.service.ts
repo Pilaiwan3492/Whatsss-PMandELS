@@ -510,14 +510,23 @@ export async function recordExpense(
 
         let debtTotal = new Prisma.Decimal(primaryAccount.opening_balance.toString()).add(chargeTotal);
 
-        // Subtract any settlement repayments targeting this account
+        // Subtract any debt repayment settlements targeting this credit card account (BR-07, WP-05)
+        // Repayments are explicitly PAYMENT_CHARGE transactions originating from a CASH account targeting a LOAN_TAKEN account
         const repaymentAgg = await tx.allocationLine.aggregate({
           where: {
             transaction: {
               user_id: userId,
-              form: 'PAYMENT_CHARGE'
+              form: 'PAYMENT_CHARGE',
+              primary_account: {
+                type: 'CASH',
+                user_id: userId
+              }
             },
-            target_account_id: primaryAccount.id
+            target_account_id: primaryAccount.id,
+            target_account: {
+              type: 'LOAN_TAKEN',
+              user_id: userId
+            }
           },
           _sum: { amount: true }
         });

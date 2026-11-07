@@ -130,6 +130,14 @@ vi.mock('../../src/prisma.js', () => {
           if (where?.transaction?.form && parentTxn.form !== where.transaction.form) {
             return false;
           }
+          if (where?.transaction?.primary_account?.type) {
+            const primaryAcc = mockAccounts.find((a) => a.id === parentTxn.primary_account_id);
+            if (!primaryAcc || primaryAcc.type !== where.transaction.primary_account.type) return false;
+          }
+          if (where?.transaction?.primary_account?.user_id) {
+            const primaryAcc = mockAccounts.find((a) => a.id === parentTxn.primary_account_id);
+            if (!primaryAcc || primaryAcc.user_id !== where.transaction.primary_account.user_id) return false;
+          }
           if (typeof where?.target_account_id === 'string' && al.target_account_id !== where.target_account_id) {
             return false;
           }
@@ -262,6 +270,73 @@ describe('Integration Test: Credit Card Purchase & Split Allocation (WP-04, F-05
       expect(summaryRes.status).toBe(200);
       expect(summaryRes.body.data.credit_debt).toBe(3000.00);
       expect(summaryRes.body.data.total_expense).toBe(3000.00);
+    });
+
+    it('verifies credit card debt formula strictly distinguishes credit purchases from cash-funded repayments (BR-07, BR-08, WP-05)', async () => {
+      // 1. Initial credit purchase of 3000.00 THB
+      const purchase1 = await request(app)
+        .post('/api/transactions/expense')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          primary_account_id: CC_ACCOUNT_ID,
+          total_amount: 3000.00,
+          transaction_date: '2026-11-06',
+          description: 'Initial Purchase',
+          allocations: [{ target_account_id: DINING_ID, amount: 3000.00 }]
+        });
+
+      expect(purchase1.status).toBe(201);
+      expect(purchase1.body.data.updated_debt.current_debt).toBe('3000.00');
+
+      // 2. Simulate a debt repayment from Checking Bank (CASH) to Visa Credit Card (LOAN_TAKEN) of 1000.00 THB (WP-05)
+      const repaymentTxnId = `repay-${Date.now()}`;
+      mockTransactions.push({
+        id: repaymentTxnId,
+        user_id: USER_A_ID,
+        primary_account_id: CHECKING_ID,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1000.00'),
+        transaction_date: new Date('2026-11-06'),
+        description: 'Credit Card Debt Repayment',
+        created_at: new Date()
+      });
+      mockAllocationLines.push({
+        id: `alloc-repay-${Date.now()}`,
+        transaction_id: repaymentTxnId,
+        target_account_id: CC_ACCOUNT_ID,
+        amount: new Prisma.Decimal('1000.00'),
+        notes: 'Debt settlement repayment'
+      });
+
+      // 3. Follow-up credit card purchase of 500.00 THB
+      const purchase2 = await request(app)
+        .post('/api/transactions/expense')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          primary_account_id: CC_ACCOUNT_ID,
+          total_amount: 500.00,
+          transaction_date: '2026-11-06',
+          description: 'Subsequent Purchase',
+          allocations: [{ target_account_id: GROCERY_ID, amount: 500.00 }]
+        });
+
+      expect(purchase2.status).toBe(201);
+      // Debt invariant: 0.00 (opening) + 3000.00 (purchase 1) - 1000.00 (repayment) + 500.00 (purchase 2) = 2500.00 THB
+      expect(purchase2.body.data.updated_debt.current_debt).toBe('2500.00');
+
+      // 4. Financial summary: credit_debt = 2500.00, total_expense = 3500.00 (repayment excluded per BR-08)
+      const summaryRes = await request(app)
+        .get('/api/reports/summary')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userACookie);
+
+      expect(summaryRes.status).toBe(200);
+      expect(summaryRes.body.data.credit_debt).toBe(2500.00);
+      expect(summaryRes.body.data.total_expense).toBe(3500.00);
     });
 
     it('accepts single allocation line equal to total amount', async () => {
