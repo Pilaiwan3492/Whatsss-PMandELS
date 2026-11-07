@@ -4,21 +4,21 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part F: Working Sprint 1 and Verification)  
-> **Status:** IN PROGRESS — Work Package 1 (WP-01), Work Package 2 (WP-02), Work Package 3 (WP-03), and Work Package 4 (WP-04) Merged into sprint-1; Work Package 5 (WP-05) Implemented & Verified on branch feat/credit-card-repayment (Awaiting Peer Review and Approval; WP-06 Pending Implementation)  
+> **Status:** COMPLETED — All Work Packages (WP-01 through WP-06) Fully Implemented, Verified, and Integrated into Sprint 1 Golden Domain Release Candidate (Branch `feat/summaries-history-e2e` ready for Peer Review)  
 
 ---
 
 ## 1. Release Identification
 
-* **Assessed Implementation Baseline Commit:** Branch `feat/credit-card-repayment` (WP-05 Credit Card Debt Settlement / Repayment)
-* **Base Branch Commit:** `2c6805c` (`sprint-1` merge of PR #11)
-* **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
-* **Target Issue:** [GitHub Issue #6](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/6)
+* **Assessed Implementation Baseline Commit:** Branch `feat/summaries-history-e2e` (WP-06 Financial Summaries, Transaction History & Golden Domain Journey Integration)
+* **Base Branch Commit:** `f9d4ad8` (`sprint-1` merge of PR #12)
+* **Release Tag:** `v0.1.0-sprint1` (Release Candidate ready for Deliverable 1 packaging)
+* **Target Issue:** [GitHub Issue #7](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/7)
 * **Assignee:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Test Environment:** Node.js v20+, PostgreSQL 16 (GitHub Actions Service Container / Docker Compose)
 
-> **Sprint 1 Scope Note:** This record reflects the implementation verification for WP-01 (Authentication & Session Security), WP-02 (Account Model & Opening Balance), WP-03 (Income Processing & Ledger Integration), and WP-04 (Credit Card Purchase & Split Allocation Engine), and WP-05 (Credit Card Debt Settlement / Repayment). WP-06 (Summary, History & Golden Domain Journey) will follow in sequence.
+> **Sprint 1 Scope Note:** This record reflects the final verification across all 6 Sprint 1 Work Packages: WP-01 (Authentication & Session Security), WP-02 (Account Model & Opening Balance), WP-03 (Income Processing & Ledger Integration), WP-04 (Credit Card Purchase & Split Allocation Engine), WP-05 (Credit Card Debt Settlement / Repayment), and WP-06 (Financial Summary, Transaction History & Golden Domain Journey E2E Integration).
 
 ---
 
@@ -151,18 +151,195 @@
 
 ---
 
-### 2.6 Pending Work Packages (WP-06: Financial Summaries, Transaction History & E2E)
-> **Note:** Final balances, chronological history, and Golden Journey E2E validation are scheduled for Work Package 6. The following tests remain pending implementation and execution.
-
-| Test ID | Linked AC / Feature | Test Location | Status |
-|---|---|---|:---:|
-| `TEST-BAL-01` | `AC-08-1` (Balance Invariant Formula) | `server/tests/unit/balance.test.ts` | Pending Execution |
-| `TEST-HIST-01` | `AC-09-1` (Transaction History Order) | `server/tests/integration/transaction.test.ts` | Pending Execution |
-| `TEST-PERSIST-01`| `AC-09-2` (Relational DB Persistence) | `server/tests/integration/persistence.test.ts` | Pending Execution |
-| `TEST-E2E-01` | All Golden ACs (E2E Domain Flow) | `server/tests/e2e/golden-journey.test.ts` | Pending Execution |
+### 2.6 Work Package 6 Evidence (WP-06: Financial Summaries, Transaction History & E2E)
+| Test ID | Linked AC / Feature | Test Location | Classification & Result | Tested Baseline |
+|---|---|---|---|:---:|
+| `TEST-BAL-01` | `AC-08-1`, `FR-10`, `BR-02`..`08` | `server/tests/unit/balance.test.ts` | Passed — Vitest Unit Test (5 test cases: verifies opening balance exclusion BR-02, salary inflow balance impact, split expense debt impact, category breakdown Dining 1000/Grocery 2000, final balances Bank 27000, Debt 0, Income 20000, Expense 3000, and NFR-DATA-01 decimal precision preservation) | WP-06 Branch |
+| `TEST-HIST-01` | `AC-09-1`, `FR-11`, `BR-01`, `BR-09`, `BR-10` | `server/tests/integration/transaction.test.ts` | Passed — Mocked Prisma HTTP API (7 test cases: verifies 401 unauthenticated, 403 admin financial barrier, tenancy isolation, empty state, exactly 3 recorded transactions and 4 allocation lines total, chronological date descending order, primary and target category metadata) | WP-06 Branch |
+| `TEST-PERSIST-01`| `AC-09-2`, `NFR-DATA-01` | `server/tests/integration/persistence.test.ts` | Passed — Live PostgreSQL HTTP API (Disconnects active PrismaClient, instantiates fresh connection pool simulating server process restart against whatsss_test without re-seeding, asserts identical retrieval of all 3 transactions, 4 allocation lines, and summary metrics Bank 27000, Debt 0, Income 20000, Expense 3000, Dining 1000, Grocery 2000) | WP-06 Branch |
+| `TEST-E2E-01` | All Golden ACs (`AC-03-1`..`AC-09-1`) | `server/tests/e2e/golden-journey.test.ts` | Passed — Live PostgreSQL HTTP API (Executes full sequential 4-step Golden Journey through HTTP API with live session cookies against whatsss_test: Step 1 Opening Balance 10,000 THB -> Step 2 Salary 20,000 THB -> Step 3 Split CC Purchase 3,000 THB -> Step 4 Repayment 3,000 THB -> Step 5 Final Summary Verification Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k -> Step 6 History Verification 3 transactions, 4 allocations) | WP-06 Branch |
+| `TEST-UI-DASH` | `AC-08-1`, `F-08` | `client/src/pages/DashboardPage.test.tsx` | Passed — Vitest / Testing Library (5 test cases: TEST-UI-DASH-01..05 covering 4 summary metric cards, category breakdown progress bars, recent transactions table, quick action navigation links, and error banner with retry) | WP-06 Branch |
+| `TEST-UI-HIST` | `AC-09-1`, `F-09` | `client/src/pages/TransactionHistoryPage.test.tsx` | Passed — Vitest / Testing Library (5 test cases: TEST-UI-HIST-01..05 covering 3 transactions and 4 allocation lines rendering, filter tabs by type, expandable split allocation rows, empty state placeholder, and error banner with retry) | WP-06 Branch |
 
 ---
 
 ## 3. Golden Domain Journey Execution Log & Captures
 
-*(Captures, terminal logs, and step-by-step API responses will be recorded upon executing the golden journey against the implemented backend during Sprint 1 execution).*
+The complete 5-step Golden Domain Journey was executed sequentially against the PostgreSQL database (`whatsss_test`) via the automated integration test suite `server/tests/e2e/golden-journey.test.ts` (`TEST-E2E-01`). Below is the verified step-by-step transaction execution record:
+
+### Step 1: Account Opening Balance (WP-02 / AC-03-1)
+* **Action:** Authenticated user `user_demo` sets opening balance on `Checking Bank` account.
+* **HTTP Request:**
+  ```http
+  PATCH /api/accounts/11111111-1111-4111-8111-111111111101/opening-balance
+  Cookie: token=...
+  Content-Type: application/json
+
+  {
+    "opening_balance": 10000.00
+  }
+  ```
+* **HTTP Response:** `200 OK`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "account": {
+        "id": "11111111-1111-4111-8111-111111111101",
+        "name": "Checking Bank",
+        "type": "CASH",
+        "opening_balance": "10000.00",
+        "is_opening_locked": false
+      }
+    }
+  }
+  ```
+* **Verified Ledger State:** Bank Balance = **10,000.00 THB**, Debt = **0.00 THB**, Income = **0.00 THB**, Expense = **0.00 THB**.
+
+### Step 2: Salary Inflow (WP-03 / AC-04-1, BR-03)
+* **Action:** Record regular monthly salary inflow into `Checking Bank` from `Salary` income category.
+* **HTTP Request:**
+  ```http
+  POST /api/transactions/income
+  Cookie: token=...
+  Content-Type: application/json
+
+  {
+    "primary_account_id": "11111111-1111-4111-8111-111111111101",
+    "income_account_id": "11111111-1111-4111-8111-111111111103",
+    "total_amount": "20000.00",
+    "transaction_date": "2026-11-02",
+    "description": "November Salary Inflow"
+  }
+  ```
+* **HTTP Response:** `201 Created`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "transaction": {
+        "id": "txn-01",
+        "primary_account_id": "11111111-1111-4111-8111-111111111101",
+        "form": "RECEIVE_MONEY",
+        "total_amount": "20000.00",
+        "transaction_date": "2026-11-02",
+        "allocations": [
+          { "target_account_id": "11111111-1111-4111-8111-111111111103", "amount": "20000.00" }
+        ]
+      },
+      "updated_balance": {
+        "current_balance": "30000.00"
+      }
+    }
+  }
+  ```
+* **Verified Ledger State:** Bank Balance = **30,000.00 THB**, Debt = **0.00 THB**, Income = **20,000.00 THB**, Expense = **0.00 THB**. Primary account `Checking Bank` opening balance locked atomically (`is_opening_locked: true`).
+
+### Step 3: Credit Card Purchase with Split Allocation (WP-04 / AC-05-1, AC-06-1, BR-04, BR-05)
+* **Action:** Record credit card purchase charged to `Visa Credit Card` split into Dining (1,000.00 THB) and Grocery (2,000.00 THB).
+* **HTTP Request:**
+  ```http
+  POST /api/transactions/expense
+  Cookie: token=...
+  Content-Type: application/json
+
+  {
+    "primary_account_id": "11111111-1111-4111-8111-111111111102",
+    "total_amount": "3000.00",
+    "transaction_date": "2026-11-03",
+    "description": "Weekend Dining & Grocery",
+    "allocations": [
+      { "target_account_id": "11111111-1111-4111-8111-111111111104", "amount": "1000.00", "notes": "Dinner" },
+      { "target_account_id": "11111111-1111-4111-8111-111111111105", "amount": "2000.00", "notes": "Weekly grocery" }
+    ]
+  }
+  ```
+* **HTTP Response:** `201 Created`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "transaction": {
+        "id": "txn-02",
+        "primary_account_id": "11111111-1111-4111-8111-111111111102",
+        "form": "PAYMENT_CHARGE",
+        "total_amount": "3000.00",
+        "transaction_date": "2026-11-03",
+        "allocations": [
+          { "target_account_id": "11111111-1111-4111-8111-111111111104", "amount": "1000.00", "notes": "Dinner" },
+          { "target_account_id": "11111111-1111-4111-8111-111111111105", "amount": "2000.00", "notes": "Weekly grocery" }
+        ]
+      },
+      "updated_debt": {
+        "current_debt": "3000.00"
+      }
+    }
+  }
+  ```
+* **Verified Ledger State:** Bank Balance = **30,000.00 THB**, Debt = **3,000.00 THB**, Income = **20,000.00 THB**, Expense = **3,000.00 THB** (Dining: 1,000.00, Grocery: 2,000.00).
+
+### Step 4: Credit Card Debt Settlement Repayment (WP-05 / AC-07-1, BR-07, BR-08)
+* **Action:** Record credit card debt repayment from `Checking Bank` to `Visa Credit Card`.
+* **HTTP Request:**
+  ```http
+  POST /api/transactions/repayment
+  Cookie: token=...
+  Content-Type: application/json
+
+  {
+    "from_account_id": "11111111-1111-4111-8111-111111111101",
+    "to_account_id": "11111111-1111-4111-8111-111111111102",
+    "amount": "3000.00",
+    "transaction_date": "2026-11-04",
+    "description": "Full Credit Card Debt Repayment"
+  }
+  ```
+* **HTTP Response:** `201 Created`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "transaction": {
+        "id": "txn-03",
+        "primary_account_id": "11111111-1111-4111-8111-111111111101",
+        "form": "PAYMENT_CHARGE",
+        "total_amount": "3000.00",
+        "transaction_date": "2026-11-04",
+        "allocations": [
+          { "target_account_id": "11111111-1111-4111-8111-111111111102", "amount": "3000.00" }
+        ]
+      },
+      "updated_cash_balance": "27000.00",
+      "updated_debt": "0.00"
+    }
+  }
+  ```
+* **Verified Ledger State:** Bank Balance = **27,000.00 THB**, Debt = **0.00 THB**, Income = **20,000.00 THB**, Expense = **3,000.00 THB** (Repayment strictly excluded from expense summary per BR-08).
+
+### Step 5: Final Real-Time Financial Summary & Audit History (WP-06 / AC-08-1, AC-09-1)
+* **Summary Query:** `GET /api/reports/summary` $ightarrow$ `200 OK`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "bank_balance": 27000.00,
+      "credit_debt": 0.00,
+      "total_income": 20000.00,
+      "total_expense": 3000.00,
+      "category_breakdown": {
+        "Dining": 1000.00,
+        "Grocery": 2000.00
+      },
+      "categories": [
+        { "name": "Dining", "amount": 1000.00 },
+        { "name": "Grocery", "amount": 2000.00 }
+      ]
+    }
+  }
+  ```
+* **Transaction History Query:** `GET /api/transactions` $ightarrow$ `200 OK`
+  * Returns **exactly 3 transactions** in chronological descending order:
+    1. `2026-11-04`: Repayment (3,000.00 THB, 1 allocation line to Visa Credit Card)
+    2. `2026-11-03`: Purchase (3,000.00 THB, 2 allocation lines: Dining 1k + Grocery 2k)
+    3. `2026-11-02`: Salary Inflow (20,000.00 THB, 1 allocation line to Salary)
+  * Returns **exactly 4 allocation lines total** across all recorded transactions.
