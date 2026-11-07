@@ -1,4 +1,5 @@
 import { axiosClient } from './axiosClient.js';
+import { reportClient } from './reportApi.js';
 
 export interface AllocationItem {
   id: string;
@@ -104,6 +105,43 @@ export interface RepaymentApiResponse {
   data: RepaymentResponseData;
 }
 
+export interface HistoryAllocationLine {
+  id: string;
+  transaction_id: string;
+  target_account_id: string;
+  target_account: {
+    id: string;
+    name: string;
+    type: string;
+  };
+  amount: number;
+  notes: string | null;
+}
+
+export interface HistoryTransaction {
+  id: string;
+  user_id: string;
+  primary_account_id: string;
+  primary_account: {
+    id: string;
+    name: string;
+    type: string;
+  };
+  form: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
+  total_amount: number;
+  transaction_date: string;
+  description: string | null;
+  created_at: string;
+  allocation_lines: HistoryAllocationLine[];
+}
+
+export interface TransactionsApiResponse {
+  success: boolean;
+  data: {
+    transactions: HistoryTransaction[];
+  };
+}
+
 /**
  * Records an income inflow into an owned CASH account.
  * Atomically locks opening balance on the destination account upon commit.
@@ -131,4 +169,12 @@ export async function recordExpense(payload: ExpensePayload): Promise<ExpenseRes
 export async function recordRepayment(payload: RepaymentPayload): Promise<RepaymentResponseData> {
   const res = await axiosClient.post<RepaymentApiResponse>('/transactions/repayment', payload);
   return res.data.data;
+}
+
+/**
+ * Fetches chronological transaction history for the authenticated tenant (WP-06, F-09, FR-11, AC-09-1).
+ */
+export async function getTransactions(): Promise<HistoryTransaction[]> {
+  const res = await reportClient.get<TransactionsApiResponse>('/transactions');
+  return res.data.data.transactions;
 }

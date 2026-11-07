@@ -4,6 +4,7 @@ import { Navbar } from './components/Navbar.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { AccountListPage } from './pages/AccountListPage.js';
+import { TransactionHistoryPage } from './pages/TransactionHistoryPage.js';
 import { AccessDeniedPage } from './pages/AccessDeniedPage.js';
 import { ProtectedRoute } from './components/ProtectedRoute.js';
 import { useAuth } from './context/AuthContext.js';
@@ -49,6 +50,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute disallowAdmin={true}>
                 <AccountListPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/transactions"
+            element={
+              <ProtectedRoute disallowAdmin={true}>
+                <TransactionHistoryPage />
               </ProtectedRoute>
             }
           />
