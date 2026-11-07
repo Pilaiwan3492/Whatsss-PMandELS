@@ -36,29 +36,29 @@ Sprint 1 development is organized into 6 consolidated, vertical engineering work
 As a user or platform administrator, I want to authenticate securely and have the backend enforce strict data isolation and role boundaries, so that personal financial data remains private and unauthorized requests are rejected.
 
 #### Implementation Tasks
-- [ ] Initialize Express and TypeScript application structure with configuration loader.
-- [ ] Implement `User` model in Prisma schema (`id`, `username`, `email`, `password_hash`, `role`, `is_active`).
-- [ ] Implement `POST /api/auth/login` with bcrypt password verification and signed JWT set in an HttpOnly, SameSite=Lax cookie with conditional Secure flag in production (no token in body).
-- [ ] Implement `GET /api/auth/me` returning current user profile and role from cookie credentials.
-- [ ] Implement `POST /api/auth/logout` clearing session cookie with matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production) and `Max-Age=0`.
-- [ ] Implement `AuthGuard` middleware rejecting unauthenticated requests with HTTP 401 (`BR-09`).
-- [ ] Implement `RoleGuard` middleware rejecting ADMIN access to financial routes with HTTP 403 (`BR-10`).
+- [x] Initialize Express and TypeScript application structure with configuration loader.
+- [x] Implement `User` model in Prisma schema (`id`, `username`, `email`, `password_hash`, `role`, `is_active`).
+- [x] Implement `POST /api/auth/login` with bcrypt password verification and signed JWT set in an HttpOnly, SameSite=Lax cookie with conditional Secure flag in production (no token in body).
+- [x] Implement `GET /api/auth/me` returning current user profile and role from cookie credentials.
+- [x] Implement `POST /api/auth/logout` clearing session cookie with matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production) and `Max-Age=0`.
+- [x] Implement `AuthGuard` middleware rejecting unauthenticated requests with HTTP 401 (`BR-09`).
+- [x] Implement `RoleGuard` middleware rejecting ADMIN access to financial routes with HTTP 403 (`BR-10`).
 - [ ] Implement tenant scoping ensuring user requests access only own records (`BR-01`).
-- [ ] Implement CSRF Origin/Referer validation middleware rejecting untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
-- [ ] Configure and verify CORS preflight (`OPTIONS`) handling ensuring preflights terminate before CSRF and auth without executing business operations (`TEST-SEC-05`).
-- [ ] Implement conditional `RequireJsonContentType` middleware and malformed JSON error handling returning HTTP 400 (`INVALID_CONTENT_TYPE`, `INVALID_JSON_BODY`) while preserving bodyless logout compatibility (`TEST-SEC-06`).
-- [ ] Implement automated integration tests (`TEST-AUTH-01..05`, `TEST-SEC-01..06`).
+- [x] Implement CSRF Origin/Referer validation middleware rejecting untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
+- [x] Configure and verify CORS preflight (`OPTIONS`) handling ensuring preflights terminate before CSRF and auth without executing business operations (`TEST-SEC-05`).
+- [x] Implement conditional `RequireJsonContentType` middleware and malformed JSON error handling returning HTTP 400 (`INVALID_CONTENT_TYPE`, `INVALID_JSON_BODY`) while preserving bodyless logout compatibility (`TEST-SEC-06`).
+- [x] Implement automated integration tests (`TEST-AUTH-01..05`, `TEST-SEC-01..06`).
 
 #### Acceptance Criteria Checklist
-- [ ] `AC-01-1`: Valid credentials return 200 OK with user profile and set HttpOnly session cookie (`TEST-AUTH-01`).
-- [ ] `AC-01-2`: Invalid credentials return 401 Unauthorized (`TEST-AUTH-02`).
-- [ ] `AC-01-3`: `GET /api/auth/me` returns verified identity and role (`TEST-AUTH-03`).
-- [ ] `AC-01-4`: Passwords stored as salted one-way hashes (`TEST-AUTH-04`, `NFR-SEC-01`).
-- [ ] `AC-01-5`: Calling logout clears cookie and subsequent protected call returns 401 (`TEST-AUTH-05`, `FR-01`).
-- [ ] `AC-02-1`: Missing/invalid cookie returns 401 Unauthorized (`TEST-SEC-02`, `BR-09`).
-- [ ] `AC-02-2`: ADMIN calling financial endpoints returns 403 Forbidden with zero data leak (`TEST-SEC-03`, `BR-10`).
+- [x] `AC-01-1`: Valid credentials return 200 OK with user profile and set HttpOnly session cookie (`TEST-AUTH-01`).
+- [x] `AC-01-2`: Invalid credentials return 401 Unauthorized (`TEST-AUTH-02`).
+- [x] `AC-01-3`: `GET /api/auth/me` returns verified identity and role (`TEST-AUTH-03`).
+- [x] `AC-01-4`: Passwords stored as salted one-way hashes (`TEST-AUTH-04`, `NFR-SEC-01`).
+- [x] `AC-01-5`: Calling logout clears cookie and subsequent protected call returns 401 (`TEST-AUTH-05`, `FR-01`).
+- [x] `AC-02-1`: Missing/invalid cookie returns 401 Unauthorized (`TEST-SEC-02`, `BR-09`).
+- [x] `AC-02-2`: ADMIN calling financial endpoints returns 403 Forbidden with zero data leak (`TEST-SEC-03`, `BR-10`).
 - [ ] `AC-02-3`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
-- [ ] `AC-02-4`: Origin/Referer validation rejects untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
+- [x] `AC-02-4`: Origin/Referer validation rejects untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
 
 ---
 
