@@ -1,40 +1,72 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import request from 'supertest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { app } from '../../src/app.js';
 import { seed } from '../../prisma/seed.js';
 import { lockAccounts } from '../../src/services/accountLock.service.js';
+
+interface AccountSnapshot {
+  id: string;
+  opening_balance: Prisma.Decimal;
+  is_opening_locked: boolean;
+  updated_at: Date;
+}
+
+interface UserSnapshot {
+  id: string;
+  username: string;
+  password_hash: string;
+  role: string;
+  is_active: boolean;
+}
 
 /**
  * Integration Test: PostgreSQL Live Database Account Foundation & Live API Tenant Isolation
  * Target: TEST-OPEN-01, TEST-OPEN-04, TEST-SEC-01 (Live HTTP API), NFR-DATA-01
  *
- * NOTE FOR INSTRUCTORS & AUDITORS:
- * This test connects directly to the real PostgreSQL database engine.
- * It executes real HTTP requests through Express middlewares (CORS, CSRF, AuthGuard, RoleGuard)
- * against real database records in PostgreSQL.
- *
- * In CI environments (GitHub Actions), a live PostgreSQL 16 service container is provisioned.
- * When executed in CI, database availability is mandatory.
- * In local environments without a running PostgreSQL daemon, tests are gracefully SKIPPED locally.
+ * SAFETY INVARIANTS (P0 Quality Requirement):
+ * - Live database tests run ONLY in CI or when ALLOW_LIVE_DB_TESTS=true is explicitly configured.
+ * - In local developer environments, live database tests are SKIPPED by default to prevent data mutation.
+ * - In CI environments, live PostgreSQL service container availability is mandatory (failures abort the build).
+ * - Blanket database resets (such as updateMany without where) are strictly prohibited.
+ * - Every test that mutates an account captures a snapshot beforehand and restores the exact original state.
+ * - Seed testing snapshots and restores demo user credentials/status to prevent drift.
+ * - Cleanup failures are rethrown and never silently swallowed.
  */
 describe('Integration Test: PostgreSQL Live Database Account Foundation & Live API Isolation (WP-02)', () => {
   let prisma: PrismaClient;
   let isDbConnected = false;
   const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+  const allowLiveDb = process.env.ALLOW_LIVE_DB_TESTS === 'true';
+  const databaseUrl = process.env.DATABASE_URL || '';
   const TRUSTED_ORIGIN = 'http://localhost:5173';
 
+  // Track pending cleanup tasks to ensure guaranteed restoration in afterEach
+  const pendingCleanups: Array<() => Promise<void>> = [];
+
   beforeAll(async () => {
+    // 1. In local environments, live database tests are strictly SKIPPED by default
+    if (!isCI && !allowLiveDb) {
+      console.warn(
+        '[WP-02 NOTICE] Live PostgreSQL tests are disabled locally by default to protect developer databases. ' +
+        'Set ALLOW_LIVE_DB_TESTS=true with a dedicated test database to run locally.'
+      );
+      isDbConnected = false;
+      return;
+    }
+
+    // 2. Validate database connection URL
+    if (!databaseUrl && !isCI) {
+      isDbConnected = false;
+      return;
+    }
+
     prisma = new PrismaClient();
     try {
       await prisma.$connect();
       await prisma.$queryRaw`SELECT 1`;
       isDbConnected = true;
-      // Ensure initial clean database state across demo accounts
-      await prisma.account.updateMany({
-        data: { opening_balance: 0.00, is_opening_locked: false }
-      });
-    } catch {
+    } catch (err) {
       isDbConnected = false;
       if (isCI) {
         throw new Error(
@@ -42,6 +74,7 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
           'Live database integration tests must execute in CI.'
         );
       }
+      throw err;
     }
   });
 
@@ -52,23 +85,63 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
   });
 
   afterEach(async () => {
-    if (isDbConnected && prisma) {
-      try {
-        // Reliable test cleanup: restore all accounts to unlocked 0.00 balance
-        // guarantees isolation even if an individual test assertion fails
-        await prisma.account.updateMany({
-          data: { opening_balance: 0.00, is_opening_locked: false }
-        });
-      } catch (err) {
-        console.error('[WP-02 CLEANUP ERROR]', err);
-      }
+    // Execute all registered cleanups; do NOT swallow errors so cleanup failures fail the test
+    while (pendingCleanups.length > 0) {
+      const cleanup = pendingCleanups.pop()!;
+      await cleanup();
     }
   });
+
+  async function snapshotAccount(accountId: string): Promise<AccountSnapshot> {
+    const acc = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
+    return {
+      id: acc.id,
+      opening_balance: acc.opening_balance,
+      is_opening_locked: acc.is_opening_locked,
+      updated_at: acc.updated_at
+    };
+  }
+
+  async function restoreAccount(snap: AccountSnapshot): Promise<void> {
+    await prisma.account.update({
+      where: { id: snap.id },
+      data: {
+        opening_balance: snap.opening_balance,
+        is_opening_locked: snap.is_opening_locked,
+        updated_at: snap.updated_at
+      }
+    });
+  }
+
+  async function snapshotUsers(usernames: string[]): Promise<UserSnapshot[]> {
+    const users = await prisma.user.findMany({
+      where: { username: { in: usernames } }
+    });
+    return users.map((u) => ({
+      id: u.id,
+      username: u.username,
+      password_hash: u.password_hash,
+      role: u.role,
+      is_active: u.is_active
+    }));
+  }
+
+  async function restoreUsers(snaps: UserSnapshot[]): Promise<void> {
+    for (const u of snaps) {
+      await prisma.user.update({
+        where: { id: u.id },
+        data: {
+          password_hash: u.password_hash,
+          role: u.role as any,
+          is_active: u.is_active
+        }
+      });
+    }
+  }
 
   describe('Database Schema & Seed Verification (Fix #4)', () => {
     it('validates seeded accounts in PostgreSQL have correct types, zero initial balance, and are unlocked for all 3 demo users', async (ctx) => {
       if (!isDbConnected) {
-        console.warn('[WP-02 NOTICE] Live PostgreSQL instance is offline locally. Skipping live DB test.');
         ctx.skip();
         return;
       }
@@ -101,7 +174,6 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
 
     it('validates @@unique([user_id, name]) constraint in PostgreSQL', async (ctx) => {
       if (!isDbConnected) {
-        console.warn('[WP-02 NOTICE] Live PostgreSQL instance is offline locally. Skipping live DB test.');
         ctx.skip();
         return;
       }
@@ -124,7 +196,6 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
 
     it('validates seed script idempotency preserves configured opening balance (F-03)', async (ctx) => {
       if (!isDbConnected) {
-        console.warn('[WP-02 NOTICE] Live PostgreSQL instance is offline locally. Skipping live DB test.');
         ctx.skip();
         return;
       }
@@ -133,34 +204,36 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       const checking = await prisma.account.findFirst({
         where: { user_id: userDemo!.id, name: 'Checking Bank' }
       });
+      expect(checking).toBeDefined();
 
-      try {
-        // Update opening balance to 10000.00 THB
-        await prisma.account.update({
-          where: { id: checking!.id },
-          data: { opening_balance: 10000.00, is_opening_locked: false }
-        });
+      // Snapshot checking account and demo users before mutation
+      const accountSnap = await snapshotAccount(checking!.id);
+      const userSnaps = await snapshotUsers(['user_demo', 'user_other', 'admin_demo']);
 
-        // Re-run seed
-        await seed(prisma);
+      // Register guaranteed cleanup in afterEach
+      pendingCleanups.push(async () => {
+        await restoreAccount(accountSnap);
+        await restoreUsers(userSnaps);
+      });
 
-        // Opening balance must be preserved at 10000.00 THB without reset to 0.00
-        const rechecked = await prisma.account.findUnique({ where: { id: checking!.id } });
-        expect(Number(rechecked!.opening_balance)).toBe(10000.00);
-      } finally {
-        // Reliable cleanup: reset back to 0.00 even if assertion fails
-        await prisma.account.update({
-          where: { id: checking!.id },
-          data: { opening_balance: 0.00, is_opening_locked: false }
-        });
-      }
+      // Update opening balance to 10000.00 THB
+      await prisma.account.update({
+        where: { id: checking!.id },
+        data: { opening_balance: 10000.00, is_opening_locked: false }
+      });
+
+      // Re-run seed
+      await seed(prisma);
+
+      // Opening balance must be preserved at 10000.00 THB without reset to 0.00
+      const rechecked = await prisma.account.findUnique({ where: { id: checking!.id } });
+      expect(Number(rechecked!.opening_balance)).toBe(10000.00);
     });
   });
 
   describe('Live HTTP API Tenant Isolation Verification (Fix #2, TEST-SEC-01)', () => {
     it('executes real HTTP requests through auth middleware and verifies cross-tenant isolation in PostgreSQL', async (ctx) => {
       if (!isDbConnected) {
-        console.warn('[WP-02 NOTICE] Live PostgreSQL instance is offline locally. Skipping live DB test.');
         ctx.skip();
         return;
       }
@@ -227,34 +300,32 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       const userAChecking = await prisma.account.findFirst({
         where: { user_id: userDemo!.id, name: 'Checking Bank' }
       });
+      expect(userAChecking).toBeDefined();
 
-      try {
-        const patchOwnRes = await request(app)
-          .patch(`/api/accounts/${userAChecking!.id}/opening-balance`)
-          .set('Origin', TRUSTED_ORIGIN)
-          .set('Content-Type', 'application/json')
-          .set('Cookie', userACookies)
-          .send({ opening_balance: 10000.00 });
+      // Snapshot user A's checking account before mutation
+      const userASnap = await snapshotAccount(userAChecking!.id);
+      pendingCleanups.push(async () => {
+        await restoreAccount(userASnap);
+      });
 
-        expect(patchOwnRes.status).toBe(200);
-        expect(patchOwnRes.body.success).toBe(true);
-        expect(patchOwnRes.body.data.account.opening_balance).toBe(10000.00);
+      const patchOwnRes = await request(app)
+        .patch(`/api/accounts/${userAChecking!.id}/opening-balance`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookies)
+        .send({ opening_balance: 10000.00 });
 
-        // Verify PostgreSQL row reflects 10000.00
-        const recheckedUserA = await prisma.account.findUnique({ where: { id: userAChecking!.id } });
-        expect(Number(recheckedUserA!.opening_balance)).toBe(10000.00);
-      } finally {
-        // Reliable cleanup: reset balance to 0.00 even if assertions fail
-        await prisma.account.update({
-          where: { id: userAChecking!.id },
-          data: { opening_balance: 0.00, is_opening_locked: false }
-        });
-      }
+      expect(patchOwnRes.status).toBe(200);
+      expect(patchOwnRes.body.success).toBe(true);
+      expect(patchOwnRes.body.data.account.opening_balance).toBe(10000.00);
+
+      // Verify PostgreSQL row reflects 10000.00
+      const recheckedUserA = await prisma.account.findUnique({ where: { id: userAChecking!.id } });
+      expect(Number(recheckedUserA!.opening_balance)).toBe(10000.00);
     });
 
     it('blocks admin_demo from accessing financial accounts via HTTP with 403 Forbidden (BR-10)', async (ctx) => {
       if (!isDbConnected) {
-        console.warn('[WP-02 NOTICE] Live PostgreSQL instance is offline locally. Skipping live DB test.');
         ctx.skip();
         return;
       }
@@ -312,7 +383,6 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
      */
     it('proves account lock persists on transaction commit and rolls back on transaction failure (lock service verified; transaction creation integration pending WP-03)', async (ctx) => {
       if (!isDbConnected) {
-        console.warn('[WP-02 NOTICE] Live PostgreSQL instance is offline locally. Skipping live DB test.');
         ctx.skip();
         return;
       }
@@ -321,71 +391,101 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       const checking = await prisma.account.findFirst({
         where: { user_id: userDemo!.id, name: 'Checking Bank' }
       });
+      expect(checking).toBeDefined();
 
+      // Snapshot checking account before mutation
+      const checkingSnap = await snapshotAccount(checking!.id);
+      pendingCleanups.push(async () => {
+        await restoreAccount(checkingSnap);
+      });
+
+      // 1. Commit case: Lock inside successful transaction
+      await prisma.$transaction(async (tx) => {
+        await lockAccounts(tx, [checking!.id], userDemo!.id);
+      });
+
+      // Verify in PostgreSQL that account is now locked
+      let dbAccount = await prisma.account.findUnique({ where: { id: checking!.id } });
+      expect(dbAccount!.is_opening_locked).toBe(true);
+
+      // Verify subsequent HTTP update is rejected with 422 OPENING_BALANCE_LOCKED
+      const userALoginRes = await request(app)
+        .post('/api/auth/login')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .send({ username: 'user_demo', password: 'Password123!' });
+      const userACookies = userALoginRes.headers['set-cookie'];
+
+      const lockedRes = await request(app)
+        .patch(`/api/accounts/${checking!.id}/opening-balance`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookies)
+        .send({ opening_balance: 15000.00 });
+
+      expect(lockedRes.status).toBe(422);
+      expect(lockedRes.body.error.code).toBe('OPENING_BALANCE_LOCKED');
+
+      // 2. Reset lock to false for rollback test
+      await prisma.account.update({
+        where: { id: checking!.id },
+        data: { is_opening_locked: false }
+      });
+
+      // 3. Rollback case: Lock executed inside failing transaction
       try {
-        // 1. Commit case: Lock inside successful transaction
         await prisma.$transaction(async (tx) => {
           await lockAccounts(tx, [checking!.id], userDemo!.id);
+          throw new Error('Simulated business logic failure triggering transaction rollback');
         });
+      } catch {
+        // Expected rollback
+      }
 
-        // Verify in PostgreSQL that account is now locked
-        let dbAccount = await prisma.account.findUnique({ where: { id: checking!.id } });
-        expect(dbAccount!.is_opening_locked).toBe(true);
+      // Verify in PostgreSQL that is_opening_locked rolled back to false!
+      dbAccount = await prisma.account.findUnique({ where: { id: checking!.id } });
+      expect(dbAccount!.is_opening_locked).toBe(false);
 
-        // Verify subsequent HTTP update is rejected with 422 OPENING_BALANCE_LOCKED
-        const userALoginRes = await request(app)
-          .post('/api/auth/login')
-          .set('Origin', TRUSTED_ORIGIN)
-          .set('Content-Type', 'application/json')
-          .send({ username: 'user_demo', password: 'Password123!' });
-        const userACookies = userALoginRes.headers['set-cookie'];
+      // Verify that after rollback, opening balance update is still allowed
+      const allowedRes = await request(app)
+        .patch(`/api/accounts/${checking!.id}/opening-balance`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookies)
+        .send({ opening_balance: 5000.00 });
 
-        const lockedRes = await request(app)
-          .patch(`/api/accounts/${checking!.id}/opening-balance`)
-          .set('Origin', TRUSTED_ORIGIN)
-          .set('Content-Type', 'application/json')
-          .set('Cookie', userACookies)
-          .send({ opening_balance: 15000.00 });
+      expect(allowedRes.status).toBe(200);
+      expect(allowedRes.body.data.account.opening_balance).toBe(5000.00);
+    });
 
-        expect(lockedRes.status).toBe(422);
-        expect(lockedRes.body.error.code).toBe('OPENING_BALANCE_LOCKED');
+    it('verifies live DB test safety: unrelated accounts and other users remain completely unmutated', async (ctx) => {
+      if (!isDbConnected) {
+        ctx.skip();
+        return;
+      }
 
-        // 2. Reset lock to false for rollback test
-        await prisma.account.update({
-          where: { id: checking!.id },
-          data: { is_opening_locked: false }
-        });
+      // 1. Verify user_other's accounts in PostgreSQL were never touched by any prior test
+      const userOther = await prisma.user.findUnique({
+        where: { username: 'user_other' },
+        include: { accounts: true }
+      });
+      expect(userOther).toBeDefined();
+      expect(userOther!.accounts).toHaveLength(5);
+      for (const acc of userOther!.accounts) {
+        expect(Number(acc.opening_balance)).toBe(0.00);
+        expect(acc.is_opening_locked).toBe(false);
+      }
 
-        // 3. Rollback case: Lock executed inside failing transaction
-        try {
-          await prisma.$transaction(async (tx) => {
-            await lockAccounts(tx, [checking!.id], userDemo!.id);
-            throw new Error('Simulated business logic failure triggering transaction rollback');
-          });
-        } catch {
-          // Expected rollback
-        }
-
-        // Verify in PostgreSQL that is_opening_locked rolled back to false!
-        dbAccount = await prisma.account.findUnique({ where: { id: checking!.id } });
-        expect(dbAccount!.is_opening_locked).toBe(false);
-
-        // Verify that after rollback, opening balance update is still allowed
-        const allowedRes = await request(app)
-          .patch(`/api/accounts/${checking!.id}/opening-balance`)
-          .set('Origin', TRUSTED_ORIGIN)
-          .set('Content-Type', 'application/json')
-          .set('Cookie', userACookies)
-          .send({ opening_balance: 5000.00 });
-
-        expect(allowedRes.status).toBe(200);
-        expect(allowedRes.body.data.account.opening_balance).toBe(5000.00);
-      } finally {
-        // Reliable cleanup: reset balance to 0.00 and unlocked even if an assertion fails
-        await prisma.account.update({
-          where: { id: checking!.id },
-          data: { opening_balance: 0.00, is_opening_locked: false }
-        });
+      // 2. Verify user_demo's untouched accounts (CC, Salary, Dining, Grocery) remain at baseline
+      const userDemo = await prisma.user.findUnique({
+        where: { username: 'user_demo' },
+        include: { accounts: { where: { name: { not: 'Checking Bank' } } } }
+      });
+      expect(userDemo).toBeDefined();
+      expect(userDemo!.accounts).toHaveLength(4);
+      for (const acc of userDemo!.accounts) {
+        expect(Number(acc.opening_balance)).toBe(0.00);
+        expect(acc.is_opening_locked).toBe(false);
       }
     });
   });

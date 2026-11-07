@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { lockAccounts, AccountLockError } from '../../src/services/accountLock.service.js';
 
-describe('Unit Test: Hardened accountLock.service (Fix #6)', () => {
+describe('Unit Test: Hardened accountLock.service (P2 Finding)', () => {
   it('deduplicates account IDs and locks only once per unique ID', async () => {
     const mockTx = {
       account: {
@@ -79,6 +79,58 @@ describe('Unit Test: Hardened accountLock.service (Fix #6)', () => {
     ).rejects.toThrow(AccountLockError);
 
     // Assert zero database mutations occur (no partial locking)
+    expect(mockTx.account.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects empty string account ID with AccountLockError and does not query DB', async () => {
+    const mockTx = {
+      account: {
+        findMany: vi.fn(),
+        updateMany: vi.fn()
+      }
+    } as any;
+
+    await expect(
+      lockAccounts(mockTx, ['acc-1', ''], 'user-1')
+    ).rejects.toThrow(AccountLockError);
+
+    expect(mockTx.account.findMany).not.toHaveBeenCalled();
+    expect(mockTx.account.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects whitespace-only account ID with AccountLockError and does not query DB', async () => {
+    const mockTx = {
+      account: {
+        findMany: vi.fn(),
+        updateMany: vi.fn()
+      }
+    } as any;
+
+    await expect(
+      lockAccounts(mockTx, ['acc-1', '   '], 'user-1')
+    ).rejects.toThrow(AccountLockError);
+
+    expect(mockTx.account.findMany).not.toHaveBeenCalled();
+    expect(mockTx.account.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-string account ID with AccountLockError and does not query DB', async () => {
+    const mockTx = {
+      account: {
+        findMany: vi.fn(),
+        updateMany: vi.fn()
+      }
+    } as any;
+
+    await expect(
+      lockAccounts(mockTx, ['acc-1', 123 as any], 'user-1')
+    ).rejects.toThrow(AccountLockError);
+
+    await expect(
+      lockAccounts(mockTx, [null as any], 'user-1')
+    ).rejects.toThrow(AccountLockError);
+
+    expect(mockTx.account.findMany).not.toHaveBeenCalled();
     expect(mockTx.account.updateMany).not.toHaveBeenCalled();
   });
 

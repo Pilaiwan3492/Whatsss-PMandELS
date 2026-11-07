@@ -227,6 +227,68 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       expect(summaryRes.body.data.total_expense).toBe(0.00);
     });
 
+    it('proves non-zero opening balances on INCOME and EXPENSE accounts are strictly excluded from income/expense summaries (BR-02)', async () => {
+      // 1. Configure non-zero opening balances across diverse account types
+      // Checking Bank (CASH): 10,000.00
+      await request(app)
+        .patch('/api/accounts/acc-demo-checking/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 10000.00 });
+
+      // Visa Credit Card (LOAN_TAKEN): 1500.00
+      await request(app)
+        .patch('/api/accounts/acc-demo-cc/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 1500.00 });
+
+      // Salary (INCOME): 5,000.00
+      await request(app)
+        .patch('/api/accounts/acc-demo-salary/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 5000.00 });
+
+      // Dining (EXPENSE): 300.00
+      await request(app)
+        .patch('/api/accounts/acc-demo-dining/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 300.00 });
+
+      // Grocery (EXPENSE): 200.00
+      await request(app)
+        .patch('/api/accounts/acc-demo-grocery/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 200.00 });
+
+      // 2. Query summary
+      const summaryRes = await request(app)
+        .get('/api/reports/summary')
+        .set('Cookie', userACookie);
+
+      expect(summaryRes.status).toBe(200);
+      expect(summaryRes.body.success).toBe(true);
+
+      // Liquid asset balance reflects CASH account
+      expect(summaryRes.body.data.bank_balance).toBe(10000.00);
+
+      // Liability balance reflects LOAN_TAKEN account separately from income/expense
+      expect(summaryRes.body.data.credit_debt).toBe(1500.00);
+
+      // BR-02 Critical Invariant: Opening balances on Salary (5,000), Dining (300), and Grocery (200)
+      // must NEVER count as income or expense!
+      expect(summaryRes.body.data.total_income).toBe(0.00);
+      expect(summaryRes.body.data.total_expense).toBe(0.00);
+    });
+
     it('propagates genuine database errors to errorHandler and rejects with 500 without returning fake zero summary', async () => {
       // Temporarily mock prisma.account.findMany to reject with database error
       vi.mocked(prisma.account.findMany).mockRejectedValueOnce(new Error('Simulated PostgreSQL connection failure'));

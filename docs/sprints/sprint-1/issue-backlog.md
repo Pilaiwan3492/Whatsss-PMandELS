@@ -84,10 +84,13 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 - [x] Enforce opening balance locking rules:
   1. Account initializes with `is_opening_locked = false`.
   2. User can update opening balance only before the first referencing transaction commits.
-  3. When first referencing transaction commits, account is locked atomically (`is_opening_locked = true`) [Lock service verified in WP-02; transaction-triggered invocation pending WP-03].
-  4. Locking executes atomically within the same database transaction (`prisma.$transaction`).
-  5. If transaction fails or rolls back, account is not locked.
-  6. Once locked, any subsequent opening balance update returns HTTP 422 (`OPENING_BALANCE_LOCKED`).
+  3. Locking executes atomically within the same database transaction (`prisma.$transaction`).
+  4. If transaction fails or rolls back, account is not locked.
+  5. Once locked, any subsequent opening balance update returns HTTP 422 (`OPENING_BALANCE_LOCKED`).
+- [x] Implement atomic account lock service (`accountLock.service.ts` with batch validation, ID deduplication, and atomic abort).
+- [x] Verify lock service commit/rollback at service-level against live PostgreSQL (`TEST-OPEN-04`).
+- [ ] Integrate lock service into actual transaction creation workflow in WP-03.
+- [ ] Verify transaction-triggered locking end-to-end in WP-03.
 - [x] Implement automated integration tests (`TEST-OPEN-01..04`, `TEST-SEC-01`).
 
 #### Acceptance Criteria Checklist

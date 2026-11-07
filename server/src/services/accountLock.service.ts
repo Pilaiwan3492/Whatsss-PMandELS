@@ -13,20 +13,34 @@ export class AccountLockError extends Error {
  * Service to atomically lock opening balance on accounts upon committing referencing transactions.
  * In accordance with F-03, FR-05, and BR-01:
  * - Accounts are permanently locked from opening balance modifications once referenced.
- * - Deduplicates account IDs.
+ * - Validates input IDs before deduplication (rejects non-string, empty, or whitespace-only IDs).
+ * - Deduplicates validated account IDs without altering formatting.
  * - Verifies every requested ID exists and belongs to the supplied user inside the transaction boundary.
  * - If any ID is missing or belongs to another user, throws an error to abort the entire transaction.
- * - Never silently locks only a partial subset.
+ * - Never silently ignores invalid IDs or locks a partial subset.
  */
 export async function lockAccounts(
   tx: Prisma.TransactionClient,
   accountIds: string[],
   userId: string
 ): Promise<void> {
-  const uniqueIds = Array.from(new Set(accountIds)).filter(Boolean);
-  if (uniqueIds.length === 0) {
+  // If array is empty, return early without query per contract
+  if (!accountIds || accountIds.length === 0) {
     return;
   }
+
+  // Validate every input ID before deduplication: reject non-string, empty, or whitespace-only IDs
+  for (const id of accountIds) {
+    if (typeof id !== 'string' || id.trim().length === 0) {
+      throw new AccountLockError(
+        'Invalid account ID: account ID must be a non-empty string.',
+        'INVALID_ACCOUNT_ID'
+      );
+    }
+  }
+
+  // Deduplicate validated IDs without altering UUID structure
+  const uniqueIds = Array.from(new Set(accountIds));
 
   // Find all matching accounts belonging to the user inside the transaction
   const accounts = await tx.account.findMany({
