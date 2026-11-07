@@ -11,7 +11,7 @@
 ## 1. Release Identification
 
 * **Assessed Implementation Baseline Commit:** Commit `3811434508a78ac24a688a98d5fbd006dca9b249` (Remediated immutable test database guard and regression verification)
-* **Current Documentation HEAD Commit:** Commit `af53828880cba12d79bbe481539c22e64080081e` on branch `feat/account-opening-balance` (PR #9 targeting `sprint-1`)
+* **Current Documentation HEAD Commit:** Commit `cd717693d49f80f45e8adfb64cc5ab84078b6e0e` on branch `feat/account-opening-balance` (PR #9 targeting `sprint-1`)
 * **Base Branch Commit:** `b29ba59` (PR #8 merged into `sprint-1`)
 * **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
 * **CI Verification Run:** GitHub Actions Run [#42352191140](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42352191140) (Status: Passed — 187 tests passed [176 backend + 11 frontend], 0 skipped)
