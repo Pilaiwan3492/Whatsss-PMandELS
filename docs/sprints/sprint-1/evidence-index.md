@@ -11,10 +11,10 @@
 ## 1. Release Identification
 
 * **Assessed Implementation Baseline Commit:** Commit `3811434508a78ac24a688a98d5fbd006dca9b249` (Remediated immutable test database guard and regression verification)
-* **Current Documentation HEAD Commit:** Commit `cd717693d49f80f45e8adfb64cc5ab84078b6e0e` on branch `feat/account-opening-balance` (PR #9 targeting `sprint-1`)
+* **Current Documentation HEAD Commit:** Commit `5cf2603877d0341a2698a2fe6139187be6524bc4` on branch `feat/account-opening-balance` (PR #9 targeting `sprint-1`)
 * **Base Branch Commit:** `b29ba59` (PR #8 merged into `sprint-1`)
 * **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
-* **CI Verification Run:** GitHub Actions Run [#42352191140](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42352191140) (Status: Passed — 187 tests passed [176 backend + 11 frontend], 0 skipped)
+* **CI Verification Run:** GitHub Actions Run [#42352735736](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42352735736) (Status: Passed — 187 tests passed [176 backend + 11 frontend], 0 skipped)
 * **Test Environment:** Node.js v20+, PostgreSQL 16 (GitHub Actions Service Container / Docker Compose)
 
 > **Sprint 1 Scope Note:** This record reflects the implementation verification for WP-01 (Authentication, Session Security & Access Control) and WP-02 (Financial Account Model, Reproducible Seed & Opening Balance Lifecycle). Final Deliverable 1 submission package evidence will be compiled upon completion of WP-02 through WP-06 (Transactions, Allocations, Repayments, Summary, and Golden Domain Journey).
