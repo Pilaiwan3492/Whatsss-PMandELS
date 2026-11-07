@@ -226,6 +226,20 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       expect(summaryRes.body.data.total_income).toBe(0.00);
       expect(summaryRes.body.data.total_expense).toBe(0.00);
     });
+
+    it('propagates genuine database errors to errorHandler and rejects with 500 without returning fake zero summary', async () => {
+      // Temporarily mock prisma.account.findMany to reject with database error
+      vi.mocked(prisma.account.findMany).mockRejectedValueOnce(new Error('Simulated PostgreSQL connection failure'));
+
+      const summaryRes = await request(app)
+        .get('/api/reports/summary')
+        .set('Cookie', userACookie);
+
+      expect(summaryRes.status).toBe(500);
+      expect(summaryRes.body.success).toBe(false);
+      expect(summaryRes.body.error.code).toBe('INTERNAL_SERVER_ERROR');
+      expect(summaryRes.body.data).toBeUndefined();
+    });
   });
 
   describe('TEST-OPEN-03: Invalid Input Rejection (AC-03-2, F-03)', () => {
@@ -378,6 +392,26 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
 
         expect(res.status).toBe(404);
         expect(res.body.error.code).toBe('NOT_FOUND');
+      });
+
+      it('returns 409 CONCURRENT_UPDATE_CONFLICT if update affected 0 rows while account exists and remains unlocked', async () => {
+        // Mock updateMany to return count 0
+        vi.mocked(prisma.account.updateMany).mockResolvedValueOnce({ count: 0 });
+
+        // Account still exists and remains unlocked
+        const target = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+        target.is_opening_locked = false;
+
+        const res = await request(app)
+          .patch('/api/accounts/acc-demo-checking/opening-balance')
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', userACookie)
+          .send({ opening_balance: 12000.00 });
+
+        expect(res.status).toBe(409);
+        expect(res.body.success).toBe(false);
+        expect(res.body.error.code).toBe('CONCURRENT_UPDATE_CONFLICT');
       });
     });
   });

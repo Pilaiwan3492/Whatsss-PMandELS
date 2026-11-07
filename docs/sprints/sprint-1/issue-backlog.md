@@ -84,7 +84,7 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 - [x] Enforce opening balance locking rules:
   1. Account initializes with `is_opening_locked = false`.
   2. User can update opening balance only before the first referencing transaction commits.
-  3. When first referencing transaction commits, account is locked atomically (`is_opening_locked = true`).
+  3. When first referencing transaction commits, account is locked atomically (`is_opening_locked = true`) [Lock service verified in WP-02; transaction-triggered invocation pending WP-03].
   4. Locking executes atomically within the same database transaction (`prisma.$transaction`).
   5. If transaction fails or rolls back, account is not locked.
   6. Once locked, any subsequent opening balance update returns HTTP 422 (`OPENING_BALANCE_LOCKED`).
@@ -93,8 +93,8 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 #### Acceptance Criteria Checklist
 - [x] `AC-03-1`: Setting opening balance of 10000.00 THB returns 200 OK and updates balance (`TEST-OPEN-01`).
 - [x] `AC-03-2`: Negative, non-numeric, or invalid decimal balance (e.g., `100.123`) rejected with 400 Bad Request (`INVALID_OPENING_BALANCE`) (`TEST-OPEN-03`).
-- [x] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).  
-  *(Implementation Note: In WP-02, the atomic lock service `accountLock.service.ts` is implemented and verified for batch deduplication, foreign ID rejection without partial locks, and commit/rollback behavior in live PostgreSQL. The transaction creation workflow calling it will be wired in WP-03 / Issue #4 when `POST /api/transactions` is introduced).*
+- [ ] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).  
+  *(Boundary Note: In WP-02, the atomic lock service `accountLock.service.ts` is implemented and verified for batch deduplication, foreign ID rejection without partial locks, and commit/rollback behavior in live PostgreSQL. The transaction creation workflow calling it will be wired in WP-03 / Issue #4 when `POST /api/transactions` is introduced. End-to-end transaction-triggered locking will be marked complete upon WP-03 verification).*
 - [x] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 
 ---

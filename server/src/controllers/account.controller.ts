@@ -264,11 +264,12 @@ export async function updateOpeningBalance(req: Request, res: Response, next: Ne
         return;
       }
 
-      res.status(422).json({
+      // Account still exists and is unlocked, but updateMany affected 0 rows (unexpected update conflict)
+      res.status(409).json({
         success: false,
         error: {
-          code: 'OPENING_BALANCE_LOCKED',
-          message: 'Opening balance cannot be updated after the first transaction.',
+          code: 'CONCURRENT_UPDATE_CONFLICT',
+          message: 'Account update conflicted with a concurrent operation. Please retry.',
           details: []
         }
       });

@@ -25,20 +25,6 @@ export async function getSummary(req: Request, res: Response, next: NextFunction
       return;
     }
 
-    // Safety fallback for test environments where prisma.account may not be mocked
-    if (!prisma?.account?.findMany) {
-      res.status(200).json({
-        success: true,
-        data: {
-          bank_balance: 0,
-          credit_debt: 0,
-          total_income: 0,
-          total_expense: 0
-        }
-      });
-      return;
-    }
-
     const accounts = await prisma.account.findMany({
       where: { user_id: userId }
     });

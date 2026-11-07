@@ -24,15 +24,15 @@
 * **Execution Commands:**
   * Backend: `npm test` (within `server/`)
   * Frontend: `npm test` (within `client/`)
-* **Automated Test Execution Summary (146 Tests across 15 Suites):**
+* **Automated Test Execution Summary (148 Tests across 15 Suites):**
   * Backend Unit Tests: 38 passed
     * `accountLock.test.ts`: 5 passed
     * `decimal.test.ts`: 16 passed
     * `config.test.ts`: 5 passed
     * `seed.test.ts`: 8 passed
     * `password.test.ts`: 4 passed
-  * Backend Integration Tests: 90 passed / 8 skipped locally (98 passed in CI when PostgreSQL 16 service is active)
-    * `account.test.ts`: 21 passed (Mocked Prisma & HTTP API)
+  * Backend Integration Tests: 92 passed / 8 skipped locally (100 passed in CI when PostgreSQL 16 service is active)
+    * `account.test.ts`: 23 passed (Mocked Prisma & HTTP API; includes decimal validation, concurrency race handling distinguishing 404, 422, and 409 `CONCURRENT_UPDATE_CONFLICT`, and database error propagation without fake zero summary)
     * `access.test.ts`: 17 passed (App-tier Stub & Mocked Prisma)
     * `content-type.test.ts`: 26 passed (Express Middleware)
     * `csrf.test.ts`: 12 passed (Origin/Referer Guard)
@@ -44,8 +44,8 @@
     * `ProtectedRoute.test.tsx`: 4 passed
     * `AccountListPage.test.tsx`: 6 passed (5 grouped account sections & decimal validation)
   * Execution Environment Totals:
-    * Local Environment (without live PostgreSQL): 138 passed | 8 skipped (146 total)
-    * CI Environment (with live PostgreSQL 16 container): 146 passed | 0 skipped (146 total)
+    * Local Environment (without live PostgreSQL): 140 passed | 8 skipped (148 total)
+    * CI Environment (with live PostgreSQL 16 container): 148 passed | 0 skipped (148 total)
 
 ### 2.1 Completed Work Package Evidence (WP-01: Authentication & Access Control)
 | Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |
@@ -66,9 +66,9 @@
 | Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |
 |---|---|---|---|:---:|
 | `TEST-OPEN-01` | `AC-03-1`, `NFR-DATA-01` | `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Sets 10,000.00 THB on unlocked account, updates row, returns 200 OK) | WP-02 Branch |
-| `TEST-OPEN-02` | `AC-03-4`, `BR-02` | `server/tests/integration/account.test.ts` | Passed — Mocked Prisma (`GET /api/reports/summary` proves opening balance excluded from income/expense) | WP-02 Branch |
+| `TEST-OPEN-02` | `AC-03-4`, `BR-02` | `server/tests/integration/account.test.ts` | Passed — Mocked Prisma (`GET /api/reports/summary` proves opening balance excluded from income/expense; genuine DB errors propagate to 500 without fake zero summary) | WP-02 Branch |
 | `TEST-OPEN-03` | `AC-03-2` | `server/tests/unit/decimal.test.ts`, `server/tests/integration/account.test.ts` | Passed — Unit & Mocked Prisma (Rejects negative, non-numeric, >2 decimals like `100.123` and `1e-7`, >9,999,999,999.99 with 400 `INVALID_OPENING_BALANCE`) | WP-02 Branch |
-| `TEST-OPEN-04` | `AC-03-3` | `server/tests/unit/accountLock.test.ts`, `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Unit, Mocked Prisma & Live PostgreSQL Transaction (Proves HTTP 422 on locked account; `lockAccounts` batch validation aborts on foreign/missing IDs; proves lock persists on transaction commit and rolls back on failure in PostgreSQL. Workflow calling it from transaction creation is scheduled for WP-03) | WP-02 Branch |
+| `TEST-OPEN-04` | `AC-03-3` | `server/tests/unit/accountLock.test.ts`, `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Service-Level Verified (Unit, Mocked Prisma & Live PostgreSQL Transaction. Proves HTTP 422 on locked account, 409 on concurrent conflict; `lockAccounts` batch validation aborts on foreign/missing IDs without partial locks; proves lock persists on transaction commit and rolls back on failure in PostgreSQL. End-to-end invocation from `POST /api/transactions` is scheduled for WP-03) | WP-02 Branch |
 | `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Cross-tenant account reads and opening balance updates return 404 NOT_FOUND through real auth middleware; foreign database rows untouched) | WP-02 Branch |
 | `TEST-SEC-03` | `BR-10` | `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Admin calling account endpoints returns 403 `ADMIN_FINANCIAL_ACCESS_FORBIDDEN` through real auth middleware) | WP-02 Branch |
 
