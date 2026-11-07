@@ -1,3 +1,15 @@
+/**
+ * Integration Test Suite: Feature F-01 Authentication & Session Lifecycle (Mocked Prisma)
+ *
+ * NOTE FOR INSTRUCTORS & AUDITORS:
+ * This suite verifies the HTTP authentication lifecycle (Login, Session Cookies, Introspection,
+ * Logout, and AuthGuard middleware behavior) using a mocked Prisma database layer with isolated
+ * in-memory user fixtures (findMockUser / mockUsers).
+ *
+ * Database-backed password persistence verification against a live PostgreSQL 16 instance
+ * is executed separately in:
+ * server/tests/integration/db-password.test.ts
+ */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
@@ -31,7 +43,7 @@ import { app } from '../../src/app.js';
 
 const CLIENT_ORIGIN = 'http://localhost:5173';
 
-describe('Feature F-01: Authentication & AuthGuard Database Verification Suite', () => {
+describe('Feature F-01: Authentication Behavior (Mocked Prisma)', () => {
   beforeEach(() => {
     resetMockUsers();
   });
@@ -183,7 +195,7 @@ describe('Feature F-01: Authentication & AuthGuard Database Verification Suite',
     });
   });
 
-  describe('AuthGuard Live Database Verification (Section 2.2)', () => {
+  describe('AuthGuard User Lifecycle & Dynamic Role Verification (Mocked Prisma)', () => {
     it('rejects expired JWT token with 401 Unauthorized', async () => {
       const expiredToken = jwt.sign(
         { userId: 'user-a-uuid', username: 'user_demo', role: 'USER' },

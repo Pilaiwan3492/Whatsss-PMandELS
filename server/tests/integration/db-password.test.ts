@@ -9,7 +9,14 @@ import crypto from 'crypto';
  *
  * NOTE FOR INSTRUCTORS & AUDITORS:
  * This test connects directly to the real PostgreSQL database engine.
- * It verifies that persisted user records in PostgreSQL contain valid bcrypt hashes and zero plaintext.
+ * It verifies that persisted user records in PostgreSQL contain valid bcrypt hashes and zero plaintext
+ * across seeded demo users and dynamically created test accounts.
+ *
+ * SCOPE BOUNDARY:
+ * This suite specifically tests database-backed password persistence and cryptographic hashing invariants
+ * (TEST-AUTH-04). It does NOT execute the full HTTP AuthGuard request lifecycle against PostgreSQL;
+ * that HTTP middleware behavior (cookie validation, token expiry, revocation, dynamic role lookup)
+ * is tested in `server/tests/integration/auth.test.ts` using mocked Prisma.
  *
  * In CI environments (GitHub Actions), a live PostgreSQL 16 service container is provisioned.
  * When executed in CI, database availability is mandatory (a missing database fails the build).
