@@ -11,10 +11,10 @@
 ## 1. Release Identification
 
 * **Assessed Implementation Baseline Commit:** Commit `1f31dd1d20739c786f51d4a3739d028aa880ffbe` (WP-03 Income Transaction Processing & Ledger Integration)
-* **Current Documentation HEAD Commit:** Commit `a81f924765d7764d2627cbcae360f04c0ecae0e2` on branch `feat/income-transaction` (PR #10 targeting `sprint-1`)
+* **Current Documentation HEAD Commit:** Commit `e3c5a6e8b4e724683fbfa83984638a1f8bb04121` on branch `feat/income-transaction` (PR #10 targeting `sprint-1`)
 * **Base Branch Commit:** `a53f10d4272dc638de518bce3e0e7bd80fa2500a` (`sprint-1`)
 * **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
-* **CI Verification Run:** GitHub Actions Run [#42358395191](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42358395191) (Status: Passed — 232 tests passed [213 backend + 19 frontend], 0 skipped)
+* **CI Verification Run:** GitHub Actions Run [#42358528029](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42358528029) (Status: Passed — 232 tests passed [213 backend + 19 frontend], 0 skipped)
 * **Test Environment:** Node.js v20+, PostgreSQL 16 (GitHub Actions Service Container / Docker Compose)
 
 > **Sprint 1 Scope Note:** This record reflects the implementation verification for WP-01 (Authentication, Session Security & Access Control), WP-02 (Financial Account Model, Reproducible Seed & Opening Balance Lifecycle), and WP-03 (Income Transaction Processing & Ledger Integration). Final Deliverable 1 submission package evidence will be compiled upon completion of WP-04 through WP-06 (Expense Transactions, Allocations, Repayments, Summary, and Golden Domain Journey).
