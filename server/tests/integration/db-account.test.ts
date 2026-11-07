@@ -38,7 +38,8 @@ interface UserSnapshot {
 describe('Integration Test: PostgreSQL Live Database Account Foundation & Live API Isolation (WP-02)', () => {
   let prisma: PrismaClient;
   let isDbConnected = false;
-  const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+  const isGitHubActions = process.env.GITHUB_ACTIONS === 'true';
+  const isCI = process.env.CI === 'true' || isGitHubActions;
   const allowLiveDb = process.env.ALLOW_LIVE_DB_TESTS === 'true';
   const databaseUrl = process.env.DATABASE_URL || '';
   const TRUSTED_ORIGIN = 'http://localhost:5173';
@@ -64,6 +65,7 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
     // 2. Validate that DATABASE_URL points to a verified, isolated test database
     // If verification fails, ABORT IMMEDIATELY (throw Error, do not just warn)
     assertTestDatabase(databaseUrl, {
+      isGitHubActions,
       isCI,
       allowLiveDb,
       nodeEnv: process.env.NODE_ENV
@@ -162,16 +164,24 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
   }
 
   async function restoreUsers(snaps: UserSnapshot[]): Promise<void> {
+    const errors: Error[] = [];
     for (const u of snaps) {
-      await prisma.user.update({
-        where: { id: u.id },
-        data: {
-          password_hash: u.password_hash,
-          role: u.role as any,
-          is_active: u.is_active,
-          updated_at: u.updated_at
-        }
-      });
+      try {
+        await prisma.user.update({
+          where: { id: u.id },
+          data: {
+            password_hash: u.password_hash,
+            role: u.role as any,
+            is_active: u.is_active,
+            updated_at: u.updated_at
+          }
+        });
+      } catch (err: any) {
+        errors.push(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+    if (errors.length > 0) {
+      throw new Error(`Failed to restore ${errors.length} user(s): ${errors.map((e) => e.message).join('; ')}`);
     }
   }
 
@@ -313,40 +323,87 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       }
     });
 
-    it('guarantees user snapshot is restored even when seed execution fails or throws (seed failure simulation)', async (ctx) => {
+    it('guarantees database snapshot is restored when real seed execution encounters an error (Task 3 Real Seed Failure)', async (ctx) => {
       if (!isDbConnected) {
         ctx.skip();
         return;
       }
 
-      // 1. Snapshot demo users
+      // 1. Snapshot demo users and checking account before mutation
       const userSnaps = await snapshotUsers(['user_demo', 'user_other', 'admin_demo']);
+      const userDemo = await prisma.user.findUnique({ where: { username: 'user_demo' } });
+      const checking = await prisma.account.findFirst({
+        where: { user_id: userDemo!.id, name: 'Checking Bank' }
+      });
+      expect(checking).toBeDefined();
+      const accountSnap = await snapshotAccount(checking!.id);
 
-      // 2. Register cleanup in central queue BEFORE mutation
+      // 2. Register independent cleanups in central queue BEFORE running test
       pendingCleanups.push(async () => {
         await restoreUsers(userSnaps);
       });
-
-      // 3. Mutate user to simulate partial seed modification, then simulate failure
-      await prisma.user.update({
-        where: { id: userSnaps[0].id },
-        data: { role: 'ADMIN' }
+      pendingCleanups.push(async () => {
+        await restoreAccount(accountSnap);
       });
 
+      // 3. Mutate checking balance to test restoration
+      await prisma.account.update({
+        where: { id: checking!.id },
+        data: { opening_balance: 5555.55, is_opening_locked: false }
+      });
+
+      // 4. Construct proxy client where user operations hit real PostgreSQL,
+      // but account.upsert throws an injected database error during seed execution
+      const proxyPrisma = new Proxy(prisma, {
+        get(target, prop, receiver) {
+          if (prop === 'account') {
+            const realAccount = target.account;
+            return new Proxy(realAccount, {
+              get(accTarget, accProp, accReceiver) {
+                if (accProp === 'upsert') {
+                  return async () => {
+                    throw new Error('Injected database error during real seed account upsert');
+                  };
+                }
+                return Reflect.get(accTarget, accProp, accReceiver);
+              }
+            });
+          }
+          return Reflect.get(target, prop, receiver);
+        }
+      });
+
+      // 5. Execute real seed(proxyPrisma) inside try/finally
+      let seedError: Error | null = null;
       try {
-        await (async () => {
-          throw new Error('Simulated database deadlock or network failure during seed');
-        })();
-      } catch {
-        // Expected simulated failure
+        await seed(proxyPrisma as any);
+      } catch (err: any) {
+        seedError = err;
       } finally {
+        await restoreAccount(accountSnap);
         await restoreUsers(userSnaps);
       }
 
-      // 4. Verify user was safely restored back to USER role and original timestamp
-      const restoredUser = await prisma.user.findUnique({ where: { id: userSnaps[0].id } });
-      expect(restoredUser!.role).toBe(userSnaps[0].role);
-      expect(restoredUser!.updated_at.getTime()).toBe(userSnaps[0].updated_at.getTime());
+      // 6. Assert real seed execution failed at the injected account upsert step
+      expect(seedError).toBeDefined();
+      expect(seedError!.message).toContain('Injected database error during real seed account upsert');
+
+      // 7. Verify all demo users and account were completely restored in PostgreSQL
+      const restoredChecking = await prisma.account.findUnique({ where: { id: checking!.id } });
+      expect(Number(restoredChecking!.opening_balance)).toBe(Number(accountSnap.opening_balance));
+      expect(restoredChecking!.is_opening_locked).toBe(accountSnap.is_opening_locked);
+
+      const restoredUsers = await prisma.user.findMany({
+        where: { username: { in: ['user_demo', 'user_other', 'admin_demo'] } }
+      });
+      for (const snap of userSnaps) {
+        const u = restoredUsers.find((r) => r.id === snap.id);
+        expect(u).toBeDefined();
+        expect(u!.role).toBe(snap.role);
+        expect(u!.password_hash).toBe(snap.password_hash);
+        expect(u!.is_active).toBe(snap.is_active);
+        expect(u!.updated_at.getTime()).toBe(snap.updated_at.getTime());
+      }
     });
   });
 

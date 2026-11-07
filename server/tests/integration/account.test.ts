@@ -343,6 +343,38 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       expect(summaryRes.body.error.code).toBe('INTERNAL_SERVER_ERROR');
       expect(summaryRes.body.data).toBeUndefined();
     });
+
+    it('calculates summary using exact Decimal arithmetic without IEEE 754 precision errors (e.g. 0.10 + 0.20 = 0.30)', async () => {
+      // Set Checking Bank (CASH) to 0.10
+      const patch1 = await request(app)
+        .patch('/api/accounts/acc-demo-checking/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 0.10 });
+      expect(patch1.status).toBe(200);
+
+      // Add a second cash account for user_demo to test sum
+      mockAccounts.push({
+        id: 'acc-demo-petty-cash',
+        user_id: 'user-a-uuid',
+        name: 'Petty Cash',
+        type: 'CASH',
+        opening_balance: new Prisma.Decimal('0.20'),
+        is_opening_locked: false,
+        created_at: new Date('2026-11-01T00:00:10.000Z'),
+        updated_at: new Date('2026-11-01T00:00:10.000Z')
+      });
+
+      const summaryRes = await request(app)
+        .get('/api/reports/summary')
+        .set('Cookie', userACookie);
+
+      expect(summaryRes.status).toBe(200);
+      expect(summaryRes.body.success).toBe(true);
+      // In JS floating point, 0.10 + 0.20 = 0.30000000000000004. Decimal arithmetic must preserve exactly 0.30
+      expect(summaryRes.body.data.bank_balance).toBe(0.30);
+    });
   });
 
   describe('TEST-OPEN-03: Invalid Input Rejection (AC-03-2, F-03)', () => {
@@ -457,7 +489,34 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       expect(checkingAcc.opening_balance.toString()).toBe('10000');
     });
 
-    describe('Race Condition & Concurrent State Mutation Handling (Fix #7)', () => {
+    describe('Concurrent Request & Race Condition Handling (AC-03-1, AC-03-3)', () => {
+      it('executes real concurrent PATCH requests simultaneously without lost updates or corruption', async () => {
+        // Send 2 concurrent PATCH requests to update the same account
+        const [res1, res2] = await Promise.all([
+          request(app)
+            .patch('/api/accounts/acc-demo-checking/opening-balance')
+            .set('Origin', TRUSTED_ORIGIN)
+            .set('Content-Type', 'application/json')
+            .set('Cookie', userACookie)
+            .send({ opening_balance: 7500.00 }),
+          request(app)
+            .patch('/api/accounts/acc-demo-checking/opening-balance')
+            .set('Origin', TRUSTED_ORIGIN)
+            .set('Content-Type', 'application/json')
+            .set('Cookie', userACookie)
+            .send({ opening_balance: 8500.00 })
+        ]);
+
+        expect(res1.status).toBe(200);
+        expect(res2.status).toBe(200);
+        expect(res1.body.success).toBe(true);
+        expect(res2.body.success).toBe(true);
+
+        // Database balance must accurately reflect one of the requested values without partial state
+        const target = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+        expect(['7500', '8500']).toContain(target.opening_balance.toString());
+      });
+
       it('returns 422 OPENING_BALANCE_LOCKED if account was locked concurrently during atomic updateMany', async () => {
         // Mock updateMany to simulate race condition: account was locked between check and updateMany
         vi.mocked(prisma.account.updateMany).mockResolvedValueOnce({ count: 0 });

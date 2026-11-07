@@ -70,7 +70,7 @@ export async function lockAccounts(
     return;
   }
 
-  await tx.account.updateMany({
+  const updateResult = await tx.account.updateMany({
     where: {
       id: { in: accountsToLock },
       user_id: userId,
@@ -81,4 +81,13 @@ export async function lockAccounts(
       updated_at: new Date()
     }
   });
+
+  // Verify that every account intended to be locked was updated.
+  // If count mismatches due to concurrency or state mutation, abort and roll back transaction.
+  if (updateResult.count !== accountsToLock.length) {
+    throw new AccountLockError(
+      `Concurrency conflict: expected to lock ${accountsToLock.length} account(s), but updated ${updateResult.count}. Aborting transaction.`,
+      'ACCOUNT_LOCK_CONCURRENCY_CONFLICT'
+    );
+  }
 }

@@ -163,4 +163,28 @@ describe('Unit Test: Hardened accountLock.service (P2 Finding)', () => {
     expect(mockTx.account.findMany).not.toHaveBeenCalled();
     expect(mockTx.account.updateMany).not.toHaveBeenCalled();
   });
+
+  it('throws AccountLockError with code ACCOUNT_LOCK_CONCURRENCY_CONFLICT when updateMany count mismatches', async () => {
+    const mockTx = {
+      account: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'acc-1', is_opening_locked: false },
+          { id: 'acc-2', is_opening_locked: false }
+        ]),
+        // Simulates concurrent update race: count: 1 instead of expected 2
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })
+      }
+    } as any;
+
+    await expect(
+      lockAccounts(mockTx, ['acc-1', 'acc-2'], 'user-1')
+    ).rejects.toThrow(AccountLockError);
+
+    try {
+      await lockAccounts(mockTx, ['acc-1', 'acc-2'], 'user-1');
+    } catch (err: any) {
+      expect(err.code).toBe('ACCOUNT_LOCK_CONCURRENCY_CONFLICT');
+      expect(err.message).toContain('expected to lock 2 account(s), but updated 1');
+    }
+  });
 });

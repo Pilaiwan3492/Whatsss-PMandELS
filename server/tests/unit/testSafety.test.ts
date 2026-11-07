@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
+import { seed } from '../../prisma/seed.js';
 import {
   validateTestDatabaseUrl,
   assertTestDatabase,
@@ -47,16 +48,24 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
   }
 
   async function restoreUsers(mockClient: any, snaps: UserSnapshot[]): Promise<void> {
+    const errors: Error[] = [];
     for (const u of snaps) {
-      await mockClient.user.update({
-        where: { id: u.id },
-        data: {
-          password_hash: u.password_hash,
-          role: u.role,
-          is_active: u.is_active,
-          updated_at: u.updated_at
-        }
-      });
+      try {
+        await mockClient.user.update({
+          where: { id: u.id },
+          data: {
+            password_hash: u.password_hash,
+            role: u.role,
+            is_active: u.is_active,
+            updated_at: u.updated_at
+          }
+        });
+      } catch (err: any) {
+        errors.push(err);
+      }
+    }
+    if (errors.length > 0) {
+      throw new Error(`Failed to restore ${errors.length} user(s): ${errors.map((e) => e.message).join('; ')}`);
     }
   }
 
@@ -232,13 +241,32 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
   });
 
   describe('Database URL Safety Verification (Test DB Guard)', () => {
-    it('accepts CI service container database URL on localhost', () => {
+    it('accepts CI service container database URL on localhost in GitHub Actions', () => {
       const ciUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_db?schema=public';
-      const result = validateTestDatabaseUrl(ciUrl, { isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+      const result = validateTestDatabaseUrl(ciUrl, { isGitHubActions: true, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
       expect(result.isValid).toBe(true);
     });
 
-    it('accepts local dedicated test database containing "test" keyword', () => {
+    it('accepts GitHub Actions container database containing "test"', () => {
+      const ciUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_test?schema=public';
+      const result = validateTestDatabaseUrl(ciUrl, { isGitHubActions: true, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+      expect(result.isValid).toBe(true);
+    });
+
+    it('rejects whatsss_db in generic CI without GitHub Actions to prevent local bypass', () => {
+      const genericCiUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_db?schema=public';
+      const result = validateTestDatabaseUrl(genericCiUrl, { isGitHubActions: false, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('Setting CI=true on a generic/local machine does not grant access to "whatsss_db"');
+    });
+
+    it('accepts test-named database in generic CI', () => {
+      const genericCiTestUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_test?schema=public';
+      const result = validateTestDatabaseUrl(genericCiTestUrl, { isGitHubActions: false, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+      expect(result.isValid).toBe(true);
+    });
+
+    it('accepts local dedicated test database containing "test" keyword when allowLiveDb is true', () => {
       const localTestUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_test?schema=public';
       const result = validateTestDatabaseUrl(localTestUrl, { isCI: false, allowLiveDb: true, nodeEnv: 'test' });
       expect(result.isValid).toBe(true);
@@ -260,7 +288,7 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
 
     it('rejects database names containing production keywords', () => {
       const prodDbUrl = 'postgresql://whatsss_user:password@localhost:5432/whatsss_production';
-      const result = validateTestDatabaseUrl(prodDbUrl, { isCI: true, allowLiveDb: true });
+      const result = validateTestDatabaseUrl(prodDbUrl, { isGitHubActions: true, isCI: true, allowLiveDb: true });
       expect(result.isValid).toBe(false);
       expect(result.reason).toContain('forbidden production keyword');
     });
@@ -279,9 +307,9 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
       }).toThrow(/FATAL: Test database verification failed/);
     });
 
-    it('rejects URL in CI when host passes allowlist but database is not the provisioned CI service database', () => {
+    it('rejects URL in GitHub Actions CI when host passes allowlist but database is not provisioned service database', () => {
       const foreignDbInCi = 'postgresql://whatsss_user:password@localhost:5432/foreign_unrelated_db?schema=public';
-      const result = validateTestDatabaseUrl(foreignDbInCi, { isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+      const result = validateTestDatabaseUrl(foreignDbInCi, { isGitHubActions: true, isCI: true, allowLiveDb: false, nodeEnv: 'test' });
       expect(result.isValid).toBe(false);
       expect(result.reason).toContain('does not match the provisioned CI service container');
     });
@@ -329,62 +357,154 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
         await restoreAccount(mockPrisma, accountSnap);
       });
 
-      // Execute cleanups: must throw error because restoreAccount failed, but restoreUsers MUST still execute!
+      // Execute cleanups: must throw error because restoreAccount failed after bounded retries,
+      // but restoreUsers MUST still execute!
       await expect(executeCleanupsSafely(queue)).rejects.toThrow(
         'PostgreSQL connection dropped during account cleanup'
       );
 
+      // Verify that restoreAccount was attempted with retry (2 times)
+      expect(mockPrisma.account.update).toHaveBeenCalledTimes(2);
       // Verify that restoreUsers was indeed called despite restoreAccount failure!
-      expect(mockPrisma.account.update).toHaveBeenCalledTimes(1);
       expect(mockPrisma.user.update).toHaveBeenCalledTimes(1);
       expect(mockPrisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'user-1' } })
       );
     });
 
-    it('guarantees user snapshot is restored when seed throws an error within try/finally block', async () => {
+    it('isolates user-level restore errors so failure on user 1 does not abort user 2', async () => {
       const mockPrisma = {
         user: {
-          update: vi.fn().mockResolvedValue({})
+          update: vi.fn().mockImplementation(({ where }: { where: { id: string } }) => {
+            if (where.id === 'user-1') {
+              throw new Error('Connection timeout restoring user-1');
+            }
+            return Promise.resolve({});
+          })
+        }
+      };
+
+      const user1Snap: UserSnapshot = {
+        id: 'user-1',
+        username: 'user_demo',
+        password_hash: 'hash1',
+        role: 'USER',
+        is_active: true,
+        updated_at: new Date()
+      };
+
+      const user2Snap: UserSnapshot = {
+        id: 'user-2',
+        username: 'user_other',
+        password_hash: 'hash2',
+        role: 'USER',
+        is_active: true,
+        updated_at: new Date()
+      };
+
+      // restoreUsers must attempt both users and then throw an aggregate error
+      await expect(restoreUsers(mockPrisma, [user1Snap, user2Snap])).rejects.toThrow(
+        /Failed to restore 1 user\(s\): Connection timeout restoring user-1/
+      );
+
+      // Verify both user-1 and user-2 update calls were attempted
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'user-1' } })
+      );
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'user-2' } })
+      );
+    });
+
+    it('guarantees user snapshot is restored when real seed execution throws an error', async () => {
+      // Mock client that simulates successful user upserts but failure during account upsert in real seed()
+      const updatedUsers: any[] = [];
+      const mockPrisma = {
+        user: {
+          upsert: vi.fn().mockImplementation(async ({ where, update, create }) => {
+            const userObj = {
+              id: `uuid-${where.username}`,
+              username: where.username,
+              email: `${where.username}@whatsss.local`,
+              password_hash: update.password_hash || create.password_hash,
+              role: update.role || create.role,
+              is_active: true,
+              created_at: new Date(),
+              updated_at: new Date()
+            };
+            return userObj;
+          }),
+          update: vi.fn().mockImplementation(async ({ where, data }) => {
+            updatedUsers.push({ where, data });
+            return {};
+          })
+        },
+        account: {
+          upsert: vi.fn().mockRejectedValue(new Error('PrismaClientKnownRequestError: Deadlock detected in account upsert'))
         }
       };
 
       const originalDate = new Date('2026-11-01T00:00:00.000Z');
       const userSnaps: UserSnapshot[] = [
         {
-          id: 'u-1',
+          id: 'uuid-user_demo',
           username: 'user_demo',
-          password_hash: 'hash123',
+          password_hash: 'original_user_demo_hash',
           role: 'USER',
+          is_active: true,
+          updated_at: originalDate
+        },
+        {
+          id: 'uuid-user_other',
+          username: 'user_other',
+          password_hash: 'original_user_other_hash',
+          role: 'USER',
+          is_active: true,
+          updated_at: originalDate
+        },
+        {
+          id: 'uuid-admin_demo',
+          username: 'admin_demo',
+          password_hash: 'original_admin_demo_hash',
+          role: 'ADMIN',
           is_active: true,
           updated_at: originalDate
         }
       ];
 
-      const failingSeed = async () => {
-        throw new Error('Database transaction deadlocked during seed execution');
-      };
+      const cleanupQueue: Array<() => Promise<void>> = [];
+      cleanupQueue.push(async () => {
+        await restoreUsers(mockPrisma, userSnaps);
+      });
 
       let seedError: Error | null = null;
       try {
-        await failingSeed();
+        // Run the real seed() function from seed.ts
+        await seed(mockPrisma as any);
       } catch (err: any) {
         seedError = err;
       } finally {
-        await restoreUsers(mockPrisma, userSnaps);
+        await executeCleanupsSafely(cleanupQueue);
       }
 
+      // Verify seed threw the injected error
       expect(seedError).toBeDefined();
-      expect(seedError!.message).toContain('deadlocked during seed');
-      expect(mockPrisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'u-1' },
-        data: {
-          password_hash: 'hash123',
-          role: 'USER',
-          is_active: true,
-          updated_at: originalDate
-        }
-      });
+      expect(seedError!.message).toContain('Deadlock detected in account upsert');
+
+      // Verify that all 3 users were restored back to original snapshot state
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(3);
+      for (const snap of userSnaps) {
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({
+          where: { id: snap.id },
+          data: {
+            password_hash: snap.password_hash,
+            role: snap.role,
+            is_active: snap.is_active,
+            updated_at: snap.updated_at
+          }
+        });
+      }
     });
   });
 });
