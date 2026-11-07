@@ -30,7 +30,7 @@
 * **TDD Red/Green Implementation Evidence:**
   * **Red Commit (`f0f7878`):** Test specifications and failing test suites added for F-07 credit card repayment engine and boundary validations.
   * **Green Commit (`558b307`):** Implementation of `repayment.service.ts`, `transaction.controller.ts`, atomic balance locking, and Decimal calculation satisfying all test assertions.
-  * **Concurrency & Row Lock Hardening Commit:** Pessimistic row-level locking (`acquireAccountRowLocks`) inside `$transaction` and live concurrent tests (`TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`).
+  * **Concurrency & Row Lock Hardening Commit:** Unified pessimistic row-level locking (`acquireAccountRowLocks`) before account reads inside `$transaction` across all financial transaction services (Income, Expense, Repayment) and live concurrent tests (`TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`).
 * **Automated Test Execution Summary:**
   * **Local Suite Execution (without live DB):**
     * Backend: 261 passed, 37 skipped across 21 test files (84 Unit tests passed across 7 suites; 177 Integration tests passed across 14 suites).

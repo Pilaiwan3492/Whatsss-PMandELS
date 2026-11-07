@@ -329,7 +329,10 @@ export async function recordIncome(
   for (let attempt = 1; attempt <= MAX_CONCURRENCY_RETRIES; attempt++) {
     try {
       return await prismaClient.$transaction(async (tx) => {
-        // A. Query primary account and income account owned strictly by userId
+        // A. Acquire pessimistic row-level write locks in ascending ID order before any account reads
+        await acquireAccountRowLocks(tx, [primaryId, incomeId], userId);
+
+        // B. Query primary account and income account owned strictly by userId under lock
         const primaryAccount = await tx.account.findFirst({
           where: {
             id: primaryId,
@@ -368,9 +371,8 @@ export async function recordIncome(
           );
         }
 
-        // B. Atomically lock opening balance of the primary CASH account (AC-03-3)
+        // C. Atomically lock opening balance of the primary CASH account (AC-03-3)
         // lockAccounts handles idempotency safely: if already locked, it does not re-write or fail.
-        await acquireAccountRowLocks(tx, [primaryAccount.id, incomeAccount.id], userId);
         await lockAccounts(tx, [primaryAccount.id], userId);
 
         // C. Create Transaction header
