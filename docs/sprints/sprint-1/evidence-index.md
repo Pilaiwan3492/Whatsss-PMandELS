@@ -33,12 +33,24 @@
   * **Concurrency & Row Lock Hardening Commit:** Unified pessimistic row-level locking (`acquireAccountRowLocks`) before account reads inside `$transaction` across all financial transaction services (Income, Expense, Repayment) and live concurrent tests (`TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`).
 * **Automated Test Execution Summary:**
   * **Local Suite Execution (without live DB):**
-    * Backend: 261 passed, 37 skipped across 21 test files (84 Unit tests passed across 7 suites; 177 Integration tests passed across 14 suites).
-    * Frontend: 43 passed across 5 component test files (10 in `RepaymentForm.test.tsx`, 13 in `ExpenseForm.test.tsx`, 8 in `AccountListPage.test.tsx`, 8 in `IncomeForm.test.tsx`, 4 in `ProtectedRoute.test.tsx`).
-  * **GitHub Actions CI Environment (Live PostgreSQL Service Container, `ALLOW_LIVE_DB_TESTS=true`):**
-    * Backend: 298 passed, 0 skipped across 21 test files (including 39 live PostgreSQL integration tests across `db-account.test.ts`, `db-income.test.ts`, `db-expense.test.ts`, `db-repayment.test.ts`, and `db-password.test.ts`).
-    * Frontend: 43 passed across 5 test files.
+    * Backend: 275 passed, 37 skipped across 25 test files (89 Unit tests passed across 8 suites; 186 Integration tests passed across 15 suites; 37 live DB tests skipped locally).
+    * Frontend: 53 passed across 7 component test files (5 in `DashboardPage.test.tsx`, 5 in `TransactionHistoryPage.test.tsx`, 10 in `RepaymentForm.test.tsx`, 13 in `ExpenseForm.test.tsx`, 8 in `AccountListPage.test.tsx`, 8 in `IncomeForm.test.tsx`, 4 in `ProtectedRoute.test.tsx`).
+  * **GitHub Actions CI Environment (Live PostgreSQL Service Container, ALLOW_LIVE_DB_TESTS=true):**
+    * Backend: 312 passed, 0 failed, 0 skipped across 25 test files.
+    * Frontend: 53 passed, 0 failed across 7 test files.
+    * Production Builds:
+      * Backend TypeScript compilation: Passed.
+      * Frontend TypeScript compilation and Vite production build: Passed.
+    * CI Run: [#107](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42397074670)
+    * Verified Commit: 07a2716a8c4d52783b24222eb6fb51fc3ad098d2
+    * หมายเหตุ: ตัวเลขนี้ตรวจจาก Job Logs ของ Run #107 ไม่ใช่การคาดเดาจาก PR Description
   * **Detailed Suite Breakdown:**
+    * `balance.test.ts`: 5 passed (TEST-BAL-01: arbitrary-precision Decimal balance calculations, opening balance exclusion BR-02, salary inflow balance impact, split purchase debt impact, Golden Journey final balances Bank 27,000 THB, Debt 0 THB, Income 20,000 THB, Expense 3,000 THB, Dining 1,000 THB, Grocery 2,000 THB)
+    * `transaction.test.ts`: 7 passed (TEST-HIST-01: Mocked Prisma & HTTP API; 401 unauthenticated per BR-09, 403 admin financial barrier per BR-10, cross-tenant isolation per BR-01, empty state, exactly 3 transactions and 4 allocation lines total per AC-09-1, deterministic chronological sorting transaction_date DESC, created_at DESC, eagerly loaded primary account and target category metadata)
+    * `persistence.test.ts`: 1 passed in CI (TEST-PERSIST-01: Live PostgreSQL HTTP API; verifies relational database persistence against whatsss_test without re-seeding upon connection pool refresh, confirms identical metrics Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k, 3 transactions, 4 allocation lines)
+    * `golden-journey.test.ts`: 1 passed in CI (TEST-E2E-01: Live PostgreSQL HTTP API; executes complete 4-step sequential Golden Domain Journey via HTTP session cookies against whatsss_test: Step 1 Opening Balance 10k -> Step 2 Salary 20k -> Step 3 Split Purchase 3k -> Step 4 Repayment 3k -> Step 5 Final Summary Verification Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k -> Step 6 History Verification 3 transactions, 4 allocations)
+    * `DashboardPage.test.tsx`: 5 passed (TEST-UI-DASH-01..05: renders 4 summary metric cards with formatted THB currency, renders expense category breakdown progress bars with 33% Dining and 67% Grocery, renders recent transactions snippet table, quick action navigation links, handles loading spinner and error alerts with retry)
+    * `TransactionHistoryPage.test.tsx`: 5 passed (TEST-UI-HIST-01..05: renders chronological transactions table with type badges, filter tabs All/Income/Expense/Repayment with counts, expandable nested accordion rows showing split allocations, empty state placeholder, handles loading spinner and error banner with retry)
     * `repayment.test.ts`: 24 passed (Mocked Prisma & HTTP API; records full CC repayment of 3,000.00 THB reducing Bank and Debt atomically with 1 allocation line targeting LOAN_TAKEN, verifies expense exclusion invariant per BR-08, supports partial repayment, rejects repayment exceeding debt with 422 REPAYMENT_EXCEEDS_DEBT, rejects insufficient funds with 422 INSUFFICIENT_FUNDS, rejects non-positive/over-precision/non-numeric amount with 400 INVALID_AMOUNT, rejects cross-tenant accounts with 404 NOT_FOUND per BR-01, rejects unauthenticated requests with 401 per BR-09, rejects ADMIN with 403 per BR-10, locks opening balance atomically)
     * `db-repayment.test.ts`: 9 passed in CI (skipped locally without live PostgreSQL; verifies live PostgreSQL persistence of Transaction form PAYMENT_CHARGE and child AllocationLine targeting LOAN_TAKEN, atomic reduction of Bank and Debt balances, expense exclusion invariant BR-08, boundary 422 rejection on exceeding debt or insufficient funds, concurrent race condition serialization via pessimistic row locks [TEST-REPAY-CONCURRENT-DEBT, TEST-REPAY-CONCURRENT-FUNDS], mid-flight rollback atomicity [TEST-REPAY-ATOM], and exact decimal arithmetic [TEST-REPAY-DECIMAL])
     * `RepaymentForm.test.tsx`: 10 passed (TEST-UI-REPAY-01..10: rendering repayment modal with source CASH and target LOAN_TAKEN accounts, full repayment submission, partial repayment submission, quick-fill "Pay Full Debt" button, live warning badge when repayment exceeds debt, live warning badge when insufficient bank funds, disabled submit button on invalid/over-debt/insufficient-funds, formatted currency preview, error banner display on 422/400 API response, and modal dismissal/reset)
@@ -156,7 +168,7 @@
 |---|---|---|---|:---:|
 | `TEST-BAL-01` | `AC-08-1`, `FR-10`, `BR-02`..`08` | `server/tests/unit/balance.test.ts` | Passed — Vitest Unit Test (5 test cases: verifies opening balance exclusion BR-02, salary inflow balance impact, split expense debt impact, category breakdown Dining 1000/Grocery 2000, final balances Bank 27000, Debt 0, Income 20000, Expense 3000, and NFR-DATA-01 decimal precision preservation) | WP-06 Branch |
 | `TEST-HIST-01` | `AC-09-1`, `FR-11`, `BR-01`, `BR-09`, `BR-10` | `server/tests/integration/transaction.test.ts` | Passed — Mocked Prisma HTTP API (7 test cases: verifies 401 unauthenticated, 403 admin financial barrier, tenancy isolation, empty state, exactly 3 recorded transactions and 4 allocation lines total, chronological date descending order, primary and target category metadata) | WP-06 Branch |
-| `TEST-PERSIST-01`| `AC-09-2`, `NFR-DATA-01` | `server/tests/integration/persistence.test.ts` | Passed — Live PostgreSQL HTTP API (Disconnects active PrismaClient, instantiates fresh connection pool simulating server process restart against whatsss_test without re-seeding, asserts identical retrieval of all 3 transactions, 4 allocation lines, and summary metrics Bank 27000, Debt 0, Income 20000, Expense 3000, Dining 1000, Grocery 2000) | WP-06 Branch |
+| `TEST-PERSIST-01`| `AC-09-2`, `NFR-DATA-01` | `server/tests/integration/persistence.test.ts`, `scratch/verify_server_restart.mjs` | Passed — Live PostgreSQL Integration & Real OS Process Restart (Verified via connection pool refresh and real OS process termination/respawn: Process 1 [PID: 3276] stopped, Process 2 [PID: 14784] started without DB re-seeding; exact match on Bank 27,000 THB, Debt 0 THB, Income 20,000 THB, Expense 3,000 THB, Dining 1,000 THB, Grocery 2,000 THB, 3 transactions, 4 allocation lines) | WP-06 Branch |
 | `TEST-E2E-01` | All Golden ACs (`AC-03-1`..`AC-09-1`) | `server/tests/e2e/golden-journey.test.ts` | Passed — Live PostgreSQL HTTP API (Executes full sequential 4-step Golden Journey through HTTP API with live session cookies against whatsss_test: Step 1 Opening Balance 10,000 THB -> Step 2 Salary 20,000 THB -> Step 3 Split CC Purchase 3,000 THB -> Step 4 Repayment 3,000 THB -> Step 5 Final Summary Verification Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k -> Step 6 History Verification 3 transactions, 4 allocations) | WP-06 Branch |
 | `TEST-UI-DASH` | `AC-08-1`, `F-08` | `client/src/pages/DashboardPage.test.tsx` | Passed — Vitest / Testing Library (5 test cases: TEST-UI-DASH-01..05 covering 4 summary metric cards, category breakdown progress bars, recent transactions table, quick action navigation links, and error banner with retry) | WP-06 Branch |
 | `TEST-UI-HIST` | `AC-09-1`, `F-09` | `client/src/pages/TransactionHistoryPage.test.tsx` | Passed — Vitest / Testing Library (5 test cases: TEST-UI-HIST-01..05 covering 3 transactions and 4 allocation lines rendering, filter tabs by type, expandable split allocation rows, empty state placeholder, and error banner with retry) | WP-06 Branch |
@@ -343,3 +355,126 @@ The complete 5-step Golden Domain Journey was executed sequentially against the 
     2. `2026-11-03`: Purchase (3,000.00 THB, 2 allocation lines: Dining 1k + Grocery 2k)
     3. `2026-11-02`: Salary Inflow (20,000.00 THB, 1 allocation line to Salary)
   * Returns **exactly 4 allocation lines total** across all recorded transactions.
+
+### 3.1 Real Server Process Restart Verification & Execution Evidence (AC-09-2, NFR-DATA-01)
+
+Per Issue #7 requirements, data persistence across process boundaries was verified through an **actual Operating System backend server process restart**:
+
+1. **Initial Process Lifecycle (Process 1):**
+   - Backend Express server spawned as OS Process 1 with **PID: 3276** listening on `http://localhost:5000`.
+   - Executed the complete 4-step Golden Domain Journey via HTTP API:
+     - Opening Balance: 10,000.00 THB on Checking Bank (`AC-03-1`)
+     - Salary Inflow: 20,000.00 THB (`AC-04-1`)
+     - CC Split Purchase: 3,000.00 THB (Dining 1,000.00 THB + Grocery 2,000.00 THB) (`AC-05-1`, `AC-06-1`)
+     - CC Debt Repayment: 3,000.00 THB (`AC-07-1`)
+   - Queried Pre-Restart Summary & History endpoints from Process 1.
+   - Captured Pre-Restart UI Screenshots for Dashboard and Transaction History.
+
+2. **Process Termination:**
+   - Terminated Process 1 (**PID: 3276**) via OS process termination signal (`taskkill /PID 3276 /T /F`).
+   - Verified port `5000` released and server actively unreachable (`ECONNREFUSED` / Port down confirmed).
+
+3. **Subsequent Process Lifecycle (Process 2):**
+   - Spawned completely new backend process as OS Process 2 with **PID: 14784** (**PID 14784 $\neq$ 3276**).
+   - **Crucial Invariant:** The PostgreSQL database was **NOT reset**, **NOT re-seeded**, and schema was untouched.
+   - Queried Post-Restart Summary & History endpoints from Process 2.
+   - Captured Post-Restart UI Screenshots for Dashboard and Transaction History.
+
+#### Terminal Execution Log
+```text
+======================================================================
+   STARTING REAL BACKEND SERVER PROCESS RESTART VERIFICATION
+======================================================================
+
+[STEP 0] Seeding whatsss_db database to pristine baseline...
+Development seeding completed successfully.
+[STEP 0] Database seeded.
+
+[STEP 1] Spawning Backend Server Process 1...
+[STEP 1] Server Process 1 spawned with PID: 3276
+[STEP 1] Server Process 1 is listening and responsive on http://localhost:5000
+
+[STEP 2] Authenticating as user_demo on Process 1...
+[STEP 2] Authenticated successfully. Auth Cookie: token=eyJhbGciOiJIUzI1NiI...
+
+[STEP 3] Fetching accounts for user_demo...
+Checking Bank ID: 58a82b98-c99a-4531-b495-ff8b51528158
+Visa Credit Card ID: 9877f2fc-714e-4149-903e-1ac01249146e
+Salary ID: 9fe7f8fc-381f-4f53-9a48-07cecc28ab7b
+Dining ID: 1d711df0-a3ee-4c36-880c-bab07909372b
+Grocery ID: 9ef72109-f65d-4f3c-bd0a-516a677fe011
+
+[STEP 4] Executing Golden Domain Journey on Server Process 1:
+  4.1 PATCH /api/accounts/:id/opening-balance (10,000.00 THB)...
+      -> Success. Checking Bank opening balance set to 10,000.00 THB
+  4.2 POST /api/transactions/income (20,000.00 THB Salary)...
+      -> Success. Recorded 20,000.00 THB Salary Income
+  4.3 POST /api/transactions/expense (3,000.00 THB Split Dining/Grocery)...
+      -> Success. Recorded 3,000.00 THB CC Split Purchase
+  4.4 POST /api/transactions/repayment (3,000.00 THB Full Repayment)...
+      -> Success. Recorded 3,000.00 THB CC Repayment
+
+[STEP 5] Querying Pre-Restart State from Server Process 1 (PID: 3276)...
+--- PRE-RESTART METRICS (Process 1, PID: 3276) ---
+Bank Balance:     27000 THB (Expected: 27000.00)
+Credit Card Debt: 0 THB (Expected: 0.00)
+Total Income:     20000 THB (Expected: 20000.00)
+Total Expense:    3000 THB (Expected: 3000.00)
+Dining:           1000 THB (Expected: 1000.00)
+Grocery:          2000 THB (Expected: 2000.00)
+Transactions:     3 (Expected: 3)
+Allocation Lines: 4 (Expected: 4)
+
+[STEP 6] Capturing Pre-Restart Screenshots via Puppeteer...
+Captured: screenshots/restart_01_dashboard_pre.png
+Captured: screenshots/restart_02_history_pre.png
+
+[STEP 7] Stopping Backend Server Process 1 (PID: 3276)...
+[STEP 7] Verified Server Process 1 is terminated. Port 5000 down: true
+
+[STEP 8] Spawning Backend Server Process 2 (WITHOUT touching or re-seeding database)...
+[STEP 8] Server Process 2 spawned with NEW PID: 14784 (Different PID verified: true)
+[STEP 8] Server Process 2 is up and listening on http://localhost:5000
+
+[STEP 9] Querying Post-Restart State from Server Process 2 (PID: 14784)...
+--- POST-RESTART METRICS (Process 2, PID: 14784) ---
+Bank Balance:     27000 THB (Expected: 27000.00)
+Credit Card Debt: 0 THB (Expected: 0.00)
+Total Income:     20000 THB (Expected: 20000.00)
+Total Expense:    3000 THB (Expected: 3000.00)
+Dining:           1000 THB (Expected: 1000.00)
+Grocery:          2000 THB (Expected: 2000.00)
+Transactions:     3 (Expected: 3)
+Allocation Lines: 4 (Expected: 4)
+
+[STEP 10] Capturing Post-Restart Screenshots via Puppeteer...
+Captured: screenshots/restart_03_dashboard_post.png
+Captured: screenshots/restart_04_history_post.png
+
+[CLEANUP] Process 2 (PID: 14784) closed cleanly.
+
+======================================================================
+                  VERIFICATION COMPARISON MATRIX                      
+======================================================================
+Metric                     | Pre-Restart (P1:3276) | Post-Restart (P2:14784) | Match?
+---------------------------|-----------------------|------------------------|-------
+Bank Balance (THB)         | 27000                 | 27000                  | PASS
+Credit Debt (THB)          | 0                     | 0                      | PASS
+Total Income (THB)         | 20000                 | 20000                  | PASS
+Total Expense (THB)        | 3000                  | 3000                   | PASS
+Dining Breakdown (THB)     | 1000                  | 1000                   | PASS
+Grocery Breakdown (THB)    | 2000                  | 2000                   | PASS
+Transactions Count         | 3                     | 3                      | PASS
+Allocation Lines Count     | 4                     | 4                      | PASS
+---------------------------|-----------------------|------------------------|-------
+
+>>> RESULT: SUCCESS! REAL SERVER PROCESS RESTART PERSISTENCE CONFIRMED! <<<
+```
+
+#### Pre- vs Post-Restart Visual Evidence
+
+| Metric / Screen | Pre-Restart State (Process 1, PID: 3276) | Post-Restart State (Process 2, PID: 14784) | Result |
+|---|---|---|:---:|
+| **Financial Dashboard** | ![Pre-Restart Dashboard](screenshots/restart_01_dashboard_pre.png) | ![Post-Restart Dashboard](screenshots/restart_03_dashboard_post.png) | **IDENTICAL (Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k)** |
+| **Transaction History** | ![Pre-Restart History](screenshots/restart_02_history_pre.png) | ![Post-Restart History](screenshots/restart_04_history_post.png) | **IDENTICAL (3 Transactions, 4 Allocation Lines)** |
+
