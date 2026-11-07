@@ -44,7 +44,7 @@ const mockAccounts: Account[] = [
   }
 ];
 
-describe('Frontend Component: ExpenseForm & Split Allocations Engine (WP-04, F-05, F-06)', () => {
+describe('Frontend Component: ExpenseForm Premium Minimal Fintech Redesign (WP-04, F-05, F-06)', () => {
   const mockOnClose = vi.fn();
   const mockOnSuccess = vi.fn();
 
@@ -64,7 +64,7 @@ describe('Frontend Component: ExpenseForm & Split Allocations Engine (WP-04, F-0
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders modal with default credit card account and split lines when isOpen is true', () => {
+  it('renders modal with new 3-section layout, default credit card and allocation rows when isOpen is true', () => {
     render(
       <ExpenseForm
         accounts={mockAccounts}
@@ -74,13 +74,31 @@ describe('Frontend Component: ExpenseForm & Split Allocations Engine (WP-04, F-0
       />
     );
 
-    expect(screen.getByText('Record Credit Card Purchase')).toBeDefined();
-    expect(screen.getByLabelText(/Primary Account/i)).toBeDefined();
+    // Modal Header
+    expect(screen.getByRole('heading', { name: 'Record Purchase', level: 2 })).toBeDefined();
+    expect(screen.getByText('Add a new credit card transaction.')).toBeDefined();
+
+    // Section 01 — Purchase Details
+    expect(screen.getByText('01 — Purchase Details')).toBeDefined();
+    expect(screen.getByLabelText(/Credit Card/i)).toBeDefined();
     expect(screen.getByLabelText(/Total Amount/i)).toBeDefined();
-    expect(screen.getByText(/Multi-Line Split Allocations Breakdown/i)).toBeDefined();
+    expect(screen.getByLabelText(/Transaction Date/i)).toBeDefined();
+    expect(screen.getByLabelText(/Description/i)).toBeDefined();
+
+    // Section 02 — Expense Breakdown
+    expect(screen.getByText('02 — Expense Breakdown')).toBeDefined();
+    expect(screen.getByText('Allocation 01')).toBeDefined();
+    expect(screen.getByText('Allocation 02')).toBeDefined();
+    expect(screen.getByRole('button', { name: /Add category/i })).toBeDefined();
+
+    // Section 03 — Allocation Summary
+    expect(screen.getByText('Allocation Summary')).toBeDefined();
+    expect(screen.getByTestId('summary-total')).toBeDefined();
+    expect(screen.getByTestId('summary-allocated')).toBeDefined();
+    expect(screen.getByTestId('summary-remaining')).toBeDefined();
   });
 
-  it('disables submit button and shows unbalanced badge when allocations do not equal total amount (BR-06)', () => {
+  it('disables submit button and displays Incomplete badge when allocations do not balance (BR-06)', () => {
     render(
       <ExpenseForm
         accounts={mockAccounts}
@@ -93,14 +111,18 @@ describe('Frontend Component: ExpenseForm & Split Allocations Engine (WP-04, F-0
     const totalInput = screen.getByLabelText(/Total Amount/i);
     fireEvent.change(totalInput, { target: { value: '3000.00' } });
 
-    // Initial allocations are empty, so remaining is 3000
-    expect(screen.getByText(/⚠ Unbalanced: Remaining to allocate: ฿3000.00/i)).toBeDefined();
+    // Initial allocations are empty, so remaining is 3000.00
+    expect(screen.getByText('Incomplete')).toBeDefined();
+    expect(screen.getByTestId('summary-total').textContent).toBe('฿3000.00');
+    expect(screen.getByTestId('summary-allocated').textContent).toBe('฿0.00');
+    expect(screen.getByTestId('summary-remaining').textContent).toBe('฿3000.00');
+    expect(screen.getByText(/Allocate the remaining ฿3000.00 to continue/i)).toBeDefined();
 
     const submitBtn = screen.getByRole('button', { name: /Record Purchase/i }) as HTMLButtonElement;
     expect(submitBtn.disabled).toBe(true);
   });
 
-  it('enables submit button and shows balanced badge when allocation sum strictly equals total amount (AC-06-1)', () => {
+  it('enables submit button and shows Balanced badge when allocation sum strictly equals total amount (AC-06-1)', () => {
     render(
       <ExpenseForm
         accounts={mockAccounts}
@@ -121,14 +143,48 @@ describe('Frontend Component: ExpenseForm & Split Allocations Engine (WP-04, F-0
     const amountLine2 = screen.getByLabelText('Amount for line 2');
     fireEvent.change(amountLine2, { target: { value: '2000.00' } });
 
-    // Verify balanced badge appears
-    expect(screen.getByText(/✓ Balanced: Allocated ฿3000.00 of ฿3000.00/i)).toBeDefined();
+    // Verify Balanced status and metrics
+    expect(screen.getByText('Balanced')).toBeDefined();
+    expect(screen.getByTestId('summary-total').textContent).toBe('฿3000.00');
+    expect(screen.getByTestId('summary-allocated').textContent).toBe('฿3000.00');
+    expect(screen.getByTestId('summary-remaining').textContent).toBe('฿0.00');
+    expect(screen.getByText(/Fully allocated: ฿3000.00 of ฿3000.00. Ready to record./i)).toBeDefined();
 
     const submitBtn = screen.getByRole('button', { name: /Record Purchase/i }) as HTMLButtonElement;
     expect(submitBtn.disabled).toBe(false);
   });
 
-  it('allows adding and removing split allocation lines dynamically', () => {
+  it('displays Over-allocated badge and contextual warning when allocations exceed total purchase', () => {
+    render(
+      <ExpenseForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const totalInput = screen.getByLabelText(/Total Amount/i);
+    fireEvent.change(totalInput, { target: { value: '3000.00' } });
+
+    const amountLine1 = screen.getByLabelText('Amount for line 1');
+    fireEvent.change(amountLine1, { target: { value: '2000.00' } });
+
+    const amountLine2 = screen.getByLabelText('Amount for line 2');
+    fireEvent.change(amountLine2, { target: { value: '1500.00' } });
+
+    // Verify Over-allocated state
+    expect(screen.getByText('Over-allocated')).toBeDefined();
+    expect(screen.getByTestId('summary-total').textContent).toBe('฿3000.00');
+    expect(screen.getByTestId('summary-allocated').textContent).toBe('฿3500.00');
+    expect(screen.getByTestId('summary-remaining').textContent).toBe('฿-500.00');
+    expect(screen.getByText(/Over-allocated by ฿500.00/i)).toBeDefined();
+
+    const submitBtn = screen.getByRole('button', { name: /Record Purchase/i }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(true);
+  });
+
+  it('allows adding and removing split allocation lines dynamically with outline Add category button', () => {
     render(
       <ExpenseForm
         accounts={mockAccounts}
@@ -142,17 +198,67 @@ describe('Frontend Component: ExpenseForm & Split Allocations Engine (WP-04, F-0
     expect(screen.getByLabelText('Amount for line 1')).toBeDefined();
     expect(screen.getByLabelText('Amount for line 2')).toBeDefined();
 
-    // Click Add Split Line
-    const addBtn = screen.getByRole('button', { name: /\+ Add Split Line/i });
+    // Click Add category
+    const addBtn = screen.getByRole('button', { name: /Add category/i });
     fireEvent.click(addBtn);
 
     expect(screen.getByLabelText('Amount for line 3')).toBeDefined();
+    expect(screen.getByText('Allocation 03')).toBeDefined();
 
-    // Click Remove line
+    // Click Remove line 3
     const removeButtons = screen.getAllByTitle('Remove split line');
+    expect(removeButtons.length).toBe(3);
     fireEvent.click(removeButtons[2]);
 
     expect(screen.queryByLabelText('Amount for line 3')).toBeNull();
+    expect(screen.queryByText('Allocation 03')).toBeNull();
+  });
+
+  it('disables remove buttons when only 1 allocation line remains', () => {
+    render(
+      <ExpenseForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const removeButtons = screen.getAllByTitle('Remove split line');
+    // Remove second line to leave only 1 line
+    fireEvent.click(removeButtons[1]);
+
+    const remainingRemoveBtn = screen.getByRole('button', { name: 'Remove allocation 1' }) as HTMLButtonElement;
+    expect(remainingRemoveBtn.disabled).toBe(true);
+  });
+
+  it('updates progress bar state proportionally according to allocations', () => {
+    const { container } = render(
+      <ExpenseForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const totalInput = screen.getByLabelText(/Total Amount/i);
+    fireEvent.change(totalInput, { target: { value: '2000.00' } });
+
+    // 50% allocated
+    const amountLine1 = screen.getByLabelText('Amount for line 1');
+    fireEvent.change(amountLine1, { target: { value: '1000.00' } });
+
+    const progressBar = container.querySelector('.expense-progress-bar') as HTMLElement;
+    expect(progressBar).toBeDefined();
+    expect(progressBar.style.width).toBe('50%');
+    expect(progressBar.className).toContain('incomplete');
+
+    // 100% balanced
+    const amountLine2 = screen.getByLabelText('Amount for line 2');
+    fireEvent.change(amountLine2, { target: { value: '1000.00' } });
+    expect(progressBar.style.width).toBe('100%');
+    expect(progressBar.className).toContain('balanced');
   });
 
   it('submits purchase transaction successfully and triggers onSuccess callback (AC-05-1)', async () => {

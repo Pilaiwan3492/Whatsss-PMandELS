@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Account } from '../api/accountApi.js';
 import { recordExpense, ExpenseResponseData, AllocationLinePayload } from '../api/transactionApi.js';
+import './ExpenseForm.css';
 
 export interface ExpenseFormProps {
   accounts: Account[];
@@ -35,7 +36,9 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
   useEffect(() => {
     if (isOpen) {
       // Default primary credit card account
-      const defaultCC = creditCardAccounts.find((a) => a.name.toLowerCase().includes('credit')) || creditCardAccounts[0];
+      const defaultCC =
+        creditCardAccounts.find((a) => a.name.toLowerCase().includes('credit')) ||
+        creditCardAccounts[0];
       setPrimaryAccountId(defaultCC ? defaultCC.id : '');
 
       // Default transaction date to YYYY-MM-DD
@@ -51,8 +54,13 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
       setIsSubmitting(false);
 
       // Default with 2 split allocation lines (Dining and Grocery if available)
-      const dining = expenseAccounts.find((a) => a.name.toLowerCase().includes('dining')) || expenseAccounts[0];
-      const grocery = expenseAccounts.find((a) => a.name.toLowerCase().includes('grocery')) || expenseAccounts[1] || expenseAccounts[0];
+      const dining =
+        expenseAccounts.find((a) => a.name.toLowerCase().includes('dining')) ||
+        expenseAccounts[0];
+      const grocery =
+        expenseAccounts.find((a) => a.name.toLowerCase().includes('grocery')) ||
+        expenseAccounts[1] ||
+        expenseAccounts[0];
 
       setAllocations([
         {
@@ -203,229 +211,372 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
     }
   };
 
+  // Allocation progress percentage
+  const progressPercent =
+    roundedTotal > 0 ? Math.min(100, Math.max(0, (roundedSum / roundedTotal) * 100)) : 0;
+
   return (
     <div
-      className="modal show d-block"
-      tabIndex={-1}
+      className="expense-modal-backdrop"
       role="dialog"
-      style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+      aria-modal="true"
+      aria-labelledby="expense-modal-title"
     >
-      <div className="modal-dialog modal-lg modal-dialog-centered" role="document">
-        <div className="modal-content">
-          <div className="modal-header">
-            <h5 className="modal-title">Record Credit Card Purchase</h5>
-            <button
-              type="button"
-              className="btn-close"
-              aria-label="Close"
-              onClick={onClose}
-              disabled={isSubmitting}
-            />
+      <div className="expense-modal-container">
+        {/* A. Modal Header */}
+        <div className="expense-modal-header">
+          <div>
+            <h2 id="expense-modal-title" className="expense-modal-title">
+              Record Purchase
+            </h2>
+            <p className="expense-modal-subtitle">
+              Add a new credit card transaction.
+            </p>
           </div>
+          <button
+            type="button"
+            className="expense-close-btn"
+            aria-label="Close dialog"
+            onClick={onClose}
+            disabled={isSubmitting}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
 
-          <form onSubmit={handleSubmit}>
-            <div className="modal-body">
-              {errorMessage && (
-                <div className="alert alert-danger" role="alert">
-                  {errorMessage}
-                </div>
-              )}
+        {/* Modal Form */}
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div className="expense-modal-body">
+            {/* Error Message Alert */}
+            {errorMessage && (
+              <div className="expense-error-alert" role="alert">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}>
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="8" x2="12" y2="12"></line>
+                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <span>{errorMessage}</span>
+              </div>
+            )}
 
-              <div className="row g-3">
-                <div className="col-md-6">
-                  <label htmlFor="primaryAccountId" className="form-label">
-                    Primary Account (Credit Card)
-                  </label>
-                  <select
-                    id="primaryAccountId"
-                    className="form-select"
-                    value={primaryAccountId}
-                    onChange={(e) => setPrimaryAccountId(e.target.value)}
-                    disabled={isSubmitting}
-                  >
-                    <option value="">-- Select Credit Card --</option>
-                    {creditCardAccounts.map((acc) => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.name} (Debt: ฿{acc.current_balance !== undefined ? acc.current_balance.toFixed(2) : '0.00'})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+            {/* B. Purchase Details (Section 01) */}
+            <div className="expense-section">
+              <div>
+                <span className="expense-section-tag">01 — Purchase Details</span>
+                <h3 className="expense-section-title">Credit Card & Transaction Header</h3>
+                <p className="expense-section-desc">Select the funding credit account and specify the total purchase amount.</p>
+              </div>
 
-                <div className="col-md-6">
-                  <label htmlFor="totalAmount" className="form-label">
-                    Total Amount (THB)
-                  </label>
+              {/* Credit Card Account (Full Width) */}
+              <div className="expense-field-group">
+                <label htmlFor="primaryAccountId" className="expense-label">
+                  Credit Card <span style={{ color: '#b91c1c' }}>*</span>
+                </label>
+                <select
+                  id="primaryAccountId"
+                  className="expense-select"
+                  value={primaryAccountId}
+                  onChange={(e) => setPrimaryAccountId(e.target.value)}
+                  disabled={isSubmitting}
+                  aria-label="Credit Card"
+                >
+                  <option value="">Select a credit card</option>
+                  {creditCardAccounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.name} (Debt: ฿{acc.current_balance !== undefined ? acc.current_balance.toFixed(2) : '0.00'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Total Amount (Prominent Hero Field) */}
+              <div className="expense-field-group">
+                <label htmlFor="totalAmount" className="expense-label">
+                  Total Amount <span style={{ color: '#b91c1c' }}>*</span>
+                </label>
+                <div className="expense-amount-wrapper">
+                  <span className="expense-currency-symbol">฿</span>
                   <input
                     type="number"
                     step="0.01"
                     id="totalAmount"
-                    className="form-control"
-                    placeholder="e.g. 3000.00"
+                    className="expense-input expense-amount-input"
+                    placeholder="0.00"
                     value={totalAmount}
                     onChange={(e) => setTotalAmount(e.target.value)}
                     disabled={isSubmitting}
+                    aria-label="Total Amount"
                   />
                 </div>
+                <span className="expense-helper">Transaction amount in THB</span>
+              </div>
 
-                <div className="col-md-6">
-                  <label htmlFor="transactionDate" className="form-label">
-                    Transaction Date
+              {/* Date & Description (2-Column Grid) */}
+              <div className="expense-grid-2">
+                <div className="expense-field-group">
+                  <label htmlFor="transactionDate" className="expense-label">
+                    Transaction Date <span style={{ color: '#b91c1c' }}>*</span>
                   </label>
                   <input
                     type="date"
                     id="transactionDate"
-                    className="form-control"
+                    className="expense-input"
                     value={transactionDate}
                     onChange={(e) => setTransactionDate(e.target.value)}
                     disabled={isSubmitting}
+                    aria-label="Transaction Date"
                   />
                 </div>
 
-                <div className="col-md-6">
-                  <label htmlFor="description" className="form-label">
-                    Description (Optional)
+                <div className="expense-field-group">
+                  <label htmlFor="description" className="expense-label">
+                    Description <span style={{ fontWeight: 400, color: 'var(--fintech-text-muted)' }}>(Optional)</span>
                   </label>
                   <input
                     type="text"
                     id="description"
-                    className="form-control"
+                    className="expense-input"
                     placeholder="e.g. Weekly supermarket shopping"
                     maxLength={255}
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     disabled={isSubmitting}
+                    aria-label="Description"
                   />
                 </div>
               </div>
+            </div>
 
-              <hr className="my-4" />
-
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <h6 className="mb-0">Multi-Line Split Allocations Breakdown (F-06, BR-05, BR-06)</h6>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-outline-primary"
-                  onClick={handleAddSplitLine}
-                  disabled={isSubmitting}
-                >
-                  + Add Split Line
-                </button>
+            {/* C. Expense Breakdown (Section 02) */}
+            <div className="expense-section">
+              <div className="expense-section-header">
+                <div>
+                  <span className="expense-section-tag">02 — Expense Breakdown</span>
+                  <h3 className="expense-section-title">Expense Allocations</h3>
+                  <p className="expense-section-desc">Allocate the purchase amount across categories.</p>
+                </div>
+                <span className="expense-counter-badge" aria-label="Line count">
+                  {allocations.length} {allocations.length === 1 ? 'line' : 'lines'}
+                </span>
               </div>
 
-              {/* Balance Status indicator */}
-              <div className="mb-3">
-                {parsedTotal > 0 && (
-                  <div>
-                    {isBalanced ? (
-                      <span className="badge bg-success p-2">
-                        ✓ Balanced: Allocated ฿{roundedSum.toFixed(2)} of ฿{roundedTotal.toFixed(2)}
+              {/* Allocation Cards (Row List) */}
+              <div className="expense-allocations-list" role="list">
+                {allocations.map((row, idx) => (
+                  <div key={idx} className="expense-allocation-card" role="listitem">
+                    <div className="expense-card-header">
+                      <span className="expense-card-index">
+                        Allocation {String(idx + 1).padStart(2, '0')}
                       </span>
-                    ) : (
-                      <span className="badge bg-warning text-dark p-2">
-                        ⚠ Unbalanced: Remaining to allocate: ฿{remaining.toFixed(2)} (Allocated ฿{roundedSum.toFixed(2)} / Total ฿{roundedTotal.toFixed(2)})
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
+                      <button
+                        type="button"
+                        className="expense-remove-btn"
+                        onClick={() => handleRemoveSplitLine(idx)}
+                        disabled={allocations.length <= 1 || isSubmitting}
+                        aria-label={`Remove allocation ${idx + 1}`}
+                        title="Remove split line"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6"></polyline>
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                          <line x1="10" y1="11" x2="10" y2="17"></line>
+                          <line x1="14" y1="11" x2="14" y2="17"></line>
+                        </svg>
+                        <span>Remove</span>
+                      </button>
+                    </div>
 
-              <div className="table-responsive">
-                <table className="table table-bordered align-middle">
-                  <thead className="table-light">
-                    <tr>
-                      <th style={{ width: '40%' }}>Expense Category</th>
-                      <th style={{ width: '25%' }}>Amount (THB)</th>
-                      <th style={{ width: '25%' }}>Notes (Optional)</th>
-                      <th style={{ width: '10%' }}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allocations.map((row, idx) => (
-                      <tr key={idx}>
-                        <td>
-                          <select
-                            className="form-select form-select-sm"
-                            value={row.target_account_id}
-                            onChange={(e) => handleAllocationChange(idx, 'target_account_id', e.target.value)}
-                            disabled={isSubmitting}
-                            aria-label={`Category for line ${idx + 1}`}
-                          >
-                            <option value="">-- Select Category --</option>
-                            {expenseAccounts.map((acc) => (
-                              <option key={acc.id} value={acc.id}>
-                                {acc.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
+                    <div className="expense-card-grid">
+                      <div className="expense-field-group">
+                        <label className="expense-label">
+                          Expense Category <span style={{ color: '#b91c1c' }}>*</span>
+                        </label>
+                        <select
+                          className="expense-select"
+                          value={row.target_account_id}
+                          onChange={(e) => handleAllocationChange(idx, 'target_account_id', e.target.value)}
+                          disabled={isSubmitting}
+                          aria-label={`Category for line ${idx + 1}`}
+                        >
+                          <option value="">Select expense category</option>
+                          {expenseAccounts.map((acc) => (
+                            <option key={acc.id} value={acc.id}>
+                              {acc.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="expense-field-group">
+                        <label className="expense-label">
+                          Amount (THB) <span style={{ color: '#b91c1c' }}>*</span>
+                        </label>
+                        <div className="expense-amount-wrapper">
+                          <span style={{ position: 'absolute', left: '12px', fontSize: '14px', color: 'var(--fintech-text-muted)', fontWeight: 600, pointerEvents: 'none' }}>฿</span>
                           <input
                             type="number"
                             step="0.01"
-                            className="form-control form-control-sm"
+                            className="expense-input"
+                            style={{ paddingLeft: '28px', fontFamily: '"SF Mono", Consolas, monospace', fontWeight: 600 }}
                             placeholder="0.00"
                             value={row.amount}
                             onChange={(e) => handleAllocationChange(idx, 'amount', e.target.value)}
                             disabled={isSubmitting}
                             aria-label={`Amount for line ${idx + 1}`}
                           />
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className="form-control form-control-sm"
-                            placeholder="e.g. Dinner"
-                            value={row.notes}
-                            onChange={(e) => handleAllocationChange(idx, 'notes', e.target.value)}
-                            disabled={isSubmitting}
-                            aria-label={`Notes for line ${idx + 1}`}
-                          />
-                        </td>
-                        <td className="text-center">
-                          <button
-                            type="button"
-                            className="btn btn-outline-danger btn-sm"
-                            onClick={() => handleRemoveSplitLine(idx)}
-                            disabled={allocations.length <= 1 || isSubmitting}
-                            title="Remove split line"
-                          >
-                            &times;
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                        </div>
+                      </div>
+                    </div>
 
-            <div className="modal-footer">
+                    <div className="expense-field-group">
+                      <label className="expense-label">
+                        Notes <span style={{ fontWeight: 400, color: 'var(--fintech-text-muted)' }}>(Optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        className="expense-input"
+                        style={{ height: '40px' }}
+                        placeholder="e.g. Dinner with friends"
+                        value={row.notes}
+                        onChange={(e) => handleAllocationChange(idx, 'notes', e.target.value)}
+                        disabled={isSubmitting}
+                        aria-label={`Notes for line ${idx + 1}`}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add Category Button */}
               <button
                 type="button"
-                className="btn btn-secondary"
-                onClick={onClose}
+                className="expense-add-category-btn"
+                onClick={handleAddSplitLine}
                 disabled={isSubmitting}
+                aria-label="Add category"
               >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={isSubmitting || !isBalanced}
-              >
-                {isSubmitting ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
-                    Recording Purchase...
-                  </>
-                ) : (
-                  'Record Purchase'
-                )}
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span>Add category</span>
               </button>
             </div>
-          </form>
-        </div>
+
+            {/* D. Allocation Summary (Section 03) */}
+            <div className="expense-summary-panel" aria-label="Allocation Summary">
+              <div className="expense-summary-header">
+                <h4 className="expense-summary-title">Allocation Summary</h4>
+                {parsedTotal > 0 && (
+                  <span
+                    className={`expense-summary-badge ${
+                      isBalanced ? 'balanced' : remaining < 0 ? 'over' : 'incomplete'
+                    }`}
+                  >
+                    {isBalanced && 'Balanced'}
+                    {!isBalanced && remaining > 0 && 'Incomplete'}
+                    {!isBalanced && remaining < 0 && 'Over-allocated'}
+                  </span>
+                )}
+              </div>
+
+              {/* 3 Metric Columns */}
+              <div className="expense-summary-metrics">
+                <div className="expense-metric-item">
+                  <span className="expense-metric-label">Total Purchase</span>
+                  <span className="expense-metric-value" data-testid="summary-total">
+                    ฿{roundedTotal.toFixed(2)}
+                  </span>
+                </div>
+                <div className="expense-metric-item">
+                  <span className="expense-metric-label">Allocated</span>
+                  <span className="expense-metric-value" data-testid="summary-allocated">
+                    ฿{roundedSum.toFixed(2)}
+                  </span>
+                </div>
+                <div className="expense-metric-item">
+                  <span className="expense-metric-label">Remaining</span>
+                  <span
+                    className={`expense-metric-value ${
+                      isBalanced
+                        ? 'remaining-balanced'
+                        : remaining < 0
+                        ? 'remaining-danger'
+                        : 'remaining-warning'
+                    }`}
+                    data-testid="summary-remaining"
+                  >
+                    ฿{remaining.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="expense-progress-track" role="progressbar" aria-valuenow={progressPercent} aria-valuemin={0} aria-valuemax={100}>
+                <div
+                  className={`expense-progress-bar ${
+                    isBalanced ? 'balanced' : remaining < 0 ? 'over' : 'incomplete'
+                  }`}
+                  style={{ width: `${Math.min(100, progressPercent)}%` }}
+                />
+              </div>
+
+              {/* Contextual Status Hint */}
+              <p className="expense-summary-hint">
+                {isBalanced && (
+                  <>
+                    <span style={{ color: 'var(--fintech-primary)', fontWeight: 700 }}>✓</span>
+                    <span>Fully allocated: ฿{roundedSum.toFixed(2)} of ฿{roundedTotal.toFixed(2)}. Ready to record.</span>
+                  </>
+                )}
+                {!isBalanced && remaining > 0 && parsedTotal > 0 && (
+                  <>
+                    <span style={{ color: '#d97706', fontWeight: 700 }}>⚠</span>
+                    <span>Allocate the remaining ฿{remaining.toFixed(2)} to continue.</span>
+                  </>
+                )}
+                {!isBalanced && remaining < 0 && (
+                  <>
+                    <span style={{ color: '#dc2626', fontWeight: 700 }}>✕</span>
+                    <span>Over-allocated by ฿{Math.abs(remaining).toFixed(2)}. Total allocations exceed purchase amount.</span>
+                  </>
+                )}
+                {parsedTotal <= 0 && (
+                  <span>Specify a purchase amount to begin allocating across categories.</span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          {/* E. Modal Footer */}
+          <div className="expense-modal-footer">
+            <button
+              type="button"
+              className="expense-btn expense-btn-secondary"
+              onClick={onClose}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="expense-btn expense-btn-primary"
+              disabled={isSubmitting || !isBalanced}
+            >
+              {isSubmitting ? (
+                <>
+                  <span className="expense-spinner" aria-hidden="true" />
+                  <span>Recording...</span>
+                </>
+              ) : (
+                'Record Purchase'
+              )}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
