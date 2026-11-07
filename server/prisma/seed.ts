@@ -90,6 +90,8 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
     }
   });
 
+  // NOTE: Hardcoded demo credentials are for local development/testing environments only.
+  // Production admin account provisioning must be configured using environment secrets.
   // Seed admin_demo (ADMIN)
   await client.user.upsert({
     where: { username: 'admin_demo' },

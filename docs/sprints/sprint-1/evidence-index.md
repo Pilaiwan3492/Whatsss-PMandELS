@@ -10,12 +10,12 @@
 
 ## 1. Release Identification
 
-* **Assessed Implementation Baseline Commit:** `887ebab6f478e4c979ac1e1e3055cf00cc856686` (`feat/auth-session-security` / PR #8)
+* **Assessed Implementation Baseline Commit:** `e4d2c511bcada0844b4ba2e89ddd108398f261f8` (`feat/auth-session-security` / PR #8)
 * **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
 * **Test Environment:** Node.js v20+, PostgreSQL 16 (GitHub Actions Service Container / Docker Compose)
-* **CI Verification Run:** GitHub Actions Run [#42336172166](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42336172166) (PR #8)
+* **CI Verification Run:** GitHub Actions Run [#42337501382](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42337501382) (Status: Passed — 92 tests passed, 0 skipped)
 
-> **Sprint 1 Scope Notice:** Work Package 1 (WP-01: Authentication & Session Security) is verified. Financial domain work packages WP-02 through WP-06 (Opening Balance, Income, Expense, Allocations, Repayments, Summary) are pending implementation in subsequent work packages.
+> **Sprint 1 Scope Note:** This record reflects the foundational implementation verification for WP-01 (Authentication, Session Security & Access Control). Final Deliverable 1 submission package evidence will be compiled upon completion of WP-02 through WP-06 (Financial Accounts, Transactions, Allocations, Repayments, Summary, and Golden Domain Journey).
 
 ---
 
@@ -33,17 +33,17 @@
 ### 2.1 Completed Work Package Evidence (WP-01: Authentication & Security)
 | Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Commit |
 |---|---|---|---|:---:|
-| `TEST-AUTH-01` | `AC-01-1` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-AUTH-02` | `AC-01-2` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-AUTH-03` | `AC-01-3` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-AUTH-04` | `AC-01-4` | `server/tests/integration/db-password.test.ts`, `server/tests/unit/password.test.ts` | Passed — Live PostgreSQL / In-memory Fixture | `887ebab` |
-| `TEST-AUTH-05` | `AC-01-5` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-SEC-01` | `AC-02-3` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `887ebab` |
-| `TEST-SEC-02` | `AC-02-1` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `887ebab` |
-| `TEST-SEC-03` | `AC-02-2` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `887ebab` |
-| `TEST-SEC-04` | `AC-02-4` | `server/tests/integration/csrf.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-SEC-05` | System Contract (CORS) | `server/tests/integration/cors.test.ts` | Passed — Mocked Prisma | `887ebab` |
-| `TEST-SEC-06` | System Contract (Content-Type) | `server/tests/integration/content-type.test.ts` | Passed — Mocked Prisma | `887ebab` |
+| `TEST-AUTH-01` | `AC-01-1` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `e4d2c51` |
+| `TEST-AUTH-02` | `AC-01-2` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `e4d2c51` |
+| `TEST-AUTH-03` | `AC-01-3` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `e4d2c51` |
+| `TEST-AUTH-04` | `AC-01-4` | `server/tests/integration/db-password.test.ts`, `server/tests/unit/password.test.ts` | Passed — Live PostgreSQL / In-memory Fixture | `e4d2c51` |
+| `TEST-AUTH-05` | `AC-01-5` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `e4d2c51` |
+| `TEST-SEC-01` | `AC-02-3` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub (App Guard Stub: Database-backed tenant isolation verified in WP-02..05) | `e4d2c51` |
+| `TEST-SEC-02` | `AC-02-1` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `e4d2c51` |
+| `TEST-SEC-03` | `AC-02-2` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `e4d2c51` |
+| `TEST-SEC-04` | `AC-02-4` | `server/tests/integration/csrf.test.ts` | Passed — Mocked Prisma | `e4d2c51` |
+| `TEST-SEC-05` | System Contract (CORS) | `server/tests/integration/cors.test.ts` | Passed — Mocked Prisma | `e4d2c51` |
+| `TEST-SEC-06` | System Contract (Content-Type) | `server/tests/integration/content-type.test.ts` | Passed — Mocked Prisma | `e4d2c51` |
 
 ### 2.2 Pending Work Packages (WP-02 through WP-06: Financial Domain)
 > **Note:** Financial models and domain endpoints are scheduled for subsequent work packages. The following tests remain pending implementation and execution.
