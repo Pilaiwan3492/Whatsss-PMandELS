@@ -10,11 +10,11 @@
 
 ## 1. Release Identification
 
-* **Assessed Implementation Baseline Commit:** Commit `1f31dd1d20739c786f51d4a3739d028aa880ffbe` (WP-03 Income Transaction Processing & Ledger Integration)
-* **Current Documentation HEAD Commit:** Commit `bf24b878641cd76d56e1255b698d9a9785c5e159` on branch `feat/income-transaction` (PR #10 targeting `sprint-1`)
+* **Assessed Implementation Baseline Commit:** Commit `64813ce1a16d512cad57eafeeee101deae15b025` (WP-03 Income Transaction Processing & Ledger Integration)
+* **Current Documentation HEAD Commit:** Commit `64813ce1a16d512cad57eafeeee101deae15b025` on branch `feat/income-transaction` (PR #10 targeting `sprint-1`)
 * **Base Branch Commit:** `a53f10d4272dc638de518bce3e0e7bd80fa2500a` (`sprint-1`)
 * **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
-* **CI Verification Run:** GitHub Actions Run [#42358647749](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42358647749) (Status: Passed — 232 tests passed [213 backend + 19 frontend], 0 skipped)
+* **CI Verification Run:** GitHub Actions Run [#42360310741](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42360310741) (Status: Passed — 236 tests passed [217 backend + 19 frontend], 0 skipped in CI)
 * **Test Environment:** Node.js v20+, PostgreSQL 16 (GitHub Actions Service Container / Docker Compose)
 
 > **Sprint 1 Scope Note:** This record reflects the implementation verification for WP-01 (Authentication, Session Security & Access Control), WP-02 (Financial Account Model, Reproducible Seed & Opening Balance Lifecycle), and WP-03 (Income Transaction Processing & Ledger Integration). Final Deliverable 1 submission package evidence will be compiled upon completion of WP-04 through WP-06 (Expense Transactions, Allocations, Repayments, Summary, and Golden Domain Journey).
@@ -26,7 +26,7 @@
 * **Execution Commands:**
   * Backend: `npm test` (within `server/`)
   * Frontend: `npm test` (within `client/`)
-* **Automated Test Execution Summary (232 Tests across 19 Suites):**
+* **Automated Test Execution Summary (236 Tests across 19 Suites):**
   * Backend Unit Tests: 69 passed across 6 suites
     * `accountLock.test.ts`: 9 passed (hardened ID validation, deduplication, atomic abort without partial lock, and count mismatch concurrency conflict detection)
     * `testSafety.test.ts`: 27 passed (immutable test database exact match verification [whatsss_test], rejection of whatsss_db, rejection of custom TEST_DATABASE_NAME and expectedDbName overrides, rejection of production_test regardless of GITHUB_ACTIONS/CI flags, bounded-retry snapshot restoration with failure reporting, user/account snapshot restoration, and local environment guard)
@@ -34,15 +34,15 @@
     * `config.test.ts`: 5 passed
     * `seed.test.ts`: 8 passed
     * `password.test.ts`: 4 passed
-  * Backend Integration Tests: 126 passed / 18 skipped locally (144 passed in CI when PostgreSQL 16 service is active) across 10 suites
-    * `income.test.ts`: 31 passed (Mocked Prisma & HTTP API; records salary inflow, updates destination bank balance from 10,000.00 to 30,000.00 THB, increases income summary to 20,000.00 THB, locks destination account opening balance per AC-03-3, validates negative/zero/invalid decimal amounts, validates canonical YYYY-MM-DD dates with leap year rules, rejects trailing date characters, rejects malformed account IDs with 400 before DB query, distinguishes malformed 400 from non-existent 404, retries opening balance lock concurrency conflicts safely, rejects cross-tenant accounts with 404 and admin access with 403)
+  * Backend Integration Tests: 129 passed / 19 skipped locally (148 passed in CI when PostgreSQL 16 service is active) across 10 suites
+    * `income.test.ts`: 34 passed (Mocked Prisma & HTTP API; records salary inflow, updates destination bank balance from 10,000.00 to 30,000.00 THB, increases income summary to 20,000.00 THB, locks destination account opening balance per AC-03-3, validates negative/zero/invalid decimal amounts, validates canonical YYYY-MM-DD dates with leap year rules, strictly rejects leading/trailing/internal date whitespace, enforces strict production UUIDs while rejecting fixture-style IDs, distinguishes malformed 400 from non-existent 404, retries opening balance lock concurrency conflicts safely, excludes non-income transaction forms from income summary, rejects cross-tenant accounts with 404 and admin access with 403)
     * `account.test.ts`: 26 passed (Mocked Prisma & HTTP API; captures and asserts HTTP 200 and persisted values across all 5 account PATCH requests, decimal validation, real concurrent requests serialized under PostgreSQL row locking, arbitrary precision summation in summary, database error propagation without fake zero summary, and BR-02 category account balance exclusion)
     * `access.test.ts`: 17 passed (App-tier Stub & Mocked Prisma)
     * `content-type.test.ts`: 26 passed (Express Middleware)
     * `csrf.test.ts`: 12 passed (Origin/Referer Guard)
     * `auth.test.ts`: 11 passed (AuthGuard & Session)
     * `cors.test.ts`: 3 passed (CORS Preflight)
-    * `db-income.test.ts`: 6 passed in CI (skipped locally without live PostgreSQL; dedicated test database verification [whatsss_test], live transaction commit and opening balance lock, allocation line failure transaction rollback, account locking failure transaction rollback, failed request lock preservation, simultaneous concurrent income submissions, and live PostgreSQL boundary Decimal precision verification across 0.01, 0.29, 100.10, 9999999999.99 with exact ID-tracked cleanups)
+    * `db-income.test.ts`: 7 passed in CI (skipped locally without live PostgreSQL; dedicated test database verification [whatsss_test], live transaction commit and opening balance lock, allocation line failure rollback exercised through actual recordIncome service with failure injection, account locking failure rollback exercised through actual recordIncome service, failed request lock preservation, simultaneous concurrent income submissions with exact ID-tracked safe cleanup, live PostgreSQL boundary Decimal precision verification across 0.01, 0.29, 100.10, 9999999999.99, and reliable fixture cleanup/restoration demonstration under assertion failure)
     * `db-password.test.ts`: 2 passed in CI (skipped locally without live PostgreSQL)
     * `db-account.test.ts`: 10 passed in CI (skipped locally without live PostgreSQL; dedicated test database verification [whatsss_test], bounded-retry cleanup failure isolation, real seed failure injection with proxy client and full snapshot restoration, live HTTP API isolation, admin exclusion, transaction commit/rollback locking, and live PostgreSQL boundary Decimal precision verification across accepted [0.01, 0.29, 100.10, 9999999999.99] and rejected [100.123, 10000000000.00, -0.01] inputs)
   * Frontend Component Tests: 19 passed across 3 suites
@@ -50,8 +50,8 @@
     * `ProtectedRoute.test.tsx`: 4 passed
     * `AccountListPage.test.tsx`: 7 passed (5 grouped account sections, decimal validation, and maximum allowed limit enforcement)
   * Execution Environment Totals:
-    * Local Environment (without live PostgreSQL): 214 passed | 18 skipped (232 total)
-    * CI Environment (with live PostgreSQL 16 container): 232 passed | 0 skipped (232 total)
+    * Local Environment (without live PostgreSQL): 217 passed | 19 skipped (236 total)
+    * CI Environment (with live PostgreSQL 16 container): 236 passed | 0 skipped (236 total)
 
 ### 2.1 Completed Work Package Evidence (WP-01: Authentication & Access Control)
 | Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |
