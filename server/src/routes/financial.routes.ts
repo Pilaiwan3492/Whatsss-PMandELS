@@ -6,12 +6,13 @@ import {
   updateAccount,
   deleteAccount,
   getTransactions,
-  getSummary
+  getSummary,
+  createExpenseTransaction
 } from '../controllers/mockFinancial.controller.js';
 
 const router = Router();
 
-// Financial routes require authentication and role check
+// Financial routes require authentication and role check in sequence (authGuard -> roleGuard)
 router.use(authGuard);
 router.use(roleGuard);
 
@@ -19,6 +20,7 @@ router.get('/accounts/:id', getAccountById);
 router.put('/accounts/:id', updateAccount);
 router.delete('/accounts/:id', deleteAccount);
 router.get('/transactions', getTransactions);
+router.post('/transactions/expense', createExpenseTransaction);
 router.get('/reports/summary', getSummary);
 
 export default router;

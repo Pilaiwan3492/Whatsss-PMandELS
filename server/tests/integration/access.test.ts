@@ -3,6 +3,7 @@ import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { config } from '../../src/config/env.js';
 import { findMockUser } from '../fixtures/mockPrisma.js';
+import { testAccounts } from '../../src/controllers/mockFinancial.controller.js';
 
 vi.mock('../../src/prisma.js', () => {
   return {
@@ -42,15 +43,21 @@ function createAuthCookie(userId: string, username: string, role: 'USER' | 'ADMI
  * Feature F-02: Application-Tier Tenancy Boundary & Role Segregation Suite
  *
  * SCOPE & EVIDENCE CLARIFICATION (FOR AUDITORS & INSTRUCTORS):
- * In WP-01, the PostgreSQL schema only contains the `users` table. Financial tables (`accounts`,
- * `transactions`, `allocations`) are formally scheduled for implementation in WP-02 through WP-05.
+ * In WP-01, the PostgreSQL schema provisions exclusively the `users` table for authentication.
+ * Financial entity models (`accounts`, `transactions`, `allocations`) are scheduled and implemented
+ * in subsequent Work Packages:
+ *   - WP-02 (Issue #3): Financial Account model & opening balance lifecycle (Feature F-03)
+ *   - WP-03 (Issue #4): Income transaction processing (Feature F-04)
+ *   - WP-04 (Issue #5): Expense & Multiple Allocations engine (Features F-05, F-06)
+ *   - WP-05 (Issue #6): Credit Card Repayment engine (Feature F-07)
  *
  * Therefore, TEST-SEC-01 in this suite verifies application-tier tenancy boundary enforcement
- * via isolated mock financial endpoint stubs (verifying that the server scopes ownership by authenticated
- * `req.user.id`, returns 404 to conceal resource existence, and never trusts client-supplied user IDs).
+ * via isolated mock financial endpoint stubs (verifying that the server scopes ownership strictly by authenticated
+ * `req.user.id`, returns 404 to conceal resource existence, ignores client-supplied user IDs, and rejects
+ * cross-tenant primary_account_id and allocation target_account_id references).
  *
  * Full database-backed relational query isolation (`where: { userId: req.user.id }` executed against PostgreSQL)
- * must be verified in WP-02 (Issue #3: Account table) and WP-04 (Issue #5: Allocation cross-tenant target_account_id).
+ * must be verified in WP-02 (Account table ownership) and WP-04 (Allocation cross-tenant target_account_id).
  */
 describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 02, 03)', () => {
   const userACookie = createAuthCookie('user-a-uuid', 'user_demo', 'USER');
@@ -136,6 +143,108 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
       expect(userBOwnRes.status).toBe(200);
       expect(userBOwnRes.body.success).toBe(true);
       expect(userBOwnRes.body.data.account.id).toBe('acc-user-b');
+    });
+
+    it('TEST-SEC-01 Case 1: rejects User A transaction referencing User B primary_account_id with 404 RESOURCE_NOT_FOUND', async () => {
+      const initialUserBBalance = testAccounts['acc-user-b'].balance;
+      const initialUserABalance = testAccounts['acc-user-a'].balance;
+
+      const crossTenantRes = await request(app)
+        .post('/api/transactions/expense')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          primary_account_id: 'acc-user-b',
+          total_amount: 3000.00,
+          transaction_date: '2026-11-06',
+          description: 'Cross-tenant primary account attack attempt',
+          allocations: [
+            { target_account_id: 'acc-target-a', amount: 3000.00, notes: 'Dining' }
+          ]
+        });
+
+      // Assert 404 Not Found per BR-01 / AC-02-3 (concealing foreign resource existence)
+      expect(crossTenantRes.status).toBe(404);
+      expect(crossTenantRes.body.success).toBe(false);
+      expect(crossTenantRes.body.error.code).toBe('RESOURCE_NOT_FOUND');
+      expect(crossTenantRes.body.data).toBeUndefined();
+
+      // Assert zero database writes / fixture state remains unchanged
+      expect(testAccounts['acc-user-b'].balance).toBe(initialUserBBalance);
+      expect(testAccounts['acc-user-a'].balance).toBe(initialUserABalance);
+    });
+
+    it('TEST-SEC-01 Case 2: rejects User A transaction referencing User B allocation target_account_id with 404 RESOURCE_NOT_FOUND', async () => {
+      const initialUserBTargetBalance = testAccounts['acc-target-b'].balance;
+      const initialUserABalance = testAccounts['acc-user-a'].balance;
+
+      const crossTenantRes = await request(app)
+        .post('/api/transactions/expense')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          primary_account_id: 'acc-user-a',
+          total_amount: 3000.00,
+          transaction_date: '2026-11-06',
+          description: 'Cross-tenant target allocation attack attempt',
+          allocations: [
+            { target_account_id: 'acc-target-b', amount: 3000.00, notes: 'Splitting to User B category' }
+          ]
+        });
+
+      // Assert 404 Not Found per BR-01 / AC-02-3
+      expect(crossTenantRes.status).toBe(404);
+      expect(crossTenantRes.body.success).toBe(false);
+      expect(crossTenantRes.body.error.code).toBe('RESOURCE_NOT_FOUND');
+      expect(crossTenantRes.body.data).toBeUndefined();
+
+      // Assert zero database writes / fixture state remains unchanged
+      expect(testAccounts['acc-target-b'].balance).toBe(initialUserBTargetBalance);
+      expect(testAccounts['acc-user-a'].balance).toBe(initialUserABalance);
+    });
+
+    it('TEST-SEC-01 Client User ID Spoofing: ignores userId in request body and derives identity exclusively from req.user.id', async () => {
+      const spoofingRes = await request(app)
+        .post('/api/transactions/expense')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          userId: 'user-b-uuid', // Attempting to spoof identity in payload body
+          primary_account_id: 'acc-user-b',
+          total_amount: 3000.00,
+          transaction_date: '2026-11-06',
+          description: 'Payload body userId spoofing attempt',
+          allocations: [
+            { target_account_id: 'acc-target-b', amount: 3000.00, notes: 'Spoofed target' }
+          ]
+        });
+
+      expect(spoofingRes.status).toBe(404);
+      expect(spoofingRes.body.success).toBe(false);
+      expect(spoofingRes.body.error.code).toBe('RESOURCE_NOT_FOUND');
+    });
+
+    it('TEST-SEC-01 Happy Path: allows User A transaction referencing only their own primary and target accounts', async () => {
+      const validRes = await request(app)
+        .post('/api/transactions/expense')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          primary_account_id: 'acc-user-a',
+          total_amount: 3000.00,
+          transaction_date: '2026-11-06',
+          description: 'Valid expense within User A tenancy',
+          allocations: [
+            { target_account_id: 'acc-target-a', amount: 3000.00, notes: 'Valid allocation' }
+          ]
+        });
+
+      expect(validRes.status).toBe(201);
+      expect(validRes.body.success).toBe(true);
     });
   });
 

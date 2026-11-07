@@ -26,7 +26,9 @@ export interface MockAccountRecord {
 
 export const testAccounts: Record<string, MockAccountRecord> = {
   'acc-user-a': { id: 'acc-user-a', userId: 'user-a-uuid', name: 'User A Checking', balance: 10000 },
-  'acc-user-b': { id: 'acc-user-b', userId: 'user-b-uuid', name: 'User B Checking', balance: 5000 }
+  'acc-user-b': { id: 'acc-user-b', userId: 'user-b-uuid', name: 'User B Checking', balance: 5000 },
+  'acc-target-a': { id: 'acc-target-a', userId: 'user-a-uuid', name: 'User A Dining Category', balance: 0 },
+  'acc-target-b': { id: 'acc-target-b', userId: 'user-b-uuid', name: 'User B Dining Category', balance: 0 }
 };
 
 export function getAccountById(req: Request, res: Response): void {
@@ -96,6 +98,50 @@ export function deleteAccount(req: Request, res: Response): void {
   res.status(200).json({
     success: true,
     data: { message: 'Account deleted successfully' }
+  });
+}
+
+export function createExpenseTransaction(req: Request, res: Response): void {
+  const { primary_account_id, allocations } = req.body || {};
+
+  // Case 1: Foreign primary_account_id reference check (BR-01, TEST-SEC-01 Case 1)
+  // Identity is strictly sourced from authenticated req.user.id (never trust body userId)
+  const primaryAccount = testAccounts[primary_account_id];
+  if (!primaryAccount || primaryAccount.userId !== req.user?.id) {
+    res.status(404).json({
+      success: false,
+      error: {
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Resource not found',
+        details: []
+      }
+    });
+    return;
+  }
+
+  // Case 2: Foreign allocation target_account_id reference check (BR-01, TEST-SEC-01 Case 2)
+  if (Array.isArray(allocations)) {
+    for (const alloc of allocations) {
+      const targetAccount = testAccounts[alloc?.target_account_id];
+      if (!targetAccount || targetAccount.userId !== req.user?.id) {
+        res.status(404).json({
+          success: false,
+          error: {
+            code: 'RESOURCE_NOT_FOUND',
+            message: 'Resource not found',
+            details: []
+          }
+        });
+        return;
+      }
+    }
+  }
+
+  res.status(201).json({
+    success: true,
+    data: {
+      message: 'Expense transaction verified against tenancy boundary (WP-01 Security Stub)'
+    }
   });
 }
 
