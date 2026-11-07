@@ -67,15 +67,9 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
       const timer = setTimeout(() => {
         if (!isResolved) {
           isResolved = true;
-          try {
-            if (process.platform === 'win32' && pid) {
-              execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-            }
-          } catch {}
-          try {
-            child.kill('SIGKILL');
-          } catch {}
-          reject(new Error(`Timeout waiting for backend process (PID ${pid}) to start on port ${port}`));
+          terminateBackendProcess(child).finally(() => {
+            reject(new Error(`Timeout waiting for backend process (PID ${pid}) to start on port ${port}`));
+          });
         }
       }, 15000);
 
@@ -113,10 +107,17 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
     }
 
     const pid = child.pid;
-    if (process.platform === 'win32' && pid) {
-      try {
-        execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-      } catch {}
+    if (pid) {
+      if (process.platform === 'win32') {
+        try {
+          execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+        } catch {}
+      } else {
+        // On Unix/Linux, kill child processes first, then the process itself
+        try {
+          execSync(`pkill -P ${pid} 2>/dev/null || true; kill -9 ${pid} 2>/dev/null || true`, { stdio: 'ignore' });
+        } catch {}
+      }
     }
 
     try {
@@ -326,14 +327,19 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
       // --- PHASE 2: TERMINATE BACKEND PROCESS 1 (OS Process Kill) ---
       await terminateBackendProcess(proc1.child);
 
-      // Verify port is dead
+      // Verify port is dead with polling
       let isTerminated = false;
-      try {
-        await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
-          headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
-        });
-      } catch {
-        isTerminated = true;
+      for (let i = 0; i < 20; i++) {
+        try {
+          await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
+            headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN },
+            signal: AbortSignal.timeout(500)
+          });
+          await new Promise((r) => setTimeout(r, 100));
+        } catch {
+          isTerminated = true;
+          break;
+        }
       }
       expect(isTerminated).toBe(true);
 
