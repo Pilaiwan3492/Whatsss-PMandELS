@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma as defaultPrisma } from '../prisma.js';
-import { lockAccounts } from './accountLock.service.js';
+import { lockAccounts, acquireAccountRowLocks } from './accountLock.service.js';
 
 export const MAX_TRANSACTION_AMOUNT = new Prisma.Decimal('9999999999.99');
 
@@ -421,7 +421,11 @@ export async function recordExpense(
   for (let attempt = 1; attempt <= MAX_CONCURRENCY_RETRIES; attempt++) {
     try {
       return await prismaClient.$transaction(async (tx) => {
-        // A. Query primary account strictly scoped to userId
+        // A. Acquire pessimistic row-level write locks in ascending ID order before any account reads
+        const uniqueTargetIds = Array.from(new Set(validAllocations.map((a) => a.target_account_id)));
+        await acquireAccountRowLocks(tx, [primaryId, ...uniqueTargetIds], userId);
+
+        // B. Query primary account strictly scoped to userId under lock
         const primaryAccount = await tx.account.findFirst({
           where: {
             id: primaryId,
@@ -441,8 +445,7 @@ export async function recordExpense(
           );
         }
 
-        // B. Query target allocation accounts strictly scoped to userId
-        const uniqueTargetIds = Array.from(new Set(validAllocations.map((a) => a.target_account_id)));
+        // C. Query target allocation accounts strictly scoped to userId under lock
         const targetAccounts = await tx.account.findMany({
           where: {
             id: { in: uniqueTargetIds },
@@ -464,7 +467,7 @@ export async function recordExpense(
           }
         }
 
-        // C. Atomically lock opening balances of all involved accounts (AC-03-3)
+        // D. Atomically lock opening balances of all involved accounts (AC-03-3)
         await lockAccounts(tx, [primaryAccount.id, ...uniqueTargetIds], userId);
 
         // D. Create Transaction header (form: PAYMENT_CHARGE)

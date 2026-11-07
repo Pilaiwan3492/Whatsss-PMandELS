@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { recordIncome, IncomeError } from '../services/income.service.js';
 import { recordExpense, ExpenseError } from '../services/expense.service.js';
+import { recordRepayment, RepaymentError } from '../services/repayment.service.js';
 
 /**
  * Transaction Controller
@@ -86,6 +87,53 @@ export async function createExpenseTransaction(
     });
   } catch (err: any) {
     if (err instanceof ExpenseError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * POST /api/transactions/repayment
+ * Records a debt settlement repayment originating from a CASH account targeting a LOAN_TAKEN account (F-07, WP-05).
+ * Atomically decreases Cash balance and Credit Card debt balance while strictly excluding
+ * repayment transaction from Expense summaries (BR-07, BR-08).
+ */
+export async function createRepaymentTransaction(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const result = await recordRepayment(userId, req.body);
+
+    res.status(201).json({
+      success: true,
+      data: result
+    });
+  } catch (err: any) {
+    if (err instanceof RepaymentError) {
       res.status(err.statusCode).json({
         success: false,
         error: {

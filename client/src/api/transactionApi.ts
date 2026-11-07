@@ -75,6 +75,35 @@ export interface ExpenseApiResponse {
   data: ExpenseResponseData;
 }
 
+export interface RepaymentPayload {
+  from_account_id: string;
+  to_account_id: string;
+  amount: string;
+  transaction_date: string;
+  description?: string | null;
+}
+
+export interface RepaymentTransaction {
+  id: string;
+  primary_account_id: string;
+  form: 'PAYMENT_CHARGE';
+  total_amount: string;
+  transaction_date: string;
+  description: string | null;
+  allocations: AllocationItem[];
+}
+
+export interface RepaymentResponseData {
+  transaction: RepaymentTransaction;
+  updated_cash_balance: string;
+  updated_debt: string;
+}
+
+export interface RepaymentApiResponse {
+  success: boolean;
+  data: RepaymentResponseData;
+}
+
 /**
  * Records an income inflow into an owned CASH account.
  * Atomically locks opening balance on the destination account upon commit.
@@ -91,5 +120,15 @@ export async function recordIncome(payload: IncomePayload): Promise<IncomeRespon
  */
 export async function recordExpense(payload: ExpensePayload): Promise<ExpenseResponseData> {
   const res = await axiosClient.post<ExpenseApiResponse>('/transactions/expense', payload);
+  return res.data.data;
+}
+
+/**
+ * Records a credit card debt settlement repayment (Transaction 3 of Golden Journey, WP-05, F-07).
+ * Atomically decreases Cash balance and Credit Card debt balance while strictly excluding
+ * repayment transaction from Expense summaries (BR-07, BR-08).
+ */
+export async function recordRepayment(payload: RepaymentPayload): Promise<RepaymentResponseData> {
+  const res = await axiosClient.post<RepaymentApiResponse>('/transactions/repayment', payload);
   return res.data.data;
 }

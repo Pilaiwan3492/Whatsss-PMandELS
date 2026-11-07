@@ -3,7 +3,8 @@ import { authGuard } from '../middlewares/authGuard.js';
 import { roleGuard } from '../middlewares/roleGuard.js';
 import {
   createIncomeTransaction,
-  createExpenseTransaction
+  createExpenseTransaction,
+  createRepaymentTransaction
 } from '../controllers/transaction.controller.js';
 
 const router = Router();
@@ -14,5 +15,6 @@ router.use(roleGuard);
 
 router.post('/income', createIncomeTransaction);
 router.post('/expense', createExpenseTransaction);
+router.post('/repayment', createRepaymentTransaction);
 
 export default router;

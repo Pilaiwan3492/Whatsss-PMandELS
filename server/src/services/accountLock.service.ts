@@ -10,6 +10,33 @@ export class AccountLockError extends Error {
 }
 
 /**
+ * Acquires pessimistic row-level write locks (SELECT ... FOR UPDATE) on accounts
+ * within an active transaction to guarantee strict serialization and prevent concurrent race conditions.
+ * Always locks accounts in sorted ID order to prevent database deadlocks.
+ */
+export async function acquireAccountRowLocks(
+  tx: Prisma.TransactionClient,
+  accountIds: string[],
+  userId: string
+): Promise<void> {
+  if (!accountIds || accountIds.length === 0) return;
+  const uniqueSortedIds = Array.from(new Set(accountIds))
+    .filter((id) => typeof id === 'string' && id.trim().length > 0)
+    .sort();
+  if (uniqueSortedIds.length === 0) return;
+
+  if (typeof (tx as any).$queryRaw === 'function') {
+    await (tx as any).$queryRaw`
+      SELECT id FROM "accounts"
+      WHERE id IN (${Prisma.join(uniqueSortedIds)})
+        AND user_id = ${userId}
+      ORDER BY id ASC
+      FOR UPDATE
+    `;
+  }
+}
+
+/**
  * Service to atomically lock opening balance on accounts upon committing referencing transactions.
  * In accordance with F-03, FR-05, and BR-01:
  * - Accounts are permanently locked from opening balance modifications once referenced.
