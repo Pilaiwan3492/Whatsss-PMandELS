@@ -216,6 +216,16 @@ export const AccountListPage: React.FC = () => {
                                   Opening: {formatCurrency(acc.opening_balance)}
                                 </small>
                               </>
+                            ) : acc.type === 'LOAN_TAKEN' && acc.current_balance !== undefined ? (
+                              <>
+                                <span className="text-muted small d-block">Current Debt</span>
+                                <span className="fs-4 fw-bold text-danger">
+                                  {formatCurrency(acc.current_balance)}
+                                </span>
+                                <small className="text-muted d-block mt-1">
+                                  Opening: {formatCurrency(acc.opening_balance)}
+                                </small>
+                              </>
                             ) : (
                               <>
                                 <span className="text-muted small d-block">Opening Balance</span>

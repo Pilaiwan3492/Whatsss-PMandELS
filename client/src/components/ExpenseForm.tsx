@@ -79,17 +79,28 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
 
   if (!isOpen) return null;
 
-  // Calculate allocation sum and remaining to allocate
-  const parsedTotal = parseFloat(totalAmount) || 0;
-  const parsedAllocSum = allocations.reduce((sum, row) => {
-    const val = parseFloat(row.amount);
-    return sum + (isNaN(val) ? 0 : val);
-  }, 0);
+  // Integer cents calculation for arbitrary decimal precision without float drift
+  const toCents = (valStr: string): number => {
+    const trimmed = valStr.trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return 0;
+    const parts = trimmed.split('.');
+    const whole = parseInt(parts[0], 10);
+    const fraction = parts[1] ? parseInt(parts[1].padEnd(2, '0').slice(0, 2), 10) : 0;
+    return whole * 100 + fraction;
+  };
 
-  const roundedTotal = Math.round(parsedTotal * 100) / 100;
-  const roundedSum = Math.round(parsedAllocSum * 100) / 100;
-  const remaining = Math.round((roundedTotal - roundedSum) * 100) / 100;
-  const isBalanced = roundedTotal > 0 && Math.abs(remaining) < 0.001;
+  const totalCents = toCents(totalAmount);
+  const allocatedCents = allocations.reduce((sum, row) => sum + toCents(row.amount), 0);
+  const remainingCents = totalCents - allocatedCents;
+  const remaining = remainingCents / 100;
+  const roundedTotal = totalCents / 100;
+  const roundedSum = allocatedCents / 100;
+
+  const isBalanced =
+    totalCents > 0 &&
+    remainingCents === 0 &&
+    allocations.length > 0 &&
+    allocations.every((row) => toCents(row.amount) > 0);
 
   const handleAddSplitLine = () => {
     const defaultExpense = expenseAccounts[0];
@@ -146,19 +157,32 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
       return 'At least one allocation line is required.';
     }
 
+    const seenCategories = new Set<string>();
     for (let i = 0; i < allocations.length; i++) {
       const row = allocations[i];
       if (!row.target_account_id) {
         return `Please select an expense category for allocation line ${i + 1}.`;
       }
+      if (seenCategories.has(row.target_account_id)) {
+        return 'Each allocation line must use a distinct expense category.';
+      }
+      seenCategories.add(row.target_account_id);
+
       if (!row.amount || row.amount.trim().length === 0) {
         return `Please enter an amount for allocation line ${i + 1}.`;
       }
-      const rowNum = parseFloat(row.amount.trim());
+      const rawAmount = row.amount.trim();
+      if (/[eE]/.test(rawAmount)) {
+        return `Exponent notation is not allowed for allocation line ${i + 1}.`;
+      }
+      if (!/^-?\d+(\.\d+)?$/.test(rawAmount)) {
+        return `Allocation amount for line ${i + 1} must be a valid positive number.`;
+      }
+      const rowNum = parseFloat(rawAmount);
       if (isNaN(rowNum) || rowNum <= 0) {
         return `Allocation amount for line ${i + 1} must be strictly greater than 0.00.`;
       }
-      const rowParts = row.amount.trim().split('.');
+      const rowParts = rawAmount.split('.');
       if (rowParts.length === 2 && rowParts[1].length > 2) {
         return `Allocation line ${i + 1} allows at most 2 decimal places.`;
       }
@@ -185,13 +209,13 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
     try {
       const payloadAllocations: AllocationLinePayload[] = allocations.map((row) => ({
         target_account_id: row.target_account_id,
-        amount: parseFloat(row.amount.trim()),
+        amount: row.amount.trim(),
         notes: row.notes.trim() ? row.notes.trim() : null
       }));
 
       const data = await recordExpense({
         primary_account_id: primaryAccountId,
-        total_amount: parseFloat(totalAmount.trim()),
+        total_amount: totalAmount.trim(),
         transaction_date: transactionDate.trim(),
         description: description.trim() ? description.trim() : null,
         allocations: payloadAllocations
@@ -477,7 +501,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
             <div className="expense-summary-panel" aria-label="Allocation Summary">
               <div className="expense-summary-header">
                 <h4 className="expense-summary-title">Allocation Summary</h4>
-                {parsedTotal > 0 && (
+                {roundedTotal > 0 && (
                   <span
                     className={`expense-summary-badge ${
                       isBalanced ? 'balanced' : remaining < 0 ? 'over' : 'incomplete'
@@ -554,7 +578,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
                     <span>Fully allocated: ฿{roundedSum.toFixed(2)} of ฿{roundedTotal.toFixed(2)}. Ready to record.</span>
                   </>
                 )}
-                {!isBalanced && remaining > 0 && parsedTotal > 0 && (
+                {!isBalanced && remaining > 0 && roundedTotal > 0 && (
                   <>
                     <span className="expense-hint-icon-warning">⚠</span>
                     <span>Allocate the remaining ฿{remaining.toFixed(2)} to continue.</span>
@@ -566,7 +590,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
                     <span>Over-allocated by ฿{Math.abs(remaining).toFixed(2)}. Total allocations exceed purchase amount.</span>
                   </>
                 )}
-                {parsedTotal <= 0 && (
+                {roundedTotal <= 0 && (
                   <span>Specify a purchase amount to begin allocating across categories.</span>
                 )}
               </p>

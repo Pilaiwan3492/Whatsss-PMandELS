@@ -40,13 +40,13 @@ export interface IncomeApiResponse {
 
 export interface AllocationLinePayload {
   target_account_id: string;
-  amount: string | number;
+  amount: string;
   notes?: string | null;
 }
 
 export interface ExpensePayload {
   primary_account_id: string;
-  total_amount: string | number;
+  total_amount: string;
   transaction_date: string;
   description?: string | null;
   allocations: AllocationLinePayload[];

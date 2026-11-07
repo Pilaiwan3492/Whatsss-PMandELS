@@ -86,6 +86,22 @@ describe('Unit Test: Split Allocation Engine (WP-04, Features F-05, F-06)', () =
       const result = validateAllocationLines(allocations, totalAmount3000);
       expect(result).toHaveLength(2);
     });
+
+    it('TEST-ALLOC-03: rejects duplicate category selection across allocation lines (AC-06-3)', () => {
+      const allocations = [
+        { target_account_id: '11111111-1111-4111-8111-111111111104', amount: 1000.00, notes: 'Dining 1' },
+        { target_account_id: '11111111-1111-4111-8111-111111111104', amount: 2000.00, notes: 'Dining 2' }
+      ];
+
+      expect(() => validateAllocationLines(allocations, totalAmount3000)).toThrowError(ExpenseError);
+      try {
+        validateAllocationLines(allocations, totalAmount3000);
+      } catch (err: any) {
+        expect(err.statusCode).toBe(400);
+        expect(err.code).toBe('DUPLICATE_ALLOCATION_ACCOUNT');
+        expect(err.message).toBe('Each allocation line must use a distinct expense category.');
+      }
+    });
   });
 
   describe('Allocation Line Syntactic & Boundary Validation', () => {

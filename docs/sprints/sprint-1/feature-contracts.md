@@ -202,6 +202,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Acceptance Criteria:**
   * `AC-05-1`: Submitting valid credit card purchase returns `201 Created` and increases credit card debt balance (`TEST-EXP-01`, `BR-04`).
   * `AC-05-2`: Omitting credit card primary account ID returns `400 Bad Request` (`TEST-EXP-02`).
+  * `AC-05-3`: Submitting invalid, negative, non-numeric (e.g., `1000abc`), exponent notation (`1e3`), or excessive decimal precision (> 2 decimal places) for transaction or allocation amounts, or referencing an ineligible primary account, returns `400 Bad Request` with error code `INVALID_TRANSACTION_AMOUNT`, `INVALID_ALLOCATION_AMOUNT`, or `INVALID_PRIMARY_ACCOUNT` (`TEST-VAL-01`).
 
 ---
 
@@ -222,6 +223,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Acceptance Criteria:**
   * `AC-06-1`: Multi-line allocation where sum equals total amount (e.g., `1000 + 2000 = 3000`) returns `201 Created` and creates both allocation lines (`TEST-ALLOC-01`, `BR-05`).
   * `AC-06-2`: Multi-line allocation where sum does not equal total amount (e.g., `1000 + 1500 != 3000`) returns `422 Unprocessable Entity` with error code `ALLOCATION_SUM_MISMATCH` (`TEST-ALLOC-02`, `BR-06`).
+  * `AC-06-3`: Submitting multiple allocation lines targeting duplicate expense categories (identical `target_account_id`) returns `400 Bad Request` with error code `DUPLICATE_ALLOCATION_ACCOUNT` to ensure every allocation line references a distinct expense category (`TEST-ALLOC-03`).
 * **API Specification:**
   * `POST /api/transactions/expense`: Body:
     ```json

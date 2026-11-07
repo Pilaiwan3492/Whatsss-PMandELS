@@ -156,8 +156,10 @@ As an authenticated user, I want to record an expense charged to my credit card 
 #### Acceptance Criteria Checklist
 - [x] `AC-05-1`: Recording credit purchase of 3000.00 THB returns 201 Created and increases debt (`TEST-EXP-01`).
 - [x] `AC-05-2`: Omitting credit card primary account ID returns 400 Bad Request (`TEST-EXP-02`).
+- [x] `AC-05-3`: Submitting invalid, negative, non-numeric (1000abc), exponent (1e3), or excessive precision (>2 decimals) rejected with 400 Bad Request (`TEST-VAL-01`).
 - [x] `AC-06-1`: Split allocation with Dining 1000.00 + Grocery 2000.00 = 3000.00 THB persists successfully with 2 allocation lines (`TEST-ALLOC-01`).
 - [x] `AC-06-2`: Unbalanced allocation sum rejected with 422 Unprocessable Entity (`TEST-ALLOC-02`, `BR-06`).
+- [x] `AC-06-3`: Submitting duplicate allocation categories rejected with 400 Bad Request (`TEST-ALLOC-03`).
 
 ---
 

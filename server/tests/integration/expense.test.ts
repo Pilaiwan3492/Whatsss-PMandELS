@@ -440,6 +440,34 @@ describe('Integration Test: Credit Card Purchase & Split Allocation (WP-04, F-05
     });
   });
 
+  describe('TEST-ALLOC-03: Duplicate Allocation Category (AC-06-3)', () => {
+    it('rejects split allocation containing duplicate category target accounts with 400 DUPLICATE_ALLOCATION_ACCOUNT', async () => {
+      const payload = {
+        primary_account_id: CC_ACCOUNT_ID,
+        total_amount: 3000.00,
+        transaction_date: '2026-11-06',
+        allocations: [
+          { target_account_id: DINING_ID, amount: 1000.00, notes: 'Dinner part 1' },
+          { target_account_id: DINING_ID, amount: 2000.00, notes: 'Dinner part 2' }
+        ]
+      };
+
+      const res = await request(app)
+        .post('/api/transactions/expense')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send(payload);
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe('DUPLICATE_ALLOCATION_ACCOUNT');
+      expect(res.body.error.message).toBe('Each allocation line must use a distinct expense category.');
+      expect(mockTransactions).toHaveLength(0);
+      expect(mockAllocationLines).toHaveLength(0);
+    });
+  });
+
   describe('Security Boundaries & Tenancy Isolation (TEST-SEC-01, 02, 03, BR-01, BR-09, BR-10)', () => {
     it('TEST-SEC-01 Case 1: rejects cross-tenant primary_account_id with 404 NOT_FOUND', async () => {
       const payload = {

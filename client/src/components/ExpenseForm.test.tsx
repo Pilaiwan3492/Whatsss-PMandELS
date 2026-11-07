@@ -346,16 +346,67 @@ describe('Frontend Component: ExpenseForm Split Allocation Engine (WP-04, F-05, 
     await waitFor(() => {
       expect(transactionApi.recordExpense).toHaveBeenCalledWith({
         primary_account_id: 'cc-visa-1',
-        total_amount: 3000,
+        total_amount: '3000.00',
         transaction_date: expect.any(String),
         description: null,
         allocations: [
-          { target_account_id: 'expense-dining-1', amount: 1000, notes: 'Dinner' },
-          { target_account_id: 'expense-grocery-2', amount: 2000, notes: 'Grocery' }
+          { target_account_id: 'expense-dining-1', amount: '1000.00', notes: 'Dinner' },
+          { target_account_id: 'expense-grocery-2', amount: '2000.00', notes: 'Grocery' }
         ]
       });
       expect(mockOnSuccess).toHaveBeenCalledWith(mockExpenseResult);
       expect(mockOnClose).toHaveBeenCalled();
     });
+  });
+
+  it('TEST-UI-EXP-11: rejects duplicate category selection across allocation lines (AC-06-3)', async () => {
+    render(
+      <ExpenseForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(/Total Amount/i), { target: { value: '3000.00' } });
+    // Set both allocation lines to the same expense category
+    fireEvent.change(screen.getByLabelText('Category for line 1'), { target: { value: 'expense-dining-1' } });
+    fireEvent.change(screen.getByLabelText('Amount for line 1'), { target: { value: '1000.00' } });
+    fireEvent.change(screen.getByLabelText('Category for line 2'), { target: { value: 'expense-dining-1' } });
+    fireEvent.change(screen.getByLabelText('Amount for line 2'), { target: { value: '2000.00' } });
+
+    const submitBtn = screen.getByRole('button', { name: /Record Purchase/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Each allocation line must use a distinct expense category.')).toBeDefined();
+    });
+    expect(transactionApi.recordExpense).not.toHaveBeenCalled();
+  });
+
+  it('TEST-UI-EXP-12: rejects invalid allocation amount inputs such as exponent notation and excessive decimal precision (AC-05-3)', async () => {
+    render(
+      <ExpenseForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(/Total Amount/i), { target: { value: '3000.00' } });
+    fireEvent.change(screen.getByLabelText('Category for line 1'), { target: { value: 'expense-dining-1' } });
+    fireEvent.change(screen.getByLabelText('Amount for line 1'), { target: { value: '1e3' } });
+    fireEvent.change(screen.getByLabelText('Category for line 2'), { target: { value: 'expense-grocery-2' } });
+    fireEvent.change(screen.getByLabelText('Amount for line 2'), { target: { value: '2000.00' } });
+
+    const form = screen.getByRole('dialog').querySelector('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Exponent notation is not allowed for allocation line 1/i)).toBeDefined();
+    });
+    expect(transactionApi.recordExpense).not.toHaveBeenCalled();
   });
 });

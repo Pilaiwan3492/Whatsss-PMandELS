@@ -27,20 +27,28 @@
 * **Execution Commands:**
   * Backend: `npm test` (within `server/`)
   * Frontend: `npm test` (within `client/`)
-* **Automated Test Execution Summary (WP-04 Complete Suite):**
-  * Backend Unit Tests: 83 passed across 7 suites (+14 new tests in `splitAllocation.test.ts`)
-    * `splitAllocation.test.ts`: 14 passed (BR-05/BR-06 split balance integrity, 422 ALLOCATION_SUM_MISMATCH on unbalanced sums, arbitrary-precision Decimal arithmetic, IEEE-754 floating point hazard prevention [0.10 + 0.20 === 0.30], single and multi-line validations, syntactic boundary checks, and over-precision rejection)
+* **TDD Red/Green Implementation Evidence:**
+  * **Red Commit (`c7257b0`):** Test specifications and failing test suites added for F-05 credit purchase and F-06 split allocation engine.
+  * **Green Commit (`973067f`):** Implementation of `expense.service.ts`, `transaction.controller.ts`, atomic balance locking, and Decimal calculation satisfying all test assertions.
+* **Automated Test Execution Summary:**
+  * **Local Suite Execution (without live DB):**
+    * Backend: 237 passed, 28 skipped across 19 test files (84 Unit tests passed across 7 suites; 153 Integration tests passed across 12 suites).
+    * Frontend: 32 passed across 4 component test files (12 in `ExpenseForm.test.tsx`, 8 in `AccountListPage.test.tsx`, 8 in `IncomeForm.test.tsx`, 4 in `ProtectedRoute.test.tsx`).
+  * **GitHub Actions CI Environment (Live PostgreSQL Service Container, `ALLOW_LIVE_DB_TESTS=true`):**
+    * Backend: 265 passed, 0 skipped across 19 test files (including 30 live PostgreSQL integration tests across `db-account.test.ts`, `db-income.test.ts`, `db-expense.test.ts`, and `db-password.test.ts`).
+    * Frontend: 32 passed across 4 test files.
+  * **Detailed Suite Breakdown:**
+    * `splitAllocation.test.ts`: 15 passed (BR-05/BR-06 split balance integrity, AC-06-3 duplicate category rejection, 422 ALLOCATION_SUM_MISMATCH on unbalanced sums, arbitrary-precision Decimal arithmetic, IEEE-754 floating point hazard prevention [0.10 + 0.20 === 0.30], single and multi-line validations, syntactic boundary checks, and over-precision rejection)
     * `accountLock.test.ts`: 9 passed
     * `testSafety.test.ts`: 27 passed
     * `decimal.test.ts`: 16 passed
     * `config.test.ts`: 5 passed
     * `seed.test.ts`: 8 passed
     * `password.test.ts`: 4 passed
-  * Backend Integration Tests: 147 passed / 23 skipped locally across 12 suites (+17 new tests in `expense.test.ts`, +2 new tests in `db-expense.test.ts`)
-    * `expense.test.ts`: 18 passed (Mocked Prisma & HTTP API; records purchase of 3,000.00 THB split into Dining 1,000.00 and Grocery 2,000.00, increases credit debt by 3,000.00 and expense summary by 3,000.00 per BR-04, distinguishes credit charges from cash repayments, locks account opening balances per AC-03-3, rejects missing primary account ID with 400, rejects unbalanced allocation sums with 422 ALLOCATION_SUM_MISMATCH, rejects non-LOAN_TAKEN primary account with 400 INVALID_PRIMARY_ACCOUNT, rejects non-EXPENSE target category with 400 INVALID_EXPENSE_ACCOUNT, rejects negative/zero/over-precision amounts, rejects cross-tenant accounts with 404 NOT_FOUND per BR-01, rejects unauthenticated requests with 401 per BR-09, and rejects ADMIN with 403 per BR-10)
+    * `expense.test.ts`: 19 passed (Mocked Prisma & HTTP API; records purchase of 3,000.00 THB split into Dining 1,000.00 and Grocery 2,000.00, increases credit debt by 3,000.00 and expense summary by 3,000.00 per BR-04, distinguishes credit charges from cash repayments, locks account opening balances per AC-03-3, rejects duplicate category allocations with 400 DUPLICATE_ALLOCATION_ACCOUNT per AC-06-3, rejects missing primary account ID with 400, rejects unbalanced allocation sums with 422 ALLOCATION_SUM_MISMATCH, rejects non-LOAN_TAKEN primary account with 400 INVALID_PRIMARY_ACCOUNT, rejects non-EXPENSE target category with 400 INVALID_EXPENSE_ACCOUNT, rejects negative/zero/over-precision amounts, rejects cross-tenant accounts with 404 NOT_FOUND per BR-01, rejects unauthenticated requests with 401 per BR-09, and rejects ADMIN with 403 per BR-10)
     * `db-expense.test.ts`: 9 passed in CI (skipped locally without live PostgreSQL; verifies live PostgreSQL persistence of Transaction form PAYMENT_CHARGE and child AllocationLines, debt increase, split allocations, rollback, cross-tenant isolation, atomic lock rollback, boundary decimal precision, and transaction rollback upon unbalanced allocations)
     * `income.test.ts`: 35 passed
-    * `account.test.ts`: 26 passed
+    * `account.test.ts`: 28 passed (+2 tests for LOAN_TAKEN dynamic debt calculation via Opening Balance + Charges - Repayments in GET /api/accounts and GET /api/accounts/:id)
     * `access.test.ts`: 17 passed
     * `content-type.test.ts`: 26 passed
     * `csrf.test.ts`: 12 passed
@@ -49,11 +57,10 @@
     * `db-income.test.ts`: 9 passed in CI
     * `db-password.test.ts`: 2 passed in CI
     * `db-account.test.ts`: 10 passed in CI
-  * Frontend Component Tests: 29 passed across 4 suites (+10 tests in `ExpenseForm.test.tsx`)
-    * `ExpenseForm.test.tsx`: 10 passed (3-section layout rendering, LOAN_TAKEN credit card selection, EXPENSE categories dropdown, split allocation cards layout, explicit htmlFor/id accessibility linkage, visible keyboard focus state, live client-side balance validation, disabled submit button when unbalanced per BR-06, enabled submit button when balanced per AC-06-1, Over-allocated warning badge, dynamic addition and removal of split cards, disabled remove button when only 1 card remains, accessible progress bar with dynamic aria-valuetext, successful submission, and backend error alert display)
+    * `ExpenseForm.test.tsx`: 12 passed (3-section layout rendering, LOAN_TAKEN credit card selection, EXPENSE categories dropdown, split allocation cards layout, explicit htmlFor/id accessibility linkage, visible keyboard focus state, live integer cents balance validation, disabled submit button when unbalanced per BR-06, enabled submit button when balanced per AC-06-1, Over-allocated warning badge, dynamic addition and removal of split cards, disabled remove button when only 1 card remains, accessible progress bar with dynamic aria-valuetext, successful submission with string decimal payload, AC-06-3 duplicate category selection rejection, and AC-05-3 invalid amount input rejection)
+    * `AccountListPage.test.tsx`: 8 passed (renders accounts list, opens modal, updates opening balance, validates negative/over-precision, enforces max limit, redirects ADMIN to /access-denied, and renders Current Debt with formatted currency for LOAN_TAKEN accounts)
     * `IncomeForm.test.tsx`: 8 passed
     * `ProtectedRoute.test.tsx`: 4 passed
-    * `AccountListPage.test.tsx`: 7 passed
 
 ---
 
@@ -108,14 +115,15 @@
 | `TEST-EXP-02` | `AC-05-2` | `server/tests/integration/expense.test.ts` | Passed — Mocked Prisma (Omitting primary_account_id rejected with 400 INVALID_ACCOUNT_ID) | WP-04 Branch |
 | `TEST-ALLOC-01` | `AC-06-1`, `BR-05`, `FR-08` | `server/tests/unit/splitAllocation.test.ts`, `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Unit, Mocked Prisma & Live PostgreSQL HTTP API (Split allocation with Dining 1,000.00 + Grocery 2,000.00 = 3,000.00 THB persists successfully with 2 allocation lines and relational integrity) | WP-04 Branch |
 | `TEST-ALLOC-02` | `AC-06-2`, `BR-06` | `server/tests/unit/splitAllocation.test.ts`, `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Unit, Mocked Prisma & Live PostgreSQL HTTP API (Unbalanced allocation sum [1000 + 1500 != 3000] rejected with 422 ALLOCATION_SUM_MISMATCH without partial writes or orphaned records) | WP-04 Branch |
+| `TEST-ALLOC-03` | `AC-06-3`, `BR-05` | `server/tests/unit/splitAllocation.test.ts`, `server/tests/integration/expense.test.ts` | Passed — Unit & Mocked Prisma HTTP API (Duplicate category selection in allocation lines rejected with 400 DUPLICATE_ALLOCATION_ACCOUNT) | WP-04 Branch |
 | `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Cross-tenant primary_account_id or target_account_id returns 404 NOT_FOUND, writes 0 rows to PostgreSQL) | WP-04 Branch |
 | `TEST-SEC-02` | `AC-02-1`, `BR-09` | `server/tests/integration/expense.test.ts` | Passed — Mocked Prisma (Unauthenticated POST /api/transactions/expense returns 401 UNAUTHORIZED) | WP-04 Branch |
 | `TEST-SEC-03` | `AC-02-2`, `BR-10` | `server/tests/integration/expense.test.ts` | Passed — Mocked Prisma (ADMIN caller returns 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN with zero data leak) | WP-04 Branch |
-| `TEST-VAL-01` | `AC-05-3`, `BR-04` | `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Non-LOAN_TAKEN primary account rejected with 400 INVALID_PRIMARY_ACCOUNT with 0 rows written) | WP-04 Branch |
+| `TEST-VAL-01` | `AC-05-3`, `BR-04` | `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Non-numeric amount, exponent notation 1e3, negative/zero, excessive decimal precision >2 places, or non-LOAN_TAKEN primary account rejected with 400 INVALID_TRANSACTION_AMOUNT / INVALID_ALLOCATION_AMOUNT / INVALID_PRIMARY_ACCOUNT with 0 rows written) | WP-04 Branch |
 | `TEST-EXP-ATOM` | `AC-03-3`, `BR-04` | `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Mocked Prisma & Live PostgreSQL (Mid-flight failure inside $transaction rolls back Transaction and restores opening balance lock to unlocked state) | WP-04 Branch |
 | `TEST-OPEN-04` | `AC-03-3` | `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Mocked Prisma & Live PostgreSQL (Validation failure preserves unlocked opening balance) | WP-04 Branch |
 | `TEST-EXP-DECIMAL` | `NFR-DATA-01` | `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Mocked Prisma & Live PostgreSQL (Preserves exact boundary Decimal values 0.01, 0.29, 100.10, 9999999999.99 without floating-point distortion) | WP-04 Branch |
-| `TEST-UI-EXP` | `AC-05-1`, `AC-06-1`, `AC-06-2` | `client/src/components/ExpenseForm.test.tsx` | Passed — Vitest / Testing Library (Expense form rendering, 3-section layout, split allocation cards with accessible htmlFor/id linkage, live balance validation, disable submit when unbalanced, dynamic add/remove cards, progress bar with aria metadata) | WP-04 Branch |
+| `TEST-UI-EXP` | `AC-05-1`, `AC-05-3`, `AC-06-1`, `AC-06-2`, `AC-06-3` | `client/src/components/ExpenseForm.test.tsx` | Passed — Vitest / Testing Library (12 test cases: 3-section layout, credit card header, split cards with accessible htmlFor/id, live integer cents balance validation, disabled submit when unbalanced, balanced state, over-allocated warning, dynamic add/remove, single card remove prevention, progress bar with aria metadata, successful submit with string decimal payload, duplicate category rejection, and invalid amount rejection) | WP-04 Branch |
 
 ---
 

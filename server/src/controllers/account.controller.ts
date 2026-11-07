@@ -71,6 +71,9 @@ export async function getAccounts(req: Request, res: Response, next: NextFunctio
 
     const receiveMap = new Map<string, Prisma.Decimal>();
     const paymentMap = new Map<string, Prisma.Decimal>();
+    const loanTakenAccountIds = accounts.filter((a) => a.type === 'LOAN_TAKEN').map((a) => a.id);
+    const creditChargeMap = new Map<string, Prisma.Decimal>();
+    const creditRepaymentMap = new Map<string, Prisma.Decimal>();
 
     if (typeof prisma.transaction?.groupBy === 'function' && cashAccountIds.length > 0) {
       const grouped = await prisma.transaction.groupBy({
@@ -97,6 +100,62 @@ export async function getAccounts(req: Request, res: Response, next: NextFunctio
       }
     }
 
+    // Compute credit charges for LOAN_TAKEN accounts (PAYMENT_CHARGE on LOAN_TAKEN primary accounts) (BR-04)
+    if (typeof prisma.transaction?.groupBy === 'function' && loanTakenAccountIds.length > 0) {
+      const chargeGrouped = await prisma.transaction.groupBy({
+        by: ['primary_account_id'],
+        where: {
+          user_id: userId,
+          primary_account_id: { in: loanTakenAccountIds },
+          form: 'PAYMENT_CHARGE'
+        },
+        _sum: {
+          total_amount: true
+        }
+      });
+
+      for (const row of chargeGrouped) {
+        if (!row.primary_account_id) continue;
+        const sumVal = row._sum?.total_amount
+          ? new Prisma.Decimal(row._sum.total_amount.toString())
+          : zero;
+        creditChargeMap.set(row.primary_account_id, sumVal);
+      }
+    }
+
+    // Compute cash-funded repayments targeting LOAN_TAKEN accounts (CASH -> LOAN_TAKEN) (BR-07, WP-05)
+    if (typeof prisma.allocationLine?.groupBy === 'function' && loanTakenAccountIds.length > 0) {
+      const repayGrouped = await prisma.allocationLine.groupBy({
+        by: ['target_account_id'],
+        where: {
+          target_account_id: { in: loanTakenAccountIds },
+          target_account: {
+            type: 'LOAN_TAKEN',
+            user_id: userId
+          },
+          transaction: {
+            user_id: userId,
+            form: 'PAYMENT_CHARGE',
+            primary_account: {
+              type: 'CASH',
+              user_id: userId
+            }
+          }
+        },
+        _sum: {
+          amount: true
+        }
+      });
+
+      for (const row of repayGrouped) {
+        if (!row.target_account_id) continue;
+        const sumVal = row._sum?.amount
+          ? new Prisma.Decimal(row._sum.amount.toString())
+          : zero;
+        creditRepaymentMap.set(row.target_account_id, sumVal);
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -107,6 +166,10 @@ export async function getAccounts(req: Request, res: Response, next: NextFunctio
             const received = receiveMap.get(acc.id) || zero;
             const paid = paymentMap.get(acc.id) || zero;
             currentBalanceDecimal = openingDecimal.add(received).sub(paid);
+          } else if (acc.type === 'LOAN_TAKEN') {
+            const charges = creditChargeMap.get(acc.id) || zero;
+            const repayments = creditRepaymentMap.get(acc.id) || zero;
+            currentBalanceDecimal = openingDecimal.add(charges).sub(repayments);
           }
           return {
             id: acc.id,
@@ -193,6 +256,46 @@ export async function getAccountById(req: Request, res: Response, next: NextFunc
         ? new Prisma.Decimal(paymentAgg._sum.total_amount.toString())
         : zero;
       currentBalanceDecimal = openingDecimal.add(received).sub(paid);
+    } else if (account.type === 'LOAN_TAKEN') {
+      let charges = zero;
+      let repayments = zero;
+      if (typeof prisma.transaction?.aggregate === 'function') {
+        const chargeAgg = await prisma.transaction.aggregate({
+          where: {
+            user_id: userId,
+            primary_account_id: account.id,
+            form: 'PAYMENT_CHARGE'
+          },
+          _sum: { total_amount: true }
+        });
+        if (chargeAgg._sum?.total_amount) {
+          charges = new Prisma.Decimal(chargeAgg._sum.total_amount.toString());
+        }
+      }
+      if (typeof prisma.allocationLine?.aggregate === 'function') {
+        const repaymentAgg = await prisma.allocationLine.aggregate({
+          where: {
+            target_account_id: account.id,
+            target_account: {
+              type: 'LOAN_TAKEN',
+              user_id: userId
+            },
+            transaction: {
+              user_id: userId,
+              form: 'PAYMENT_CHARGE',
+              primary_account: {
+                type: 'CASH',
+                user_id: userId
+              }
+            }
+          },
+          _sum: { amount: true }
+        });
+        if (repaymentAgg._sum?.amount) {
+          repayments = new Prisma.Decimal(repaymentAgg._sum.amount.toString());
+        }
+      }
+      currentBalanceDecimal = openingDecimal.add(charges).sub(repayments);
     }
 
     res.status(200).json({

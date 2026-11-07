@@ -243,6 +243,7 @@ export function validateAllocationLines(
   }
 
   const validated: ValidatedAllocationLine[] = [];
+  const seenTargetAccountIds = new Set<string>();
   const zero = new Prisma.Decimal('0.00');
   let runningSum = zero;
 
@@ -263,6 +264,15 @@ export function validateAllocationLines(
         'INVALID_ACCOUNT_ID'
       );
     }
+
+    if (seenTargetAccountIds.has(item.target_account_id)) {
+      throw new ExpenseError(
+        'Each allocation line must use a distinct expense category.',
+        400,
+        'DUPLICATE_ALLOCATION_ACCOUNT'
+      );
+    }
+    seenTargetAccountIds.add(item.target_account_id);
 
     let lineAmountDecimal: Prisma.Decimal;
     try {
