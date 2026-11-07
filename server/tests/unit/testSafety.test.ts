@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
+import {
+  validateTestDatabaseUrl,
+  assertTestDatabase,
+  TestDbOptions
+} from '../fixtures/testDbGuard.js';
 
 /**
  * Unit Test: Test Database Safety & Snapshot-Restore Lifecycle (P0 Quality Fix)
@@ -9,12 +14,23 @@ import { Prisma } from '@prisma/client';
  * 3. Scoped restoration targets ONLY the specific account ID and never calls blanket updateMany.
  * 4. Cleanup failures are rethrown and not silently swallowed with console.error.
  * 5. Local environment guard skips live database integration tests unless ALLOW_LIVE_DB_TESTS=true is set.
+ * 6. User snapshot captures and restores exact updated_at timestamp, password hash, role, and active status.
+ * 7. Database URL verification strictly verifies isolated test database and rejects production/remote databases.
  */
 describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)', () => {
   interface AccountSnapshot {
     id: string;
     opening_balance: Prisma.Decimal;
     is_opening_locked: boolean;
+    updated_at: Date;
+  }
+
+  interface UserSnapshot {
+    id: string;
+    username: string;
+    password_hash: string;
+    role: string;
+    is_active: boolean;
     updated_at: Date;
   }
 
@@ -27,6 +43,20 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
         updated_at: snap.updated_at
       }
     });
+  }
+
+  async function restoreUsers(mockClient: any, snaps: UserSnapshot[]): Promise<void> {
+    for (const u of snaps) {
+      await mockClient.user.update({
+        where: { id: u.id },
+        data: {
+          password_hash: u.password_hash,
+          role: u.role,
+          is_active: u.is_active,
+          updated_at: u.updated_at
+        }
+      });
+    }
   }
 
   it('restores exact non-zero opening_balance from snapshot rather than hardcoding 0.00', async () => {
@@ -148,5 +178,104 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
 
     // Explicit opt-in local developer environment
     expect(shouldRunLiveDb({ ALLOW_LIVE_DB_TESTS: 'true' })).toBe(true);
+  });
+
+  it('restores user exact updated_at timestamp, password hash, role, and active status', async () => {
+    const mockPrisma = {
+      user: {
+        update: vi.fn().mockResolvedValue({})
+      }
+    };
+
+    const originalUpdatedAt = new Date('2026-11-05T08:30:00.000Z');
+    const userSnapshots: UserSnapshot[] = [
+      {
+        id: 'user-1',
+        username: 'user_demo',
+        password_hash: '$2b$10$originalHashUserDemo...',
+        role: 'USER',
+        is_active: true,
+        updated_at: originalUpdatedAt
+      },
+      {
+        id: 'admin-1',
+        username: 'admin_demo',
+        password_hash: '$2b$10$originalHashAdminDemo...',
+        role: 'ADMIN',
+        is_active: true,
+        updated_at: new Date('2026-11-05T09:00:00.000Z')
+      }
+    ];
+
+    await restoreUsers(mockPrisma, userSnapshots);
+
+    expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      data: {
+        password_hash: '$2b$10$originalHashUserDemo...',
+        role: 'USER',
+        is_active: true,
+        updated_at: originalUpdatedAt
+      }
+    });
+    expect(mockPrisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'admin-1' },
+      data: {
+        password_hash: '$2b$10$originalHashAdminDemo...',
+        role: 'ADMIN',
+        is_active: true,
+        updated_at: expect.any(Date)
+      }
+    });
+  });
+
+  describe('Database URL Safety Verification (Test DB Guard)', () => {
+    it('accepts CI service container database URL on localhost', () => {
+      const ciUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_db?schema=public';
+      const result = validateTestDatabaseUrl(ciUrl, { isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+      expect(result.isValid).toBe(true);
+    });
+
+    it('accepts local dedicated test database containing "test" keyword', () => {
+      const localTestUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_test?schema=public';
+      const result = validateTestDatabaseUrl(localTestUrl, { isCI: false, allowLiveDb: true, nodeEnv: 'test' });
+      expect(result.isValid).toBe(true);
+    });
+
+    it('rejects local dev database without "test" keyword to prevent developer data mutation', () => {
+      const devUrl = 'postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_db?schema=public';
+      const result = validateTestDatabaseUrl(devUrl, { isCI: false, allowLiveDb: true, nodeEnv: 'test' });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('is not verified as a test database');
+    });
+
+    it('rejects remote or non-loopback host to prevent external database corruption', () => {
+      const remoteUrl = 'postgresql://admin:secret@db.whatsss.com:5432/whatsss_test';
+      const result = validateTestDatabaseUrl(remoteUrl, { isCI: false, allowLiveDb: true });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('restricted to local/container test instances');
+    });
+
+    it('rejects database names containing production keywords', () => {
+      const prodDbUrl = 'postgresql://whatsss_user:password@localhost:5432/whatsss_production';
+      const result = validateTestDatabaseUrl(prodDbUrl, { isCI: true, allowLiveDb: true });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('forbidden production keyword');
+    });
+
+    it('rejects execution when NODE_ENV is production', () => {
+      const url = 'postgresql://whatsss_user:password@localhost:5432/whatsss_test';
+      const result = validateTestDatabaseUrl(url, { isCI: true, allowLiveDb: true, nodeEnv: 'production' });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('strictly forbidden in production');
+    });
+
+    it('assertTestDatabase throws immediately when verification fails', () => {
+      const badUrl = 'postgresql://admin:secret@production-db.internal:5432/prod_db';
+      expect(() => {
+        assertTestDatabase(badUrl, { isCI: false, allowLiveDb: true });
+      }).toThrow(/FATAL: Test database verification failed/);
+    });
   });
 });

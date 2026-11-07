@@ -4,6 +4,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { app } from '../../src/app.js';
 import { seed } from '../../prisma/seed.js';
 import { lockAccounts } from '../../src/services/accountLock.service.js';
+import { assertTestDatabase } from '../fixtures/testDbGuard.js';
 
 interface AccountSnapshot {
   id: string;
@@ -18,6 +19,7 @@ interface UserSnapshot {
   password_hash: string;
   role: string;
   is_active: boolean;
+  updated_at: Date;
 }
 
 /**
@@ -41,6 +43,10 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
   const databaseUrl = process.env.DATABASE_URL || '';
   const TRUSTED_ORIGIN = 'http://localhost:5173';
 
+  // Baseline snapshots of untouched accounts across users, captured at start of suite
+  let initialOtherAccountsSnapshot: AccountSnapshot[] = [];
+  let initialDemoUntouchedAccountsSnapshot: AccountSnapshot[] = [];
+
   // Track pending cleanup tasks to ensure guaranteed restoration in afterEach
   const pendingCleanups: Array<() => Promise<void>> = [];
 
@@ -55,17 +61,47 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       return;
     }
 
-    // 2. Validate database connection URL
-    if (!databaseUrl && !isCI) {
-      isDbConnected = false;
-      return;
-    }
+    // 2. Validate that DATABASE_URL points to a verified, isolated test database
+    // If verification fails, ABORT IMMEDIATELY (throw Error, do not just warn)
+    assertTestDatabase(databaseUrl, {
+      isCI,
+      allowLiveDb,
+      nodeEnv: process.env.NODE_ENV
+    });
 
     prisma = new PrismaClient();
     try {
       await prisma.$connect();
       await prisma.$queryRaw`SELECT 1`;
       isDbConnected = true;
+
+      // Capture pre-test snapshot of user_other accounts and user_demo's non-Checking accounts
+      // To prove they were never mutated by any test, without assuming balances are 0.00
+      const userOther = await prisma.user.findUnique({
+        where: { username: 'user_other' },
+        include: { accounts: true }
+      });
+      if (userOther) {
+        initialOtherAccountsSnapshot = userOther.accounts.map((a) => ({
+          id: a.id,
+          opening_balance: a.opening_balance,
+          is_opening_locked: a.is_opening_locked,
+          updated_at: a.updated_at
+        }));
+      }
+
+      const userDemo = await prisma.user.findUnique({
+        where: { username: 'user_demo' },
+        include: { accounts: { where: { name: { not: 'Checking Bank' } } } }
+      });
+      if (userDemo) {
+        initialDemoUntouchedAccountsSnapshot = userDemo.accounts.map((a) => ({
+          id: a.id,
+          opening_balance: a.opening_balance,
+          is_opening_locked: a.is_opening_locked,
+          updated_at: a.updated_at
+        }));
+      }
     } catch (err) {
       isDbConnected = false;
       if (isCI) {
@@ -122,7 +158,8 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       username: u.username,
       password_hash: u.password_hash,
       role: u.role,
-      is_active: u.is_active
+      is_active: u.is_active,
+      updated_at: u.updated_at
     }));
   }
 
@@ -133,7 +170,8 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
         data: {
           password_hash: u.password_hash,
           role: u.role as any,
-          is_active: u.is_active
+          is_active: u.is_active,
+          updated_at: u.updated_at
         }
       });
     }
@@ -228,6 +266,40 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       // Opening balance must be preserved at 10000.00 THB without reset to 0.00
       const rechecked = await prisma.account.findUnique({ where: { id: checking!.id } });
       expect(Number(rechecked!.opening_balance)).toBe(10000.00);
+    });
+
+    it('validates demo user snapshot captures and restores exact updated_at timestamp across seed execution', async (ctx) => {
+      if (!isDbConnected) {
+        ctx.skip();
+        return;
+      }
+
+      // 1. Snapshot demo users before seed execution
+      const userSnaps = await snapshotUsers(['user_demo', 'user_other', 'admin_demo']);
+      expect(userSnaps).toHaveLength(3);
+      for (const snap of userSnaps) {
+        expect(snap.updated_at).toBeInstanceOf(Date);
+      }
+
+      // 2. Re-run seed (which upserts demo users and mutates updated_at via @updatedAt)
+      await seed(prisma);
+
+      // 3. Restore demo users using snapshot (restoring updated_at, password_hash, role, is_active)
+      await restoreUsers(userSnaps);
+
+      // 4. Verify that each demo user's updated_at matches the pre-seed snapshot exactly
+      const restoredUsers = await prisma.user.findMany({
+        where: { username: { in: ['user_demo', 'user_other', 'admin_demo'] } }
+      });
+
+      for (const snap of userSnaps) {
+        const restored = restoredUsers.find((u) => u.id === snap.id);
+        expect(restored).toBeDefined();
+        expect(restored!.updated_at.getTime()).toBe(snap.updated_at.getTime());
+        expect(restored!.password_hash).toBe(snap.password_hash);
+        expect(restored!.role).toBe(snap.role);
+        expect(restored!.is_active).toBe(snap.is_active);
+      }
     });
   });
 
@@ -458,34 +530,41 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       expect(allowedRes.body.data.account.opening_balance).toBe(5000.00);
     });
 
-    it('verifies live DB test safety: unrelated accounts and other users remain completely unmutated', async (ctx) => {
+    it('verifies live DB test safety: unrelated accounts and other users remain completely unmutated relative to pre-test baseline', async (ctx) => {
       if (!isDbConnected) {
         ctx.skip();
         return;
       }
 
-      // 1. Verify user_other's accounts in PostgreSQL were never touched by any prior test
+      // 1. Verify user_other's accounts in PostgreSQL match pre-test baseline snapshot exactly
+      // Proves no mutation occurred without assuming initial balances were 0.00
       const userOther = await prisma.user.findUnique({
         where: { username: 'user_other' },
         include: { accounts: true }
       });
       expect(userOther).toBeDefined();
-      expect(userOther!.accounts).toHaveLength(5);
-      for (const acc of userOther!.accounts) {
-        expect(Number(acc.opening_balance)).toBe(0.00);
-        expect(acc.is_opening_locked).toBe(false);
+      expect(userOther!.accounts).toHaveLength(initialOtherAccountsSnapshot.length);
+      for (const snap of initialOtherAccountsSnapshot) {
+        const current = userOther!.accounts.find((a) => a.id === snap.id);
+        expect(current, `Expected account ${snap.id} to exist`).toBeDefined();
+        expect(Number(current!.opening_balance)).toBe(Number(snap.opening_balance));
+        expect(current!.is_opening_locked).toBe(snap.is_opening_locked);
+        expect(current!.updated_at.getTime()).toBe(snap.updated_at.getTime());
       }
 
-      // 2. Verify user_demo's untouched accounts (CC, Salary, Dining, Grocery) remain at baseline
+      // 2. Verify user_demo's untouched accounts match pre-test baseline snapshot exactly
       const userDemo = await prisma.user.findUnique({
         where: { username: 'user_demo' },
         include: { accounts: { where: { name: { not: 'Checking Bank' } } } }
       });
       expect(userDemo).toBeDefined();
-      expect(userDemo!.accounts).toHaveLength(4);
-      for (const acc of userDemo!.accounts) {
-        expect(Number(acc.opening_balance)).toBe(0.00);
-        expect(acc.is_opening_locked).toBe(false);
+      expect(userDemo!.accounts).toHaveLength(initialDemoUntouchedAccountsSnapshot.length);
+      for (const snap of initialDemoUntouchedAccountsSnapshot) {
+        const current = userDemo!.accounts.find((a) => a.id === snap.id);
+        expect(current, `Expected account ${snap.id} to exist`).toBeDefined();
+        expect(Number(current!.opening_balance)).toBe(Number(snap.opening_balance));
+        expect(current!.is_opening_locked).toBe(snap.is_opening_locked);
+        expect(current!.updated_at.getTime()).toBe(snap.updated_at.getTime());
       }
     });
   });

@@ -205,13 +205,21 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
 
   describe('TEST-OPEN-02: Opening Balance Exclusion from Summary (AC-03-4, BR-02, F-03)', () => {
     it('verifies opening balance is excluded from income and expense summaries in GET /api/reports/summary', async () => {
-      // 1. Set opening balance to 10000.00 THB
-      await request(app)
+      // 1. Set opening balance to 10000.00 THB and assert PATCH response
+      const patchRes = await request(app)
         .patch('/api/accounts/acc-demo-checking/opening-balance')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
         .set('Cookie', userACookie)
         .send({ opening_balance: 10000.00 });
+
+      expect(patchRes.status).toBe(200);
+      expect(patchRes.body.success).toBe(true);
+      expect(patchRes.body.data.account.opening_balance).toBe(10000.00);
+
+      // Verify persistence in underlying store
+      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking');
+      expect(checking?.opening_balance.toString()).toBe('10000');
 
       // 2. Query summary immediately
       const summaryRes = await request(app)
@@ -228,48 +236,81 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
     });
 
     it('proves non-zero opening balances on INCOME and EXPENSE accounts are strictly excluded from income/expense summaries (BR-02)', async () => {
-      // 1. Configure non-zero opening balances across diverse account types
+      // 1. Configure non-zero opening balances across diverse account types and assert each PATCH response
       // Checking Bank (CASH): 10,000.00
-      await request(app)
+      const patchCheckingRes = await request(app)
         .patch('/api/accounts/acc-demo-checking/opening-balance')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
         .set('Cookie', userACookie)
         .send({ opening_balance: 10000.00 });
 
-      // Visa Credit Card (LOAN_TAKEN): 1500.00
-      await request(app)
+      expect(patchCheckingRes.status).toBe(200);
+      expect(patchCheckingRes.body.success).toBe(true);
+      expect(patchCheckingRes.body.data.account.opening_balance).toBe(10000.00);
+
+      // Visa Credit Card (LOAN_TAKEN): 1,500.00
+      const patchCcRes = await request(app)
         .patch('/api/accounts/acc-demo-cc/opening-balance')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
         .set('Cookie', userACookie)
         .send({ opening_balance: 1500.00 });
 
+      expect(patchCcRes.status).toBe(200);
+      expect(patchCcRes.body.success).toBe(true);
+      expect(patchCcRes.body.data.account.opening_balance).toBe(1500.00);
+
       // Salary (INCOME): 5,000.00
-      await request(app)
+      const patchSalaryRes = await request(app)
         .patch('/api/accounts/acc-demo-salary/opening-balance')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
         .set('Cookie', userACookie)
         .send({ opening_balance: 5000.00 });
 
+      expect(patchSalaryRes.status).toBe(200);
+      expect(patchSalaryRes.body.success).toBe(true);
+      expect(patchSalaryRes.body.data.account.opening_balance).toBe(5000.00);
+
       // Dining (EXPENSE): 300.00
-      await request(app)
+      const patchDiningRes = await request(app)
         .patch('/api/accounts/acc-demo-dining/opening-balance')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
         .set('Cookie', userACookie)
         .send({ opening_balance: 300.00 });
 
+      expect(patchDiningRes.status).toBe(200);
+      expect(patchDiningRes.body.success).toBe(true);
+      expect(patchDiningRes.body.data.account.opening_balance).toBe(300.00);
+
       // Grocery (EXPENSE): 200.00
-      await request(app)
+      const patchGroceryRes = await request(app)
         .patch('/api/accounts/acc-demo-grocery/opening-balance')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
         .set('Cookie', userACookie)
         .send({ opening_balance: 200.00 });
 
-      // 2. Query summary
+      expect(patchGroceryRes.status).toBe(200);
+      expect(patchGroceryRes.body.success).toBe(true);
+      expect(patchGroceryRes.body.data.account.opening_balance).toBe(200.00);
+
+      // 2. Assert each opening balance was persisted in the underlying database store
+      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking');
+      const cc = mockAccounts.find((a) => a.id === 'acc-demo-cc');
+      const salary = mockAccounts.find((a) => a.id === 'acc-demo-salary');
+      const dining = mockAccounts.find((a) => a.id === 'acc-demo-dining');
+      const grocery = mockAccounts.find((a) => a.id === 'acc-demo-grocery');
+
+      expect(checking?.opening_balance.toString()).toBe('10000');
+      expect(cc?.opening_balance.toString()).toBe('1500');
+      expect(salary?.opening_balance.toString()).toBe('5000');
+      expect(dining?.opening_balance.toString()).toBe('300');
+      expect(grocery?.opening_balance.toString()).toBe('200');
+
+      // 3. Query summary endpoint after verifying all 5 accounts were persisted
       const summaryRes = await request(app)
         .get('/api/reports/summary')
         .set('Cookie', userACookie);
