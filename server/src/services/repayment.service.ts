@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma as defaultPrisma } from '../prisma.js';
-import { lockAccounts } from './accountLock.service.js';
+import { lockAccounts, acquireAccountRowLocks } from './accountLock.service.js';
 
 export const MAX_REPAYMENT_AMOUNT = new Prisma.Decimal('9999999999.99');
 
@@ -233,6 +233,12 @@ export interface RepaymentResult {
  * Records a Credit Card Repayment transaction (Transaction 3 of Golden Journey, WP-05, F-07).
  * Atomically decreases Cash balance and Credit Card debt balance while strictly excluding
  * repayment transaction from Expense summaries (BR-07, BR-08).
+ *
+ * CONCURRENCY INVARIANT:
+ * - All account reads, lock acquisitions (SELECT ... FOR UPDATE), balance aggregations,
+ *   and boundary checks occur strictly INSIDE the atomic database transaction.
+ * - Guarantees serializable isolation under concurrent requests, preventing double-payments
+ *   or negative debt/cash balances.
  */
 export async function recordRepayment(
   userId: string,
@@ -247,7 +253,7 @@ export async function recordRepayment(
     throw new RepaymentError('Invalid request payload.', 400, 'INVALID_PAYLOAD');
   }
 
-  // 1. Validate Account IDs presence
+  // 1. Fast-fail parameter presence validations (before starting DB transaction)
   if (!input.from_account_id || typeof input.from_account_id !== 'string' || input.from_account_id.trim() === '') {
     throw new RepaymentError('Source account (from_account_id) is required.', 400, 'INVALID_ACCOUNT_ID');
   }
@@ -258,153 +264,156 @@ export async function recordRepayment(
   const fromAccountId = input.from_account_id.trim();
   const toAccountId = input.to_account_id.trim();
 
-  // 2. Validate Amount & Date & Description
+  // 2. Validate Amount, Date, and Description
   const amountDecimal = validateRepaymentAmount(input.amount, 'Repayment amount');
   const { dateObj, dateStr } = validateTransactionDate(input.transaction_date);
   const desc = validateDescription(input.description);
 
-  // 3. Verify Account Ownership & Types
-  const fromAccount = await prismaClient.account.findFirst({
-    where: { id: fromAccountId, user_id: userId }
-  });
-  if (!fromAccount) {
-    throw new RepaymentError(
-      `Source account [${fromAccountId}] was not found or does not belong to the current user.`,
-      404,
-      'NOT_FOUND'
-    );
-  }
-
-  const toAccount = await prismaClient.account.findFirst({
-    where: { id: toAccountId, user_id: userId }
-  });
-  if (!toAccount) {
-    throw new RepaymentError(
-      `Target account [${toAccountId}] was not found or does not belong to the current user.`,
-      404,
-      'NOT_FOUND'
-    );
-  }
-
-  if (fromAccount.type !== 'CASH') {
-    throw new RepaymentError(
-      `Source account must be of type CASH, received: ${fromAccount.type}.`,
-      400,
-      'INVALID_ACCOUNT_TYPE'
-    );
-  }
-
-  if (toAccount.type !== 'LOAN_TAKEN') {
-    throw new RepaymentError(
-      `Target account must be of type LOAN_TAKEN, received: ${toAccount.type}.`,
-      400,
-      'INVALID_ACCOUNT_TYPE'
-    );
-  }
-
-  const zero = new Prisma.Decimal('0.00');
-
-  // 4. Compute Current Cash Balance of Source Account
-  const fromOpening = new Prisma.Decimal(fromAccount.opening_balance.toString());
-  let fromReceived = zero;
-  let fromPaid = zero;
-
-  if (typeof prismaClient.transaction?.aggregate === 'function') {
-    const receiveAgg = await prismaClient.transaction.aggregate({
-      where: {
-        user_id: userId,
-        primary_account_id: fromAccountId,
-        form: 'RECEIVE_MONEY'
-      },
-      _sum: { total_amount: true }
-    });
-    if (receiveAgg._sum?.total_amount) {
-      fromReceived = new Prisma.Decimal(receiveAgg._sum.total_amount.toString());
-    }
-
-    const payAgg = await prismaClient.transaction.aggregate({
-      where: {
-        user_id: userId,
-        primary_account_id: fromAccountId,
-        form: 'PAYMENT_CHARGE'
-      },
-      _sum: { total_amount: true }
-    });
-    if (payAgg._sum?.total_amount) {
-      fromPaid = new Prisma.Decimal(payAgg._sum.total_amount.toString());
-    }
-  }
-
-  const currentCashBalance = fromOpening.add(fromReceived).sub(fromPaid);
-
-  // 5. Compute Current Debt of Target Credit Card Account
-  const toOpening = new Prisma.Decimal(toAccount.opening_balance.toString());
-  let toCharges = zero;
-  let toRepayments = zero;
-
-  if (typeof prismaClient.transaction?.aggregate === 'function') {
-    const chargeAgg = await prismaClient.transaction.aggregate({
-      where: {
-        user_id: userId,
-        primary_account_id: toAccountId,
-        form: 'PAYMENT_CHARGE'
-      },
-      _sum: { total_amount: true }
-    });
-    if (chargeAgg._sum?.total_amount) {
-      toCharges = new Prisma.Decimal(chargeAgg._sum.total_amount.toString());
-    }
-  }
-
-  if (typeof prismaClient.allocationLine?.aggregate === 'function') {
-    const repayAgg = await prismaClient.allocationLine.aggregate({
-      where: {
-        target_account_id: toAccountId,
-        target_account: {
-          type: 'LOAN_TAKEN',
-          user_id: userId
-        },
-        transaction: {
-          user_id: userId,
-          form: 'PAYMENT_CHARGE',
-          primary_account: {
-            type: 'CASH',
-            user_id: userId
-          }
-        }
-      },
-      _sum: { amount: true }
-    });
-    if (repayAgg._sum?.amount) {
-      toRepayments = new Prisma.Decimal(repayAgg._sum.amount.toString());
-    }
-  }
-
-  const currentDebt = toOpening.add(toCharges).sub(toRepayments);
-
-  // 6. Repayment Boundary Checks (AC-07-4, AC-07-5)
-  if (amountDecimal.greaterThan(currentDebt)) {
-    throw new RepaymentError(
-      `Repayment amount of ${amountDecimal.toFixed(2)} exceeds outstanding debt of ${currentDebt.toFixed(2)}.`,
-      422,
-      'REPAYMENT_EXCEEDS_DEBT'
-    );
-  }
-
-  if (amountDecimal.greaterThan(currentCashBalance)) {
-    throw new RepaymentError(
-      `Insufficient funds in source account. Available: ${currentCashBalance.toFixed(2)}, requested: ${amountDecimal.toFixed(2)}.`,
-      422,
-      'INSUFFICIENT_FUNDS'
-    );
-  }
-
-  // 7. Atomic Transaction Execution
+  // 3. Execute all reads, locks, validations, and writes inside an atomic transaction
   return await prismaClient.$transaction(async (tx) => {
-    // Atomically lock opening balances for both accounts (BR-01, FR-05)
+    // A. Acquire pessimistic row-level write lock (SELECT ... FOR UPDATE in sorted order)
+    await acquireAccountRowLocks(tx, [fromAccountId, toAccountId], userId);
+
+    // B. Verify Account Ownership & Types under row lock
+    const fromAccount = await tx.account.findFirst({
+      where: { id: fromAccountId, user_id: userId }
+    });
+    if (!fromAccount) {
+      throw new RepaymentError(
+        `Source account [${fromAccountId}] was not found or does not belong to the current user.`,
+        404,
+        'NOT_FOUND'
+      );
+    }
+
+    const toAccount = await tx.account.findFirst({
+      where: { id: toAccountId, user_id: userId }
+    });
+    if (!toAccount) {
+      throw new RepaymentError(
+        `Target account [${toAccountId}] was not found or does not belong to the current user.`,
+        404,
+        'NOT_FOUND'
+      );
+    }
+
+    if (fromAccount.type !== 'CASH') {
+      throw new RepaymentError(
+        `Source account must be of type CASH, received: ${fromAccount.type}.`,
+        400,
+        'INVALID_ACCOUNT_TYPE'
+      );
+    }
+
+    if (toAccount.type !== 'LOAN_TAKEN') {
+      throw new RepaymentError(
+        `Target account must be of type LOAN_TAKEN, received: ${toAccount.type}.`,
+        400,
+        'INVALID_ACCOUNT_TYPE'
+      );
+    }
+
+    const zero = new Prisma.Decimal('0.00');
+
+    // C. Compute Current Cash Balance under lock
+    const fromOpening = new Prisma.Decimal(fromAccount.opening_balance.toString());
+    let fromReceived = zero;
+    let fromPaid = zero;
+
+    if (typeof tx.transaction?.aggregate === 'function') {
+      const receiveAgg = await tx.transaction.aggregate({
+        where: {
+          user_id: userId,
+          primary_account_id: fromAccountId,
+          form: 'RECEIVE_MONEY'
+        },
+        _sum: { total_amount: true }
+      });
+      if (receiveAgg._sum?.total_amount) {
+        fromReceived = new Prisma.Decimal(receiveAgg._sum.total_amount.toString());
+      }
+
+      const payAgg = await tx.transaction.aggregate({
+        where: {
+          user_id: userId,
+          primary_account_id: fromAccountId,
+          form: 'PAYMENT_CHARGE'
+        },
+        _sum: { total_amount: true }
+      });
+      if (payAgg._sum?.total_amount) {
+        fromPaid = new Prisma.Decimal(payAgg._sum.total_amount.toString());
+      }
+    }
+
+    const currentCashBalance = fromOpening.add(fromReceived).sub(fromPaid);
+
+    // D. Compute Current Debt under lock
+    const toOpening = new Prisma.Decimal(toAccount.opening_balance.toString());
+    let toCharges = zero;
+    let toRepayments = zero;
+
+    if (typeof tx.transaction?.aggregate === 'function') {
+      const chargeAgg = await tx.transaction.aggregate({
+        where: {
+          user_id: userId,
+          primary_account_id: toAccountId,
+          form: 'PAYMENT_CHARGE'
+        },
+        _sum: { total_amount: true }
+      });
+      if (chargeAgg._sum?.total_amount) {
+        toCharges = new Prisma.Decimal(chargeAgg._sum.total_amount.toString());
+      }
+    }
+
+    if (typeof tx.allocationLine?.aggregate === 'function') {
+      const repayAgg = await tx.allocationLine.aggregate({
+        where: {
+          target_account_id: toAccountId,
+          target_account: {
+            type: 'LOAN_TAKEN',
+            user_id: userId
+          },
+          transaction: {
+            user_id: userId,
+            form: 'PAYMENT_CHARGE',
+            primary_account: {
+              type: 'CASH',
+              user_id: userId
+            }
+          }
+        },
+        _sum: { amount: true }
+      });
+      if (repayAgg._sum?.amount) {
+        toRepayments = new Prisma.Decimal(repayAgg._sum.amount.toString());
+      }
+    }
+
+    const currentDebt = toOpening.add(toCharges).sub(toRepayments);
+
+    // E. Fresh Boundary Checks against locked state (AC-07-4, AC-07-5)
+    if (amountDecimal.greaterThan(currentDebt)) {
+      throw new RepaymentError(
+        `Repayment amount of ${amountDecimal.toFixed(2)} exceeds outstanding debt of ${currentDebt.toFixed(2)}.`,
+        422,
+        'REPAYMENT_EXCEEDS_DEBT'
+      );
+    }
+
+    if (amountDecimal.greaterThan(currentCashBalance)) {
+      throw new RepaymentError(
+        `Insufficient funds in source account. Available: ${currentCashBalance.toFixed(2)}, requested: ${amountDecimal.toFixed(2)}.`,
+        422,
+        'INSUFFICIENT_FUNDS'
+      );
+    }
+
+    // F. Atomically lock opening balances for both accounts (BR-01, FR-05)
     await lockAccounts(tx, [fromAccountId, toAccountId], userId);
 
-    // Create Transaction (form = 'PAYMENT_CHARGE' originating from CASH account)
+    // G. Create Transaction (form = 'PAYMENT_CHARGE' originating from CASH account)
     const transaction = await tx.transaction.create({
       data: {
         user_id: userId,
@@ -416,7 +425,7 @@ export async function recordRepayment(
       }
     });
 
-    // Create exactly 1 AllocationLine targeting the LOAN_TAKEN account (BR-07, BR-08)
+    // H. Create exactly 1 AllocationLine targeting the LOAN_TAKEN account (BR-07, BR-08)
     const allocation = await tx.allocationLine.create({
       data: {
         transaction_id: transaction.id,

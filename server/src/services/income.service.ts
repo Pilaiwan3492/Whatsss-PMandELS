@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma as defaultPrisma } from '../prisma.js';
-import { lockAccounts } from './accountLock.service.js';
+import { lockAccounts, acquireAccountRowLocks } from './accountLock.service.js';
 
 export const MAX_TRANSACTION_AMOUNT = new Prisma.Decimal('9999999999.99');
 
@@ -370,6 +370,7 @@ export async function recordIncome(
 
         // B. Atomically lock opening balance of the primary CASH account (AC-03-3)
         // lockAccounts handles idempotency safely: if already locked, it does not re-write or fail.
+        await acquireAccountRowLocks(tx, [primaryAccount.id, incomeAccount.id], userId);
         await lockAccounts(tx, [primaryAccount.id], userId);
 
         // C. Create Transaction header

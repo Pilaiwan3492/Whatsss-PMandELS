@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma as defaultPrisma } from '../prisma.js';
-import { lockAccounts } from './accountLock.service.js';
+import { lockAccounts, acquireAccountRowLocks } from './accountLock.service.js';
 
 export const MAX_TRANSACTION_AMOUNT = new Prisma.Decimal('9999999999.99');
 
@@ -465,6 +465,7 @@ export async function recordExpense(
         }
 
         // C. Atomically lock opening balances of all involved accounts (AC-03-3)
+        await acquireAccountRowLocks(tx, [primaryAccount.id, ...uniqueTargetIds], userId);
         await lockAccounts(tx, [primaryAccount.id, ...uniqueTargetIds], userId);
 
         // D. Create Transaction header (form: PAYMENT_CHARGE)

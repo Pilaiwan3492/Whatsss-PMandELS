@@ -10,7 +10,7 @@
 
 ## 1. Test Specification Matrix
 
-The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or system-level contract to an executable automated test case (`TEST-XX`), specifying test level, preconditions, inputs, and expected outcomes across 31 defined test cases (28 core domain and accounting tests plus 3 dedicated security boundary tests).
+The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or system-level contract to an executable automated test case (`TEST-XX`), specifying test level, preconditions, inputs, and expected outcomes across 33 defined test cases (30 core domain and accounting tests plus 3 dedicated security boundary tests).
 
 | Test ID | Linked AC / System Contract | Target Feature | Test Level | Preconditions & Input | Expected Result |
 |---|---|:---:|:---:|---|---|
@@ -43,6 +43,8 @@ The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or s
 | **`TEST-REPAY-04`** | `AC-07-5` | `F-07` | Integration | Dedicated fixture: Bank = `27000.00`, Debt = `50000.00`. Submit repayment request of `30000.00 THB`. | HTTP `422 Unprocessable Entity` (`INSUFFICIENT_FUNDS`), zero records written, balances unchanged. |
 | **`TEST-REPAY-05`** | `AC-07-3` | `F-07` | Integration | Dedicated fixture: Bank = `27000.00`, Debt = `3000.00`. Submit partial repayment of `1500.00 THB`. | HTTP `201 Created`, Debt decreases to `1500.00`, Bank decreases to `25500.00`, zero Expense impact. |
 | **`TEST-REPAY-06`** | `AC-07-6` | `F-07` | Integration | Submit repayment with non-positive amount ($\le 0.00$) or non-numeric amount. | HTTP `400 Bad Request` (`INVALID_AMOUNT`), zero transaction recorded. |
+| **`TEST-REPAY-CONCURRENT-DEBT`** | `AC-07-4`, `BR-07`, `NFR-DATA-01` | `F-07` | Integration / Live DB | Dedicated fixture: Debt = `3000.00`, Bank = `10000.00`. Two concurrent repayment requests of `2000.00 THB` each submitted simultaneously with pessimistic row locks. | Exactly 1 request succeeds with HTTP `201 Created`; 1 request fails with HTTP `422 Unprocessable Entity` (`REPAYMENT_EXCEEDS_DEBT`). Exactly 1 Transaction and 1 AllocationLine created; final debt is `1000.00 THB` and never negative. |
+| **`TEST-REPAY-CONCURRENT-FUNDS`** | `AC-07-5`, `BR-07`, `NFR-DATA-01` | `F-07` | Integration / Live DB | Dedicated fixture: Debt = `5000.00`, Bank = `3000.00`. Two concurrent repayment requests of `2000.00 THB` each submitted simultaneously with pessimistic row locks. | Exactly 1 request succeeds with HTTP `201 Created`; 1 request fails with HTTP `422 Unprocessable Entity` (`INSUFFICIENT_FUNDS`). Exactly 1 Transaction and 1 AllocationLine created; final bank balance is `1000.00 THB` and never negative. |
 | **`TEST-BAL-01`** | `AC-08-1` | `F-08` | Unit | Execute balance calculator service against the Golden Journey events. | Final balances: Bank `27000.00`, CC Debt `0.00`, Income `20000.00`, Expense `3000.00`. |
 | **`TEST-HIST-01`** | `AC-09-1` | `F-09` | Integration | Query `GET /api/transactions` for `user_demo`. | HTTP `200 OK`, returns exactly 3 transactions and 4 allocation lines total. |
 | **`TEST-PERSIST-01`** | `AC-09-2`, `NFR-DATA-01`| `F-09` | Integration | Restart backend server process without re-seeding database and re-query endpoints. | Exactly 3 committed transactions, 4 allocation lines, and all balances match post-journey state identically. |

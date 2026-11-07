@@ -30,6 +30,7 @@ function createAuthCookie(userId: string, username: string, role: 'USER' | 'ADMI
 // Setup Mock Prisma for repayment integration tests
 vi.mock('../../src/prisma.js', () => {
   const txClient = {
+    $queryRaw: vi.fn(async () => []),
     account: {
       findFirst: vi.fn(async ({ where }) => {
         return (

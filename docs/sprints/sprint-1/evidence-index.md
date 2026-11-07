@@ -4,21 +4,21 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part F: Working Sprint 1 and Verification)  
-> **Status:** IN PROGRESS — Work Package 1 (WP-01), Work Package 2 (WP-02), and Work Package 3 (WP-03) Merged into sprint-1; Work Package 4 (WP-04) Implemented & Verified on branch feat/credit-purchase-split-allocation (Awaiting Peer Review and Approval; WP-05 and WP-06 Pending Implementation)  
+> **Status:** IN PROGRESS — Work Package 1 (WP-01), Work Package 2 (WP-02), Work Package 3 (WP-03), and Work Package 4 (WP-04) Merged into sprint-1; Work Package 5 (WP-05) Implemented & Verified on branch feat/credit-card-repayment (Awaiting Peer Review and Approval; WP-06 Pending Implementation)  
 
 ---
 
 ## 1. Release Identification
 
-* **Assessed Implementation Baseline Commit:** Branch `feat/credit-purchase-split-allocation` (WP-04 Credit Card Purchase & Split Allocation Engine)
-* **Base Branch Commit:** `119fed2` (`sprint-1` merge of PR #10)
+* **Assessed Implementation Baseline Commit:** Branch `feat/credit-card-repayment` (WP-05 Credit Card Debt Settlement / Repayment)
+* **Base Branch Commit:** `2c6805c` (`sprint-1` merge of PR #11)
 * **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
-* **Target Issue:** [GitHub Issue #5](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/5)
+* **Target Issue:** [GitHub Issue #6](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/6)
 * **Assignee:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Test Environment:** Node.js v20+, PostgreSQL 16 (GitHub Actions Service Container / Docker Compose)
 
-> **Sprint 1 Scope Note:** This record reflects the implementation verification for WP-01 (Authentication & Session Security), WP-02 (Account Model & Opening Balance), WP-03 (Income Processing & Ledger Integration), and WP-04 (Credit Card Purchase & Split Allocation Engine). WP-05 (Debt Repayment) and WP-06 (Summary, History & Golden Domain Journey) will follow in sequence.
+> **Sprint 1 Scope Note:** This record reflects the implementation verification for WP-01 (Authentication & Session Security), WP-02 (Account Model & Opening Balance), WP-03 (Income Processing & Ledger Integration), and WP-04 (Credit Card Purchase & Split Allocation Engine), and WP-05 (Credit Card Debt Settlement / Repayment). WP-06 (Summary, History & Golden Domain Journey) will follow in sequence.
 
 ---
 
@@ -28,16 +28,20 @@
   * Backend: `npm test` (within `server/`)
   * Frontend: `npm test` (within `client/`)
 * **TDD Red/Green Implementation Evidence:**
-  * **Red Commit (`c7257b0`):** Test specifications and failing test suites added for F-05 credit purchase and F-06 split allocation engine.
-  * **Green Commit (`973067f`):** Implementation of `expense.service.ts`, `transaction.controller.ts`, atomic balance locking, and Decimal calculation satisfying all test assertions.
+  * **Red Commit (`f0f7878`):** Test specifications and failing test suites added for F-07 credit card repayment engine and boundary validations.
+  * **Green Commit (`558b307`):** Implementation of `repayment.service.ts`, `transaction.controller.ts`, atomic balance locking, and Decimal calculation satisfying all test assertions.
+  * **Concurrency & Row Lock Hardening Commit:** Pessimistic row-level locking (`acquireAccountRowLocks`) inside `$transaction` and live concurrent tests (`TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`).
 * **Automated Test Execution Summary:**
   * **Local Suite Execution (without live DB):**
-    * Backend: 237 passed, 28 skipped across 19 test files (84 Unit tests passed across 7 suites; 153 Integration tests passed across 12 suites).
-    * Frontend: 33 passed across 4 component test files (13 in `ExpenseForm.test.tsx`, 8 in `AccountListPage.test.tsx`, 8 in `IncomeForm.test.tsx`, 4 in `ProtectedRoute.test.tsx`).
+    * Backend: 261 passed, 37 skipped across 21 test files (84 Unit tests passed across 7 suites; 177 Integration tests passed across 14 suites).
+    * Frontend: 43 passed across 5 component test files (10 in `RepaymentForm.test.tsx`, 13 in `ExpenseForm.test.tsx`, 8 in `AccountListPage.test.tsx`, 8 in `IncomeForm.test.tsx`, 4 in `ProtectedRoute.test.tsx`).
   * **GitHub Actions CI Environment (Live PostgreSQL Service Container, `ALLOW_LIVE_DB_TESTS=true`):**
-    * Backend: 265 passed, 0 skipped across 19 test files (including 30 live PostgreSQL integration tests across `db-account.test.ts`, `db-income.test.ts`, `db-expense.test.ts`, and `db-password.test.ts`).
-    * Frontend: 33 passed across 4 test files.
+    * Backend: 298 passed, 0 skipped across 21 test files (including 39 live PostgreSQL integration tests across `db-account.test.ts`, `db-income.test.ts`, `db-expense.test.ts`, `db-repayment.test.ts`, and `db-password.test.ts`).
+    * Frontend: 43 passed across 5 test files.
   * **Detailed Suite Breakdown:**
+    * `repayment.test.ts`: 24 passed (Mocked Prisma & HTTP API; records full CC repayment of 3,000.00 THB reducing Bank and Debt atomically with 1 allocation line targeting LOAN_TAKEN, verifies expense exclusion invariant per BR-08, supports partial repayment, rejects repayment exceeding debt with 422 REPAYMENT_EXCEEDS_DEBT, rejects insufficient funds with 422 INSUFFICIENT_FUNDS, rejects non-positive/over-precision/non-numeric amount with 400 INVALID_AMOUNT, rejects cross-tenant accounts with 404 NOT_FOUND per BR-01, rejects unauthenticated requests with 401 per BR-09, rejects ADMIN with 403 per BR-10, locks opening balance atomically)
+    * `db-repayment.test.ts`: 9 passed in CI (skipped locally without live PostgreSQL; verifies live PostgreSQL persistence of Transaction form PAYMENT_CHARGE and child AllocationLine targeting LOAN_TAKEN, atomic reduction of Bank and Debt balances, expense exclusion invariant BR-08, boundary 422 rejection on exceeding debt or insufficient funds, concurrent race condition serialization via pessimistic row locks [TEST-REPAY-CONCURRENT-DEBT, TEST-REPAY-CONCURRENT-FUNDS], mid-flight rollback atomicity [TEST-REPAY-ATOM], and exact decimal arithmetic [TEST-REPAY-DECIMAL])
+    * `RepaymentForm.test.tsx`: 10 passed (TEST-UI-REPAY-01..10: rendering repayment modal with source CASH and target LOAN_TAKEN accounts, full repayment submission, partial repayment submission, quick-fill "Pay Full Debt" button, live warning badge when repayment exceeds debt, live warning badge when insufficient bank funds, disabled submit button on invalid/over-debt/insufficient-funds, formatted currency preview, error banner display on 422/400 API response, and modal dismissal/reset)
     * `splitAllocation.test.ts`: 15 passed (BR-05/BR-06 split balance integrity, AC-06-3 duplicate category rejection, 422 ALLOCATION_SUM_MISMATCH on unbalanced sums, arbitrary-precision Decimal arithmetic, IEEE-754 floating point hazard prevention [0.10 + 0.20 === 0.30], single and multi-line validations, syntactic boundary checks, and over-precision rejection)
     * `accountLock.test.ts`: 9 passed
     * `testSafety.test.ts`: 27 passed
@@ -136,6 +140,8 @@
 | `TEST-REPAY-04` | `AC-07-5` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Repayment request of 30,000.00 THB when bank balance is 27,000.00 THB rejected with 422 INSUFFICIENT_FUNDS, zero records written) | WP-05 Branch |
 | `TEST-REPAY-05` | `AC-07-3` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Partial repayment of 1,500.00 THB against 3,000.00 THB debt reduces debt to 1,500.00 THB and bank balance to 25,500.00 THB with zero expense impact) | WP-05 Branch |
 | `TEST-REPAY-06` | `AC-07-6` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Non-positive amount <= 0, alphanumeric "1000abc", exponent notation "1e3", or decimal precision >2 places rejected with 400 INVALID_AMOUNT) | WP-05 Branch |
+| `TEST-REPAY-CONCURRENT-DEBT` | `AC-07-4`, `BR-07`, `NFR-DATA-01` | `server/tests/integration/db-repayment.test.ts` | Passed — Live PostgreSQL HTTP API (Two concurrent repayment requests of 2,000.00 THB against 3,000.00 THB debt serialized via row-level locks; exactly 1 succeeds [201], 1 rejected with 422 REPAYMENT_EXCEEDS_DEBT; remaining debt is 1,000.00 THB and never negative; writes exactly 1 Transaction and 1 AllocationLine) | WP-05 Branch |
+| `TEST-REPAY-CONCURRENT-FUNDS` | `AC-07-5`, `BR-07`, `NFR-DATA-01` | `server/tests/integration/db-repayment.test.ts` | Passed — Live PostgreSQL HTTP API (Two concurrent repayment requests of 2,000.00 THB with only 3,000.00 THB bank balance serialized via row-level locks; exactly 1 succeeds [201], 1 rejected with 422 INSUFFICIENT_FUNDS; remaining bank balance is 1,000.00 THB and never negative; writes exactly 1 Transaction and 1 AllocationLine) | WP-05 Branch |
 | `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Cross-tenant source or target accounts return 404 NOT_FOUND, 0 rows written) | WP-05 Branch |
 | `TEST-SEC-02` | `AC-02-1`, `BR-09` | `server/tests/integration/repayment.test.ts` | Passed — Mocked Prisma (Unauthenticated POST /api/transactions/repayment returns 401 UNAUTHORIZED) | WP-05 Branch |
 | `TEST-SEC-03` | `AC-02-2`, `BR-10` | `server/tests/integration/repayment.test.ts` | Passed — Mocked Prisma (ADMIN caller returns 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN with zero data leak) | WP-05 Branch |

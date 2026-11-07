@@ -14,7 +14,7 @@ interface AccountSnapshot {
 
 /**
  * Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-05)
- * Target: TEST-REPAY-01, TEST-REPAY-02, TEST-REPAY-03, TEST-REPAY-04, TEST-REPAY-05, TEST-REPAY-06, TEST-REPAY-ATOM, TEST-REPAY-DECIMAL, NFR-DATA-01
+ * Target: TEST-REPAY-01..06, TEST-REPAY-CONCURRENT-DEBT, TEST-REPAY-CONCURRENT-FUNDS, TEST-REPAY-ATOM, TEST-REPAY-DECIMAL, NFR-DATA-01
  *
  * SAFETY INVARIANTS:
  * - Live database tests run ONLY in CI or when ALLOW_LIVE_DB_TESTS=true is explicitly configured.
@@ -93,6 +93,14 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
     const user = await prisma.user.findUnique({ where: { username: 'user_demo' } });
     if (user) {
       demoUserId = user.id;
+      // Clean up any dangling test transactions for user_demo to ensure isolation
+      await prisma.allocationLine.deleteMany({
+        where: { transaction: { user_id: user.id } }
+      });
+      await prisma.transaction.deleteMany({
+        where: { user_id: user.id }
+      });
+
       const cc = await prisma.account.findFirst({
         where: { user_id: user.id, name: 'Visa Credit Card' }
       });
@@ -199,7 +207,7 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
         description: 'Temporary Test Debt'
       }
     });
-    const purchaseAlloc = await prisma.allocationLine.create({
+    await prisma.allocationLine.create({
       data: {
         transaction_id: purchaseTxn.id,
         target_account_id: demoDiningAccount.id,
@@ -512,5 +520,209 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
 
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('TEST-REPAY-CONCURRENT-DEBT (Live DB): serializes concurrent repayments on 3000 THB debt with two 2000 THB requests; exactly 1 succeeds and 1 fails with REPAYMENT_EXCEEDS_DEBT', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    const checkingSnap = await captureAccountSnapshot(demoCheckingAccount.id);
+    const ccSnap = await captureAccountSnapshot(demoCreditCardAccount.id);
+    registerAccountRestore(checkingSnap);
+    registerAccountRestore(ccSnap);
+
+    // Setup initial state: Bank = 10,000 THB, Debt = 3,000 THB
+    await prisma.account.update({
+      where: { id: demoCheckingAccount.id },
+      data: { opening_balance: new Prisma.Decimal('10000.00'), is_opening_locked: false }
+    });
+
+    const purchaseTxn = await prisma.transaction.create({
+      data: {
+        user_id: demoUserId,
+        primary_account_id: demoCreditCardAccount.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('3000.00'),
+        transaction_date: new Date('2026-11-06'),
+        description: 'Debt for concurrent test'
+      }
+    });
+    await prisma.allocationLine.create({
+      data: {
+        transaction_id: purchaseTxn.id,
+        target_account_id: demoDiningAccount.id,
+        amount: new Prisma.Decimal('3000.00'),
+        notes: 'Dining'
+      }
+    });
+    registerTransactionCleanup(purchaseTxn.id);
+
+    // Send two concurrent repayment requests of 2,000.00 THB each
+    const req1 = request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', demoUserSessionCookie)
+      .send({
+        from_account_id: demoCheckingAccount.id,
+        to_account_id: demoCreditCardAccount.id,
+        amount: 2000.00,
+        transaction_date: '2026-11-06',
+        description: 'Concurrent payment 1'
+      });
+
+    const req2 = request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', demoUserSessionCookie)
+      .send({
+        from_account_id: demoCheckingAccount.id,
+        to_account_id: demoCreditCardAccount.id,
+        amount: 2000.00,
+        transaction_date: '2026-11-06',
+        description: 'Concurrent payment 2'
+      });
+
+    const [res1, res2] = await Promise.all([req1, req2]);
+
+    if (res1.status === 201 && res1.body?.data?.transaction?.id) {
+      registerTransactionCleanup(res1.body.data.transaction.id);
+    }
+    if (res2.status === 201 && res2.body?.data?.transaction?.id) {
+      registerTransactionCleanup(res2.body.data.transaction.id);
+    }
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([201, 422]);
+
+    const successRes = res1.status === 201 ? res1 : res2;
+    const failedRes = res1.status === 422 ? res1 : res2;
+
+    expect(successRes.body.success).toBe(true);
+
+    expect(failedRes.body.success).toBe(false);
+    expect(failedRes.body.error.code).toBe('REPAYMENT_EXCEEDS_DEBT');
+
+    // Verify exactly 1 repayment transaction was recorded in PostgreSQL
+    const repaymentTxns = await prisma.transaction.findMany({
+      where: {
+        user_id: demoUserId,
+        primary_account_id: demoCheckingAccount.id,
+        form: 'PAYMENT_CHARGE'
+      }
+    });
+    expect(repaymentTxns).toHaveLength(1);
+
+    // Verify debt is exactly 1000.00 THB (not negative)
+    const reportRes = await request(app)
+      .get('/api/reports/summary')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', demoUserSessionCookie);
+    expect(reportRes.status).toBe(200);
+    expect(Number(reportRes.body.data.credit_debt)).toBe(1000.00);
+    expect(Number(reportRes.body.data.bank_balance)).toBe(8000.00);
+  });
+
+  it('TEST-REPAY-CONCURRENT-FUNDS (Live DB): serializes concurrent repayments with insufficient bank balance; exactly 1 succeeds and 1 fails with INSUFFICIENT_FUNDS', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    const checkingSnap = await captureAccountSnapshot(demoCheckingAccount.id);
+    const ccSnap = await captureAccountSnapshot(demoCreditCardAccount.id);
+    registerAccountRestore(checkingSnap);
+    registerAccountRestore(ccSnap);
+
+    // Setup initial state: Bank = 3,000 THB, Debt = 5,000 THB
+    await prisma.account.update({
+      where: { id: demoCheckingAccount.id },
+      data: { opening_balance: new Prisma.Decimal('3000.00'), is_opening_locked: false }
+    });
+
+    const purchaseTxn = await prisma.transaction.create({
+      data: {
+        user_id: demoUserId,
+        primary_account_id: demoCreditCardAccount.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('5000.00'),
+        transaction_date: new Date('2026-11-06'),
+        description: 'Large debt for concurrent funds test'
+      }
+    });
+    await prisma.allocationLine.create({
+      data: {
+        transaction_id: purchaseTxn.id,
+        target_account_id: demoDiningAccount.id,
+        amount: new Prisma.Decimal('5000.00'),
+        notes: 'Dining'
+      }
+    });
+    registerTransactionCleanup(purchaseTxn.id);
+
+    // Send two concurrent repayment requests of 2,000.00 THB each
+    const req1 = request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', demoUserSessionCookie)
+      .send({
+        from_account_id: demoCheckingAccount.id,
+        to_account_id: demoCreditCardAccount.id,
+        amount: 2000.00,
+        transaction_date: '2026-11-06',
+        description: 'Concurrent funds 1'
+      });
+
+    const req2 = request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', demoUserSessionCookie)
+      .send({
+        from_account_id: demoCheckingAccount.id,
+        to_account_id: demoCreditCardAccount.id,
+        amount: 2000.00,
+        transaction_date: '2026-11-06',
+        description: 'Concurrent funds 2'
+      });
+
+    const [res1, res2] = await Promise.all([req1, req2]);
+
+    if (res1.status === 201 && res1.body?.data?.transaction?.id) {
+      registerTransactionCleanup(res1.body.data.transaction.id);
+    }
+    if (res2.status === 201 && res2.body?.data?.transaction?.id) {
+      registerTransactionCleanup(res2.body.data.transaction.id);
+    }
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([201, 422]);
+
+    const successRes = res1.status === 201 ? res1 : res2;
+    const failedRes = res1.status === 422 ? res1 : res2;
+
+    expect(successRes.body.success).toBe(true);
+
+    expect(failedRes.body.success).toBe(false);
+    expect(failedRes.body.error.code).toBe('INSUFFICIENT_FUNDS');
+
+    // Verify exactly 1 repayment transaction was recorded
+    const repaymentTxns = await prisma.transaction.findMany({
+      where: {
+        user_id: demoUserId,
+        primary_account_id: demoCheckingAccount.id,
+        form: 'PAYMENT_CHARGE'
+      }
+    });
+    expect(repaymentTxns).toHaveLength(1);
+
+    // Verify bank balance is exactly 1000.00 THB (not negative)
+    const reportRes = await request(app)
+      .get('/api/reports/summary')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', demoUserSessionCookie);
+    expect(reportRes.status).toBe(200);
+    expect(Number(reportRes.body.data.bank_balance)).toBe(1000.00);
+    expect(Number(reportRes.body.data.credit_debt)).toBe(3000.00);
   });
 });

@@ -182,15 +182,16 @@ As an authenticated user, I want to record repayment of my credit card debt from
 - [x] Record transaction (Transaction 3 of Golden Journey) with 1 allocation line targeting the credit card account (`Loan Taken`).
 - [x] Atomically decrease cash balance by 3000.00 and decrease debt balance by 3000.00 (`BR-07`).
 - [x] Enforce repayment boundary validations: reject repayment amount exceeding outstanding debt with HTTP 422 (`REPAYMENT_EXCEEDS_DEBT`), reject insufficient funds with HTTP 422 (`INSUFFICIENT_FUNDS`), and reject non-positive amounts with HTTP 400 (`INVALID_AMOUNT`).
+- [x] Enforce concurrency safety and serializable database row locks (`SELECT ... FOR UPDATE` in ascending ID order) in financial transactions to prevent race conditions during concurrent repayments.
 - [x] Ensure repayment allocation is classified under Loan Taken and excluded from expense summaries (`BR-08`).
-- [x] Implement automated integration and boundary tests (`TEST-REPAY-01..06`).
+- [x] Implement automated integration and boundary tests (`TEST-REPAY-01..06`, `TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`, `TEST-REPAY-ATOM`, `TEST-REPAY-DECIMAL`).
 
 #### Acceptance Criteria Checklist
 - [x] `AC-07-1`: Repayment of 3000.00 THB returns 201 Created, creates 1 allocation line targeting Loan Taken, decreases bank balance to 27000.00, and decreases debt to 0.00 (`TEST-REPAY-01`).
 - [x] `AC-07-2`: Expense summary verified unchanged at 3000.00 THB (`TEST-REPAY-02`, `BR-08`).
 - [x] `AC-07-3`: Partial repayment strictly less than debt reduces debt proportionally (`TEST-REPAY-05`).
-- [x] `AC-07-4`: Repayment amount strictly exceeding outstanding debt returns 422 Unprocessable Entity (`TEST-REPAY-03`).
-- [x] `AC-07-5`: Repayment amount exceeding available bank funds returns 422 Unprocessable Entity (`TEST-REPAY-04`).
+- [x] `AC-07-4`: Repayment amount strictly exceeding outstanding debt returns 422 Unprocessable Entity (`TEST-REPAY-03`, `TEST-REPAY-CONCURRENT-DEBT`).
+- [x] `AC-07-5`: Repayment amount exceeding available bank funds returns 422 Unprocessable Entity (`TEST-REPAY-04`, `TEST-REPAY-CONCURRENT-FUNDS`).
 - [x] `AC-07-6`: Non-positive repayment amount returns 400 Bad Request (`TEST-REPAY-06`).
 
 ---
