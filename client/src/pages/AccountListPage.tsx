@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { getAccounts, updateOpeningBalance, Account, AccountType } from '../api/accountApi.js';
 import { IncomeForm } from '../components/IncomeForm.js';
 import { ExpenseForm } from '../components/ExpenseForm.js';
+import { RepaymentForm } from '../components/RepaymentForm.js';
 
 interface AccountGroupConfig {
   type: AccountType;
@@ -60,6 +61,10 @@ export const AccountListPage: React.FC = () => {
   // Expense form modal state (WP-04)
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState<boolean>(false);
 
+  // Repayment form modal state (WP-05)
+  const [isRepaymentModalOpen, setIsRepaymentModalOpen] = useState<boolean>(false);
+  const [repaymentInitialCCId, setRepaymentInitialCCId] = useState<string | undefined>(undefined);
+
   const fetchAccounts = async () => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -89,6 +94,11 @@ export const AccountListPage: React.FC = () => {
     setSelectedAccount(null);
     setBalanceInput('');
     setModalError(null);
+  };
+
+  const handleOpenRepayment = (creditCardId?: string) => {
+    setRepaymentInitialCCId(creditCardId);
+    setIsRepaymentModalOpen(true);
   };
 
   const handleSubmitOpeningBalance = async (e: React.FormEvent) => {
@@ -141,17 +151,17 @@ export const AccountListPage: React.FC = () => {
 
   return (
     <div className="container py-4">
-      <div className="d-flex justify-content-between align-items-center mb-4">
+      <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
         <div>
           <h2 className="fw-bold mb-1">Financial Accounts</h2>
           <p className="text-muted mb-0">
             Manage your financial accounts grouped by type and configure initial opening balances.
           </p>
         </div>
-        <div>
+        <div className="d-flex gap-2">
           <button
             type="button"
-            className="btn btn-success fw-semibold shadow-sm me-2"
+            className="btn btn-success fw-semibold shadow-sm"
             onClick={() => setIsIncomeModalOpen(true)}
           >
             Record Income
@@ -162,6 +172,13 @@ export const AccountListPage: React.FC = () => {
             onClick={() => setIsExpenseModalOpen(true)}
           >
             Record Purchase
+          </button>
+          <button
+            type="button"
+            className="btn btn-outline-danger fw-semibold shadow-sm"
+            onClick={() => handleOpenRepayment()}
+          >
+            Pay Credit Card
           </button>
         </div>
       </div>
@@ -236,21 +253,32 @@ export const AccountListPage: React.FC = () => {
                             )}
                           </div>
 
-                          <div className="mt-auto pt-2 border-top d-flex justify-content-between align-items-center">
-                            <span className="small text-muted">Status:</span>
-                            {acc.is_opening_locked ? (
-                              <span
-                                className="badge bg-secondary"
-                                title="Opening balance is locked permanently following first transaction"
-                              >
-                                Opening balance locked
-                              </span>
-                            ) : (
+                          <div className="mt-auto pt-2 border-top d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <div className="d-flex align-items-center gap-2">
+                              <span className="small text-muted">Status:</span>
+                              {acc.is_opening_locked ? (
+                                <span
+                                  className="badge bg-secondary"
+                                  title="Opening balance is locked permanently following first transaction"
+                                >
+                                  Opening balance locked
+                                </span>
+                              ) : (
+                                <button
+                                  className="btn btn-outline-primary btn-sm"
+                                  onClick={() => handleOpenModal(acc)}
+                                >
+                                  Set Opening Balance
+                                </button>
+                              )}
+                            </div>
+
+                            {acc.type === 'LOAN_TAKEN' && Number(acc.current_balance ?? 0) > 0 && (
                               <button
-                                className="btn btn-outline-primary btn-sm"
-                                onClick={() => handleOpenModal(acc)}
+                                className="btn btn-sm btn-outline-danger"
+                                onClick={() => handleOpenRepayment(acc.id)}
                               >
-                                Set Opening Balance
+                                Pay Debt
                               </button>
                             )}
                           </div>
@@ -280,6 +308,17 @@ export const AccountListPage: React.FC = () => {
         accounts={accounts}
         isOpen={isExpenseModalOpen}
         onClose={() => setIsExpenseModalOpen(false)}
+        onSuccess={() => {
+          fetchAccounts();
+        }}
+      />
+
+      {/* Record Credit Card Repayment Modal (WP-05) */}
+      <RepaymentForm
+        accounts={accounts}
+        isOpen={isRepaymentModalOpen}
+        initialCreditCardId={repaymentInitialCCId}
+        onClose={() => setIsRepaymentModalOpen(false)}
         onSuccess={() => {
           fetchAccounts();
         }}
