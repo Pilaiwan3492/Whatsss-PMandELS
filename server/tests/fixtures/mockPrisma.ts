@@ -28,6 +28,27 @@ export interface MockAccountRecord {
   updated_at: Date;
 }
 
+export type TransactionForm = 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
+
+export interface MockTransactionRecord {
+  id: string;
+  user_id: string;
+  primary_account_id: string;
+  form: TransactionForm;
+  total_amount: Prisma.Decimal;
+  transaction_date: Date;
+  description: string | null;
+  created_at: Date;
+}
+
+export interface MockAllocationLineRecord {
+  id: string;
+  transaction_id: string;
+  target_account_id: string;
+  amount: Prisma.Decimal;
+  notes: string | null;
+}
+
 export const mockUsers: MockUserRecord[] = [
   {
     id: 'user-a-uuid',
@@ -224,6 +245,9 @@ export let mockAccounts: MockAccountRecord[] = JSON.parse(JSON.stringify(INITIAL
   updated_at: new Date(acc.updated_at)
 }));
 
+export let mockTransactions: MockTransactionRecord[] = [];
+export let mockAllocationLines: MockAllocationLineRecord[] = [];
+
 export function resetMockUsers(): void {
   mockUsers[0].is_active = true;
   mockUsers[0].role = 'USER';
@@ -241,6 +265,11 @@ export function resetMockAccounts(): void {
     created_at: new Date(acc.created_at),
     updated_at: new Date(acc.updated_at)
   }));
+}
+
+export function resetMockTransactions(): void {
+  mockTransactions = [];
+  mockAllocationLines = [];
 }
 
 export function findMockUser(criteria: { username?: string; email?: string; id?: string }) {

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getAccounts, updateOpeningBalance, Account, AccountType } from '../api/accountApi.js';
+import { IncomeForm } from '../components/IncomeForm.js';
 
 interface AccountGroupConfig {
   type: AccountType;
@@ -51,6 +52,9 @@ export const AccountListPage: React.FC = () => {
   const [balanceInput, setBalanceInput] = useState<string>('');
   const [modalError, setModalError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Income form modal state
+  const [isIncomeModalOpen, setIsIncomeModalOpen] = useState<boolean>(false);
 
   const fetchAccounts = async () => {
     setIsLoading(true);
@@ -106,6 +110,7 @@ export const AccountListPage: React.FC = () => {
 
     setIsSubmitting(true);
     setModalError(null);
+
     try {
       const updated = await updateOpeningBalance(selectedAccount.id, num);
       setAccounts((prev) =>
@@ -113,20 +118,17 @@ export const AccountListPage: React.FC = () => {
       );
       handleCloseModal();
     } catch (err: any) {
-      const apiCode = err?.response?.data?.error?.code;
-      const apiMessage = err?.response?.data?.error?.message;
-      if (apiCode === 'OPENING_BALANCE_LOCKED') {
-        setModalError('Opening balance is locked permanently following first transaction.');
-      } else {
-        setModalError(apiMessage || 'Failed to update opening balance.');
-      }
+      setModalError(
+        err?.response?.data?.error?.message ||
+        'Failed to update opening balance. Please try again.'
+      );
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('th-TH', {
       style: 'currency',
       currency: 'THB',
       minimumFractionDigits: 2
@@ -141,6 +143,15 @@ export const AccountListPage: React.FC = () => {
           <p className="text-muted mb-0">
             Manage your financial accounts grouped by type and configure initial opening balances.
           </p>
+        </div>
+        <div>
+          <button
+            type="button"
+            className="btn btn-success fw-semibold shadow-sm"
+            onClick={() => setIsIncomeModalOpen(true)}
+          >
+            Record Income
+          </button>
         </div>
       </div>
 
@@ -184,10 +195,24 @@ export const AccountListPage: React.FC = () => {
                           </div>
 
                           <div className="my-3">
-                            <span className="text-muted small d-block">Opening Balance</span>
-                            <span className="fs-4 fw-bold">
-                              {formatCurrency(acc.opening_balance)}
-                            </span>
+                            {acc.type === 'CASH' && acc.current_balance !== undefined ? (
+                              <>
+                                <span className="text-muted small d-block">Current Balance</span>
+                                <span className="fs-4 fw-bold text-success">
+                                  {formatCurrency(acc.current_balance)}
+                                </span>
+                                <small className="text-muted d-block mt-1">
+                                  Opening: {formatCurrency(acc.opening_balance)}
+                                </small>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-muted small d-block">Opening Balance</span>
+                                <span className="fs-4 fw-bold">
+                                  {formatCurrency(acc.opening_balance)}
+                                </span>
+                              </>
+                            )}
                           </div>
 
                           <div className="mt-auto pt-2 border-top d-flex justify-content-between align-items-center">
@@ -218,6 +243,16 @@ export const AccountListPage: React.FC = () => {
           })}
         </div>
       )}
+
+      {/* Record Income Modal */}
+      <IncomeForm
+        accounts={accounts}
+        isOpen={isIncomeModalOpen}
+        onClose={() => setIsIncomeModalOpen(false)}
+        onSuccess={() => {
+          fetchAccounts();
+        }}
+      />
 
       {/* Opening Balance Modal */}
       {selectedAccount && (

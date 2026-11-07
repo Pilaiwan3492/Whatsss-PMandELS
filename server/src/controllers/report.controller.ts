@@ -9,19 +9,9 @@ import { prisma } from '../prisma.js';
  * In accordance with:
  * - BR-01: Tenancy Scoping (scoped strictly to req.user.id)
  * - BR-02: Opening Balance Exclusion (opening balances are strictly omitted from income/expense calculations)
+ * - BR-03: Income increases cash balance & income summary
  * - BR-10: Admin exclusion (enforced via roleGuard)
  * - NFR-DATA-01: Decimal arithmetic preservation (uses Prisma.Decimal to prevent floating-point inaccuracies)
- *
- * ARCHITECTURE & SCOPE BOUNDARY NOTE (WP-02 vs WP-03 / WP-04):
- * - In WP-02, the system manages financial accounts and their opening balances.
- * - bank_balance aggregates CASH accounts' opening_balance using exact Decimal addition.
- * - credit_debt aggregates LOAN_TAKEN accounts' opening_balance using exact Decimal addition.
- * - Crucially, opening_balance on ANY account (including INCOME accounts like Salary and
- *   EXPENSE accounts like Dining or Grocery) must NEVER contribute to total_income or total_expense (BR-02).
- * - Financial transactions (income in WP-03, expenses in WP-04) do not exist yet in WP-02;
- *   therefore total_income and total_expense remain strictly 0.00 in this release.
- * - When WP-03 and WP-04 implement transaction records, transaction totals will be calculated
- *   from those transaction/allocation tables, and must NEVER incorporate Account.opening_balance.
  */
 export async function getSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -44,21 +34,70 @@ export async function getSummary(req: Request, res: Response, next: NextFunction
 
     const zero = new Prisma.Decimal('0.00');
 
-    // Perform exact arbitrary-precision Decimal addition to prevent floating-point IEEE 754 precision errors
-    const bankBalanceDecimal = accounts
-      .filter((a) => a.type === 'CASH')
-      .reduce((sum, a) => sum.add(new Prisma.Decimal(a.opening_balance.toString())), zero);
+    // Perform exact arbitrary-precision Decimal addition on opening balances
+    const cashAccounts = accounts.filter((a) => a.type === 'CASH');
+    const bankOpeningDecimal = cashAccounts.reduce(
+      (sum, a) => sum.add(new Prisma.Decimal(a.opening_balance.toString())),
+      zero
+    );
 
     const creditDebtDecimal = accounts
       .filter((a) => a.type === 'LOAN_TAKEN')
       .reduce((sum, a) => sum.add(new Prisma.Decimal(a.opening_balance.toString())), zero);
 
+    // Compute dynamic Cash transactions (Inflows and Outflows)
+    let bankReceiveTotal = zero;
+    let bankPaymentTotal = zero;
+    if (typeof prisma.transaction?.aggregate === 'function' && cashAccounts.length > 0) {
+      const cashIds = cashAccounts.map((a) => a.id);
+      const receiveAgg = await prisma.transaction.aggregate({
+        where: {
+          user_id: userId,
+          primary_account_id: { in: cashIds },
+          form: 'RECEIVE_MONEY'
+        },
+        _sum: { total_amount: true }
+      });
+      if (receiveAgg._sum?.total_amount) {
+        bankReceiveTotal = new Prisma.Decimal(receiveAgg._sum.total_amount.toString());
+      }
+
+      const paymentAgg = await prisma.transaction.aggregate({
+        where: {
+          user_id: userId,
+          primary_account_id: { in: cashIds },
+          form: 'PAYMENT_CHARGE'
+        },
+        _sum: { total_amount: true }
+      });
+      if (paymentAgg._sum?.total_amount) {
+        bankPaymentTotal = new Prisma.Decimal(paymentAgg._sum.total_amount.toString());
+      }
+    }
+
+    const finalBankBalance = bankOpeningDecimal.add(bankReceiveTotal).sub(bankPaymentTotal);
+
+    // Compute total_income strictly from allocation lines targeting INCOME accounts (BR-02, BR-03)
+    let totalIncomeDecimal = zero;
+    if (typeof prisma.allocationLine?.aggregate === 'function') {
+      const incomeAgg = await prisma.allocationLine.aggregate({
+        where: {
+          transaction: { user_id: userId },
+          target_account: { type: 'INCOME', user_id: userId }
+        },
+        _sum: { amount: true }
+      });
+      if (incomeAgg._sum?.amount) {
+        totalIncomeDecimal = new Prisma.Decimal(incomeAgg._sum.amount.toString());
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: {
-        bank_balance: Number(bankBalanceDecimal.toFixed(2)),
+        bank_balance: Number(finalBankBalance.toFixed(2)),
         credit_debt: Number(creditDebtDecimal.toFixed(2)),
-        total_income: 0,
+        total_income: Number(totalIncomeDecimal.toFixed(2)),
         total_expense: 0
       }
     });

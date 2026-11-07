@@ -21,31 +21,71 @@ enum AccountType {
 }
 
 model User {
-  id            String    @id @default(uuid())
-  username      String    @unique
-  email         String    @unique
+  id            String        @id @default(uuid())
+  username      String        @unique
+  email         String        @unique
   password_hash String
-  role          Role      @default(USER)
-  is_active     Boolean   @default(true)
-  created_at    DateTime  @default(now())
-  updated_at    DateTime  @updatedAt
+  role          Role          @default(USER)
+  is_active     Boolean       @default(true)
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
   accounts      Account[]
+  transactions  Transaction[]
 
   @@map("users")
 }
 
 model Account {
-  id                String      @id @default(uuid())
-  user_id           String
-  user              User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  name              String      @db.VarChar(100)
-  type              AccountType
-  opening_balance   Decimal     @default(0.00) @db.Decimal(12, 2)
-  is_opening_locked Boolean     @default(false)
-  created_at        DateTime    @default(now())
-  updated_at        DateTime    @default(now()) @updatedAt
+  id                   String           @id @default(uuid())
+  user_id              String
+  user                 User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  name                 String           @db.VarChar(100)
+  type                 AccountType
+  opening_balance      Decimal          @default(0.00) @db.Decimal(12, 2)
+  is_opening_locked    Boolean          @default(false)
+  created_at           DateTime         @default(now())
+  updated_at           DateTime         @default(now()) @updatedAt
+  primary_transactions Transaction[]    @relation("PrimaryAccountTransactions")
+  allocation_lines     AllocationLine[] @relation("AccountAllocations")
 
   @@unique([user_id, name])
   @@index([user_id])
   @@map("accounts")
+}
+
+enum TransactionForm {
+  PAYMENT_CHARGE
+  RECEIVE_MONEY
+}
+
+model Transaction {
+  id                 String           @id @default(uuid())
+  user_id            String
+  user               User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  primary_account_id String
+  primary_account    Account          @relation("PrimaryAccountTransactions", fields: [primary_account_id], references: [id], onDelete: Restrict)
+  form               TransactionForm
+  total_amount       Decimal          @db.Decimal(12, 2)
+  transaction_date   DateTime         @db.Date
+  description        String?          @db.VarChar(255)
+  created_at         DateTime         @default(now())
+  allocation_lines   AllocationLine[]
+
+  @@index([user_id, transaction_date])
+  @@index([primary_account_id])
+  @@map("transactions")
+}
+
+model AllocationLine {
+  id                String      @id @default(uuid())
+  transaction_id    String
+  transaction       Transaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  target_account_id String
+  target_account    Account     @relation("AccountAllocations", fields: [target_account_id], references: [id], onDelete: Restrict)
+  amount            Decimal     @db.Decimal(12, 2)
+  notes             String?     @db.VarChar(255)
+
+  @@index([transaction_id])
+  @@index([target_account_id])
+  @@map("allocation_lines")
 }
