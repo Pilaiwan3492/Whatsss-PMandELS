@@ -65,7 +65,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   const passwordHash = await bcrypt.hash(demoPassword, saltRounds);
 
   // Seed user_demo (USER)
-  await client.user.upsert({
+  const userDemo = await client.user.upsert({
     where: { username: 'user_demo' },
     update: { password_hash: passwordHash, role: 'USER', is_active: true },
     create: {
@@ -78,7 +78,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   });
 
   // Seed user_other (USER)
-  await client.user.upsert({
+  const userOther = await client.user.upsert({
     where: { username: 'user_other' },
     update: { password_hash: passwordHash, role: 'USER', is_active: true },
     create: {
@@ -104,6 +104,36 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
       is_active: true
     }
   });
+
+  // Seed standard financial accounts for user_demo and user_other (WP-02 / F-03)
+  const standardAccounts = [
+    { name: 'Checking Bank', type: 'CASH' as const },
+    { name: 'Visa Credit Card', type: 'LOAN_TAKEN' as const },
+    { name: 'Salary', type: 'INCOME' as const },
+    { name: 'Dining', type: 'EXPENSE' as const },
+    { name: 'Grocery', type: 'EXPENSE' as const }
+  ];
+
+  for (const user of [userDemo, userOther]) {
+    for (const acc of standardAccounts) {
+      await client.account.upsert({
+        where: {
+          user_id_name: {
+            user_id: user.id,
+            name: acc.name
+          }
+        },
+        update: {},
+        create: {
+          user_id: user.id,
+          name: acc.name,
+          type: acc.type,
+          opening_balance: 0.00,
+          is_opening_locked: false
+        }
+      });
+    }
+  }
 
   console.log('Development seeding completed successfully.');
 }

@@ -27,9 +27,18 @@ export function isJsonBodyRequired(req: Request): boolean {
   }
 
   const normalizedPath = normalizeRequestPath(req);
-  return JSON_BODY_REQUIRED_ENDPOINTS.some(
+  if (JSON_BODY_REQUIRED_ENDPOINTS.some(
     endpoint => normalizedPath === endpoint || normalizedPath.endsWith(endpoint)
-  );
+  )) {
+    return true;
+  }
+
+  // Account opening balance mutation strictly requires JSON body
+  if (normalizedPath.endsWith('/opening-balance')) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
