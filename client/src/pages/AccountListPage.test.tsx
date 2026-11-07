@@ -184,6 +184,141 @@ describe('Frontend Financial Accounts & Opening Balance Suite (WP-02)', () => {
     expect(patchSpy).not.toHaveBeenCalled();
   });
 
+  it('renders accounts grouped into distinct sections by type (P1 Finding 8)', async () => {
+    const fullMockAccounts = [
+      {
+        id: 'acc-1',
+        user_id: 'u1-uuid',
+        name: 'Checking Bank',
+        type: 'CASH',
+        opening_balance: 5000.00,
+        is_opening_locked: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      },
+      {
+        id: 'acc-2',
+        user_id: 'u1-uuid',
+        name: 'Visa Credit Card',
+        type: 'LOAN_TAKEN',
+        opening_balance: 0.00,
+        is_opening_locked: true,
+        created_at: '2026-11-01T00:00:01.000Z',
+        updated_at: '2026-11-01T00:00:01.000Z'
+      },
+      {
+        id: 'acc-3',
+        user_id: 'u1-uuid',
+        name: 'Lent to Alice',
+        type: 'LOAN_GIVEN',
+        opening_balance: 1200.00,
+        is_opening_locked: false,
+        created_at: '2026-11-01T00:00:02.000Z',
+        updated_at: '2026-11-01T00:00:02.000Z'
+      },
+      {
+        id: 'acc-4',
+        user_id: 'u1-uuid',
+        name: 'Salary',
+        type: 'INCOME',
+        opening_balance: 0.00,
+        is_opening_locked: false,
+        created_at: '2026-11-01T00:00:03.000Z',
+        updated_at: '2026-11-01T00:00:03.000Z'
+      },
+      {
+        id: 'acc-5',
+        user_id: 'u1-uuid',
+        name: 'Food & Dining',
+        type: 'EXPENSE',
+        opening_balance: 0.00,
+        is_opening_locked: false,
+        created_at: '2026-11-01T00:00:04.000Z',
+        updated_at: '2026-11-01T00:00:04.000Z'
+      }
+    ];
+
+    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/auth/me') {
+        return { data: { success: true, data: { user: mockUserDemo } } };
+      }
+      if (url === '/accounts') {
+        return { data: { success: true, data: { accounts: fullMockAccounts } } };
+      }
+      throw new Error(`Unhandled get url: ${url}`);
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Checking Bank')).toBeDefined();
+    });
+
+    // Verify 5 group section headings
+    expect(screen.getByText('Cash & Liquid Accounts')).toBeDefined();
+    expect(screen.getByText('Credit Cards & Liabilities')).toBeDefined();
+    expect(screen.getByText('Lent Funds & Receivables')).toBeDefined();
+    expect(screen.getByText('Income Categories')).toBeDefined();
+    expect(screen.getByText('Expense Categories')).toBeDefined();
+
+    // Verify all 5 accounts are displayed
+    expect(screen.getByText('Checking Bank')).toBeDefined();
+    expect(screen.getByText('Visa Credit Card')).toBeDefined();
+    expect(screen.getByText('Lent to Alice')).toBeDefined();
+    expect(screen.getByText('Salary')).toBeDefined();
+    expect(screen.getByText('Food & Dining')).toBeDefined();
+  });
+
+  it('validates client-side input and rejects numbers with more than 2 decimal places', async () => {
+    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/auth/me') {
+        return { data: { success: true, data: { user: mockUserDemo } } };
+      }
+      if (url === '/accounts') {
+        return { data: { success: true, data: { accounts: mockAccountsList } } };
+      }
+      throw new Error(`Unhandled get url: ${url}`);
+    });
+
+    const patchSpy = vi.spyOn(axiosClient, 'patch');
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Checking Bank')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set Opening Balance' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Set Opening Balance: Checking Bank')).toBeDefined();
+    });
+
+    const input = screen.getByLabelText('Opening Balance (THB)');
+    fireEvent.change(input, { target: { value: '100.123' } });
+
+    const form = input.closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText('Opening balance allows at most 2 decimal places.')).toBeDefined();
+    });
+
+    expect(patchSpy).not.toHaveBeenCalled();
+  });
+
   it('redirects ADMIN attempting to access /accounts to /access-denied', async () => {
     vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/auth/me') {

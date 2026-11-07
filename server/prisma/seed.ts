@@ -93,7 +93,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   // NOTE: Hardcoded demo credentials are for local development/testing environments only.
   // Production admin account provisioning must be configured using environment secrets.
   // Seed admin_demo (ADMIN)
-  await client.user.upsert({
+  const adminDemo = await client.user.upsert({
     where: { username: 'admin_demo' },
     update: { password_hash: passwordHash, role: 'ADMIN', is_active: true },
     create: {
@@ -105,7 +105,10 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
     }
   });
 
-  // Seed standard financial accounts for user_demo and user_other (WP-02 / F-03)
+  // Seed standard financial accounts for all demo users (user_demo, user_other, admin_demo)
+  // In accordance with WP-02 and Issue #3 backlog specifications.
+  // Note: While admin_demo has seeded baseline accounts in the database, API access to
+  // financial endpoints remains strictly blocked with 403 Forbidden under BR-10.
   const standardAccounts = [
     { name: 'Checking Bank', type: 'CASH' as const },
     { name: 'Visa Credit Card', type: 'LOAN_TAKEN' as const },
@@ -114,7 +117,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
     { name: 'Grocery', type: 'EXPENSE' as const }
   ];
 
-  for (const user of [userDemo, userOther]) {
+  for (const user of [userDemo, userOther, adminDemo]) {
     for (const acc of standardAccounts) {
       await client.account.upsert({
         where: {

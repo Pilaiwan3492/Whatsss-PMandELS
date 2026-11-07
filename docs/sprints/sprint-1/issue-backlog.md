@@ -43,7 +43,7 @@ As a user or platform administrator, I want to authenticate securely and have th
 - [x] Implement `POST /api/auth/logout` clearing session cookie with matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production) and `Max-Age=0`.
 - [x] Implement `AuthGuard` middleware rejecting unauthenticated requests with HTTP 401 (`BR-09`).
 - [x] Implement `RoleGuard` middleware rejecting ADMIN access to financial routes with HTTP 403 (`BR-10`).
-- [ ] Implement tenant scoping ensuring user requests access only own records (`BR-01`).
+- [x] Implement tenant scoping ensuring user requests access only own records (`BR-01`).
 - [x] Implement CSRF Origin/Referer validation middleware rejecting untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
 - [x] Configure and verify CORS preflight (`OPTIONS`) handling ensuring preflights terminate before CSRF and auth without executing business operations (`TEST-SEC-05`).
 - [x] Implement conditional `RequireJsonContentType` middleware and malformed JSON error handling returning HTTP 400 (`INVALID_CONTENT_TYPE`, `INVALID_JSON_BODY`) while preserving bodyless logout compatibility (`TEST-SEC-06`).
@@ -57,7 +57,7 @@ As a user or platform administrator, I want to authenticate securely and have th
 - [x] `AC-01-5`: Calling logout clears cookie and subsequent protected call returns 401 (`TEST-AUTH-05`, `FR-01`).
 - [x] `AC-02-1`: Missing/invalid cookie returns 401 Unauthorized (`TEST-SEC-02`, `BR-09`).
 - [x] `AC-02-2`: ADMIN calling financial endpoints returns 403 Forbidden with zero data leak (`TEST-SEC-03`, `BR-10`).
-- [ ] `AC-02-3`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
+- [x] `AC-02-3`: Accessing another user's financial record returns 404 Not Found (`TEST-SEC-01`, `BR-01`).
 - [x] `AC-02-4`: Origin/Referer validation rejects untrusted origins with HTTP 403 (`CSRF_ORIGIN_REJECTED`) on state-changing requests (`TEST-SEC-04`).
 
 ---
@@ -93,7 +93,8 @@ As an authenticated user, I want to access my pre-seeded financial accounts and 
 #### Acceptance Criteria Checklist
 - [x] `AC-03-1`: Setting opening balance of 10000.00 THB returns 200 OK and updates balance (`TEST-OPEN-01`).
 - [x] `AC-03-2`: Negative, non-numeric, or invalid decimal balance (e.g., `100.123`) rejected with 400 Bad Request (`INVALID_OPENING_BALANCE`) (`TEST-OPEN-03`).
-- [x] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).
+- [x] `AC-03-3`: Opening balance locked once first referencing transaction is committed; subsequent update returns 422 Unprocessable Entity (`OPENING_BALANCE_LOCKED`) (`TEST-OPEN-04`).  
+  *(Implementation Note: In WP-02, the atomic lock service `accountLock.service.ts` is implemented and verified for batch deduplication, foreign ID rejection without partial locks, and commit/rollback behavior in live PostgreSQL. The transaction creation workflow calling it will be wired in WP-03 / Issue #4 when `POST /api/transactions` is introduced).*
 - [x] `AC-03-4`: Opening balance verified excluded from income and expense summaries (`TEST-OPEN-02`, `BR-02`).
 
 ---

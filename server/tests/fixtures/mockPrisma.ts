@@ -163,6 +163,57 @@ export const INITIAL_MOCK_ACCOUNTS: MockAccountRecord[] = [
     is_opening_locked: false,
     created_at: new Date('2026-11-01T00:00:04.000Z'),
     updated_at: new Date('2026-11-01T00:00:04.000Z')
+  },
+  // admin_demo accounts (seeded in DB per issue backlog, but API access is blocked by BR-10)
+  {
+    id: 'acc-admin-checking',
+    user_id: 'admin-uuid',
+    name: 'Checking Bank',
+    type: 'CASH',
+    opening_balance: new Prisma.Decimal('0.00'),
+    is_opening_locked: false,
+    created_at: new Date('2026-11-01T00:00:00.000Z'),
+    updated_at: new Date('2026-11-01T00:00:00.000Z')
+  },
+  {
+    id: 'acc-admin-cc',
+    user_id: 'admin-uuid',
+    name: 'Visa Credit Card',
+    type: 'LOAN_TAKEN',
+    opening_balance: new Prisma.Decimal('0.00'),
+    is_opening_locked: false,
+    created_at: new Date('2026-11-01T00:00:01.000Z'),
+    updated_at: new Date('2026-11-01T00:00:01.000Z')
+  },
+  {
+    id: 'acc-admin-salary',
+    user_id: 'admin-uuid',
+    name: 'Salary',
+    type: 'INCOME',
+    opening_balance: new Prisma.Decimal('0.00'),
+    is_opening_locked: false,
+    created_at: new Date('2026-11-01T00:00:02.000Z'),
+    updated_at: new Date('2026-11-01T00:00:02.000Z')
+  },
+  {
+    id: 'acc-admin-dining',
+    user_id: 'admin-uuid',
+    name: 'Dining',
+    type: 'EXPENSE',
+    opening_balance: new Prisma.Decimal('0.00'),
+    is_opening_locked: false,
+    created_at: new Date('2026-11-01T00:00:03.000Z'),
+    updated_at: new Date('2026-11-01T00:00:03.000Z')
+  },
+  {
+    id: 'acc-admin-grocery',
+    user_id: 'admin-uuid',
+    name: 'Grocery',
+    type: 'EXPENSE',
+    opening_balance: new Prisma.Decimal('0.00'),
+    is_opening_locked: false,
+    created_at: new Date('2026-11-01T00:00:04.000Z'),
+    updated_at: new Date('2026-11-01T00:00:04.000Z')
   }
 ];
 

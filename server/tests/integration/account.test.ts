@@ -14,6 +14,9 @@ import { lockAccounts } from '../../src/services/accountLock.service.js';
 vi.mock('../../src/prisma.js', () => {
   return {
     prisma: {
+      $transaction: vi.fn(async (callback) => {
+        return callback(prisma);
+      }),
       user: {
         findFirst: vi.fn(async ({ where }) => {
           if (where?.OR) {
@@ -32,6 +35,7 @@ vi.mock('../../src/prisma.js', () => {
         findMany: vi.fn(async ({ where, orderBy }) => {
           let list = mockAccounts.filter((a) => {
             if (where?.user_id && a.user_id !== where.user_id) return false;
+            if (where?.id?.in && !where.id.in.includes(a.id)) return false;
             return true;
           });
           if (orderBy?.created_at === 'asc') {
@@ -171,6 +175,32 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       const target = mockAccounts.find((a) => a.id === 'acc-demo-checking');
       expect(target?.opening_balance.toString()).toBe('10000');
     });
+
+    it('accepts maximum valid opening balance 9999999999.99', async () => {
+      const res = await request(app)
+        .patch('/api/accounts/acc-demo-checking/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 9999999999.99 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.account.opening_balance).toBe(9999999999.99);
+    });
+
+    it('accepts zero opening balance 0.00', async () => {
+      const res = await request(app)
+        .patch('/api/accounts/acc-demo-checking/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 0.00 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.account.opening_balance).toBe(0.00);
+    });
   });
 
   describe('TEST-OPEN-02: Opening Balance Exclusion from Summary (AC-03-4, BR-02, F-03)', () => {
@@ -245,6 +275,30 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       expect(target?.opening_balance.toString()).toBe('0');
     });
 
+    it('rejects micro-precision values (1e-7) with 400 INVALID_OPENING_BALANCE', async () => {
+      const res = await request(app)
+        .patch('/api/accounts/acc-demo-checking/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 1e-7 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('INVALID_OPENING_BALANCE');
+    });
+
+    it('rejects values exceeding maximum DECIMAL(12,2) limit (10000000000.00)', async () => {
+      const res = await request(app)
+        .patch('/api/accounts/acc-demo-checking/opening-balance')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ opening_balance: 10000000000.00 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('INVALID_OPENING_BALANCE');
+    });
+
     it('rejects missing body with 400 MISSING_REQUEST_BODY via contentType middleware', async () => {
       const res = await request(app)
         .patch('/api/accounts/acc-demo-checking/opening-balance')
@@ -266,7 +320,7 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
         .set('Cookie', userACookie)
         .send({ opening_balance: 10000.00 });
 
-      // 2. Simulate transaction commit locking the account (e.g. Salary Income Txn 1)
+      // 2. Account is locked
       const checkingAcc = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
       checkingAcc.is_opening_locked = true;
 
@@ -284,6 +338,47 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
 
       // Assert balance remains 10000.00 THB without mutation
       expect(checkingAcc.opening_balance.toString()).toBe('10000');
+    });
+
+    describe('Race Condition & Concurrent State Mutation Handling (Fix #7)', () => {
+      it('returns 422 OPENING_BALANCE_LOCKED if account was locked concurrently during atomic updateMany', async () => {
+        // Mock updateMany to simulate race condition: account was locked between check and updateMany
+        vi.mocked(prisma.account.updateMany).mockResolvedValueOnce({ count: 0 });
+
+        // Subsequent findFirst will observe locked state
+        const target = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+        target.is_opening_locked = true;
+
+        const res = await request(app)
+          .patch('/api/accounts/acc-demo-checking/opening-balance')
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', userACookie)
+          .send({ opening_balance: 12000.00 });
+
+        expect(res.status).toBe(422);
+        expect(res.body.error.code).toBe('OPENING_BALANCE_LOCKED');
+      });
+
+      it('returns 404 NOT_FOUND if account was deleted concurrently during atomic updateMany', async () => {
+        // First findFirst succeeds
+        // updateMany returns 0
+        vi.mocked(prisma.account.updateMany).mockResolvedValueOnce({ count: 0 });
+        // Rechecked findFirst returns null
+        vi.mocked(prisma.account.findFirst)
+          .mockResolvedValueOnce(mockAccounts[0] as any)
+          .mockResolvedValueOnce(null);
+
+        const res = await request(app)
+          .patch('/api/accounts/acc-demo-checking/opening-balance')
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', userACookie)
+          .send({ opening_balance: 12000.00 });
+
+        expect(res.status).toBe(404);
+        expect(res.body.error.code).toBe('NOT_FOUND');
+      });
     });
   });
 
@@ -342,10 +437,14 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
     });
   });
 
-  describe('accountLock.service: Atomic Transaction Locking Unit Verification', () => {
-    it('locks accounts belonging to user within transaction boundary and skips foreign accounts', async () => {
+  describe('accountLock.service: Atomic Transaction Locking Verification', () => {
+    it('locks accounts belonging to user within transaction boundary and handles duplicates', async () => {
       const mockTx = {
         account: {
+          findMany: vi.fn().mockResolvedValue([
+            { id: 'acc-demo-checking', is_opening_locked: false },
+            { id: 'acc-demo-cc', is_opening_locked: false }
+          ]),
           updateMany: vi.fn().mockResolvedValue({ count: 2 })
         }
       } as any;
@@ -372,11 +471,13 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
     it('does nothing when accountIds array is empty', async () => {
       const mockTx = {
         account: {
+          findMany: vi.fn(),
           updateMany: vi.fn()
         }
       } as any;
 
       await lockAccounts(mockTx, [], 'user-a-uuid');
+      expect(mockTx.account.findMany).not.toHaveBeenCalled();
       expect(mockTx.account.updateMany).not.toHaveBeenCalled();
     });
   });

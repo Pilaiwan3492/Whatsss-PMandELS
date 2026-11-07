@@ -1,5 +1,45 @@
 import React, { useEffect, useState } from 'react';
-import { getAccounts, updateOpeningBalance, Account } from '../api/accountApi.js';
+import { getAccounts, updateOpeningBalance, Account, AccountType } from '../api/accountApi.js';
+
+interface AccountGroupConfig {
+  type: AccountType;
+  title: string;
+  description: string;
+  badgeClass: string;
+}
+
+const ACCOUNT_GROUPS: AccountGroupConfig[] = [
+  {
+    type: 'CASH',
+    title: 'Cash & Liquid Accounts',
+    description: 'Liquid checking and savings accounts used to deposit funds and pay expenses.',
+    badgeClass: 'bg-success'
+  },
+  {
+    type: 'LOAN_TAKEN',
+    title: 'Credit Cards & Liabilities',
+    description: 'Liability accounts used to track credit debt and borrowing balances.',
+    badgeClass: 'bg-danger'
+  },
+  {
+    type: 'LOAN_GIVEN',
+    title: 'Lent Funds & Receivables',
+    description: 'Accounts tracking money lent to others awaiting reimbursement.',
+    badgeClass: 'bg-warning text-dark'
+  },
+  {
+    type: 'INCOME',
+    title: 'Income Categories',
+    description: 'Flow accounts categorizing revenue inflows such as salary.',
+    badgeClass: 'bg-info text-dark'
+  },
+  {
+    type: 'EXPENSE',
+    title: 'Expense Categories',
+    description: 'Flow accounts categorizing expenditures such as food, groceries, and bills.',
+    badgeClass: 'bg-secondary'
+  }
+];
 
 export const AccountListPage: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -88,30 +128,13 @@ export const AccountListPage: React.FC = () => {
     }).format(amount);
   };
 
-  const getTypeBadgeClass = (type: string): string => {
-    switch (type) {
-      case 'CASH':
-        return 'bg-success';
-      case 'LOAN_TAKEN':
-        return 'bg-danger';
-      case 'LOAN_GIVEN':
-        return 'bg-warning text-dark';
-      case 'INCOME':
-        return 'bg-info text-dark';
-      case 'EXPENSE':
-        return 'bg-secondary';
-      default:
-        return 'bg-secondary';
-    }
-  };
-
   return (
     <div className="container py-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
           <h2 className="fw-bold mb-1">Financial Accounts</h2>
           <p className="text-muted mb-0">
-            Manage your financial accounts and configure initial opening balances.
+            Manage your financial accounts grouped by type and configure initial opening balances.
           </p>
         </div>
       </div>
@@ -129,47 +152,65 @@ export const AccountListPage: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="row g-4">
-          {accounts.map((acc) => (
-            <div key={acc.id} className="col-12 col-md-6 col-lg-4">
-              <div className="card h-100 shadow-sm border-0">
-                <div className="card-body d-flex flex-column">
-                  <div className="d-flex justify-content-between align-items-start mb-2">
-                    <h5 className="card-title fw-bold mb-0">{acc.name}</h5>
-                    <span className={`badge ${getTypeBadgeClass(acc.type)}`}>
-                      {acc.type}
-                    </span>
-                  </div>
+        <div>
+          {ACCOUNT_GROUPS.map((group) => {
+            const groupAccounts = accounts.filter((a) => a.type === group.type);
+            if (groupAccounts.length === 0) return null;
 
-                  <div className="my-3">
-                    <span className="text-muted small d-block">Opening Balance</span>
-                    <span className="fs-4 fw-bold">
-                      {formatCurrency(acc.opening_balance)}
-                    </span>
-                  </div>
-
-                  <div className="mt-auto pt-2 border-top d-flex justify-content-between align-items-center">
-                    <span className="small text-muted">Status:</span>
-                    {acc.is_opening_locked ? (
-                      <span
-                        className="badge bg-secondary"
-                        title="Opening balance is locked permanently following first transaction"
-                      >
-                        Opening balance locked
-                      </span>
-                    ) : (
-                      <button
-                        className="btn btn-outline-primary btn-sm"
-                        onClick={() => handleOpenModal(acc)}
-                      >
-                        Set Opening Balance
-                      </button>
-                    )}
-                  </div>
+            return (
+              <section key={group.type} className="mb-5" aria-labelledby={`group-${group.type}`}>
+                <div className="border-bottom pb-2 mb-3">
+                  <h4 id={`group-${group.type}`} className="fw-bold mb-0">
+                    {group.title}
+                  </h4>
+                  <small className="text-muted">{group.description}</small>
                 </div>
-              </div>
-            </div>
-          ))}
+
+                <div className="row g-4">
+                  {groupAccounts.map((acc) => (
+                    <div key={acc.id} className="col-12 col-md-6 col-lg-4">
+                      <div className="card h-100 shadow-sm border-0">
+                        <div className="card-body d-flex flex-column">
+                          <div className="d-flex justify-content-between align-items-start mb-2">
+                            <h5 className="card-title fw-bold mb-0">{acc.name}</h5>
+                            <span className={`badge ${group.badgeClass}`}>
+                              {acc.type}
+                            </span>
+                          </div>
+
+                          <div className="my-3">
+                            <span className="text-muted small d-block">Opening Balance</span>
+                            <span className="fs-4 fw-bold">
+                              {formatCurrency(acc.opening_balance)}
+                            </span>
+                          </div>
+
+                          <div className="mt-auto pt-2 border-top d-flex justify-content-between align-items-center">
+                            <span className="small text-muted">Status:</span>
+                            {acc.is_opening_locked ? (
+                              <span
+                                className="badge bg-secondary"
+                                title="Opening balance is locked permanently following first transaction"
+                              >
+                                Opening balance locked
+                              </span>
+                            ) : (
+                              <button
+                                className="btn btn-outline-primary btn-sm"
+                                onClick={() => handleOpenModal(acc)}
+                              >
+                                Set Opening Balance
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
 
