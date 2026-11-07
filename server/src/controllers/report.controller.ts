@@ -77,12 +77,16 @@ export async function getSummary(req: Request, res: Response, next: NextFunction
 
     const finalBankBalance = bankOpeningDecimal.add(bankReceiveTotal).sub(bankPaymentTotal);
 
-    // Compute total_income strictly from allocation lines targeting INCOME accounts (BR-02, BR-03)
+    // Compute total_income strictly from allocation lines belonging to RECEIVE_MONEY transactions
+    // targeting INCOME accounts owned by the authenticated tenant (BR-02, BR-03)
     let totalIncomeDecimal = zero;
     if (typeof prisma.allocationLine?.aggregate === 'function') {
       const incomeAgg = await prisma.allocationLine.aggregate({
         where: {
-          transaction: { user_id: userId },
+          transaction: {
+            user_id: userId,
+            form: 'RECEIVE_MONEY'
+          },
           target_account: { type: 'INCOME', user_id: userId }
         },
         _sum: { amount: true }

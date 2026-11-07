@@ -120,13 +120,14 @@ export function validateTransactionAmount(val: unknown): Prisma.Decimal {
 /**
  * Validates a transaction date string strictly in YYYY-MM-DD format.
  * In accordance with F-04, FR-06:
- * - Must be a canonical YYYY-MM-DD calendar date string.
+ * - Must be a canonical YYYY-MM-DD calendar date string (exactly 10 characters).
+ * - Whitespace Contract: Leading, trailing, and internal whitespace are strictly rejected with 400 INVALID_TRANSACTION_DATE.
  * - Entire string must match (rejects trailing text, extra characters, timestamps).
  * - Real calendar dates only: rejects impossible days (e.g. 2026-02-30) and invalid leap-year dates (e.g. 2026-02-29).
  * - Evaluated in UTC to ensure deterministic calendar date representation without timezone day shifts.
  */
 export function validateTransactionDate(val: unknown): { dateObj: Date; dateStr: string } {
-  if (typeof val !== 'string' || val.trim().length === 0) {
+  if (typeof val !== 'string' || val.length === 0) {
     throw new IncomeError(
       'Transaction date is required and must be a non-empty string.',
       400,
@@ -134,9 +135,17 @@ export function validateTransactionDate(val: unknown): { dateObj: Date; dateStr:
     );
   }
 
-  const trimmed = val.trim();
-  // Strictly anchored: must be exactly YYYY-MM-DD with no leading or trailing characters
-  const dateMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  // Whitespace contract: reject any leading or trailing whitespace
+  if (val !== val.trim()) {
+    throw new IncomeError(
+      'Transaction date must not contain leading or trailing whitespace.',
+      400,
+      'INVALID_TRANSACTION_DATE'
+    );
+  }
+
+  // Strictly anchored: must be exactly YYYY-MM-DD with no extra characters
+  const dateMatch = val.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!dateMatch) {
     throw new IncomeError(
       'Transaction date must be in YYYY-MM-DD format.',
@@ -165,7 +174,7 @@ export function validateTransactionDate(val: unknown): { dateObj: Date; dateStr:
     utcDate.getUTCDate() !== day
   ) {
     throw new IncomeError(
-      `Transaction date ${trimmed} is not a valid calendar date.`,
+      `Transaction date ${val} is not a valid calendar date.`,
       400,
       'INVALID_TRANSACTION_DATE'
     );
@@ -202,19 +211,18 @@ export function validateDescription(val: unknown): string | null {
 /**
  * Account ID format validation.
  * In accordance with Phase 2.4 and NFR-DATA-01:
- * - Validates declared UUID format before database lookup.
+ * - Production validation must accept only valid UUID identifiers (8-4-4-4-12 hex).
+ * - No fixture-specific IDs or environment-dependent bypasses in production code.
  * - Rejects malformed identifiers upfront with 400 INVALID_ACCOUNT_ID.
  * - Distinguishes malformed IDs (400) from well-formed IDs that do not exist (404).
- * - Accepts standard canonical UUIDs (8-4-4-4-12 hex) as well as test fixture identifiers (^acc-[a-z0-9-]+$).
  */
 export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export const TEST_FIXTURE_ID_REGEX = /^acc-[a-z0-9-]+$/i;
 
 export function isValidAccountId(val: unknown): val is string {
   if (typeof val !== 'string') return false;
   const trimmed = val.trim();
   if (trimmed.length === 0) return false;
-  return UUID_REGEX.test(trimmed) || TEST_FIXTURE_ID_REGEX.test(trimmed);
+  return UUID_REGEX.test(trimmed);
 }
 
 /**

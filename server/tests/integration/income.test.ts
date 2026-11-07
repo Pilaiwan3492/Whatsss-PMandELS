@@ -11,7 +11,9 @@ import {
   mockAllocationLines,
   resetMockTransactions,
   MockTransactionRecord,
-  MockAllocationLineRecord
+  MockAllocationLineRecord,
+  MOCK_UUIDS,
+  useMockUuidAccounts
 } from '../fixtures/mockPrisma.js';
 
 const TRUSTED_ORIGIN = 'http://localhost:5173';
@@ -156,6 +158,9 @@ vi.mock('../../src/prisma.js', () => {
           if (where?.transaction?.user_id && parentTxn.user_id !== where.transaction.user_id) {
             return false;
           }
+          if (where?.transaction?.form && parentTxn.form !== where.transaction.form) {
+            return false;
+          }
           const targetAcc = mockAccounts.find((a) => a.id === al.target_account_id);
           if (!targetAcc) return false;
           if (where?.target_account?.type && targetAcc.type !== where.target_account.type) {
@@ -206,8 +211,18 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
   const userBCookie = createAuthCookie('user-b-uuid', 'user_other', 'USER');
   const adminCookie = createAuthCookie('admin-uuid', 'admin_demo', 'ADMIN');
 
+  const CHECKING_ID = MOCK_UUIDS.DEMO_CHECKING;
+  const CC_ID = MOCK_UUIDS.DEMO_CC;
+  const SALARY_ID = MOCK_UUIDS.DEMO_SALARY;
+  const DINING_ID = MOCK_UUIDS.DEMO_DINING;
+  const OTHER_CHECKING_ID = MOCK_UUIDS.OTHER_CHECKING;
+  const OTHER_SALARY_ID = MOCK_UUIDS.OTHER_SALARY;
+  const ADMIN_CHECKING_ID = MOCK_UUIDS.ADMIN_CHECKING;
+  const ADMIN_SALARY_ID = MOCK_UUIDS.ADMIN_SALARY;
+
   beforeEach(() => {
     resetMockAccounts();
+    useMockUuidAccounts();
     resetMockTransactions();
     vi.clearAllMocks();
   });
@@ -218,15 +233,15 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
   describe('TEST-INC-01: Successful Income Creation (AC-04-1, BR-03, FR-06)', () => {
     it('records salary of 20000.00 THB on date 2026-11-06 into Checking Bank, creates 1 allocation, locks opening balance, and updates cash balance to 30000.00', async () => {
       // Setup initial opening balance of 10,000.00 THB on Checking Bank
-      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+      const checking = mockAccounts.find((a) => a.id === CHECKING_ID)!;
       checking.opening_balance = new Prisma.Decimal('10000.00');
       checking.is_opening_locked = false;
 
       const payload = {
-        primary_account_id: 'acc-demo-checking',
+        primary_account_id: CHECKING_ID,
         total_amount: '20000.00',
         transaction_date: '2026-11-06',
-        income_account_id: 'acc-demo-salary',
+        income_account_id: SALARY_ID,
         description: 'Monthly Salary'
       };
 
@@ -241,7 +256,7 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
 
       const data = res.body.data;
       expect(data.transaction).toBeDefined();
-      expect(data.transaction.primary_account_id).toBe('acc-demo-checking');
+      expect(data.transaction.primary_account_id).toBe(CHECKING_ID);
       expect(data.transaction.form).toBe('RECEIVE_MONEY');
       expect(data.transaction.total_amount).toBe('20000.00');
       expect(data.transaction.transaction_date).toBe('2026-11-06');
@@ -249,12 +264,12 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
 
       // Exactly 1 allocation line targeting Salary
       expect(data.transaction.allocations).toHaveLength(1);
-      expect(data.transaction.allocations[0].target_account_id).toBe('acc-demo-salary');
+      expect(data.transaction.allocations[0].target_account_id).toBe(SALARY_ID);
       expect(data.transaction.allocations[0].amount).toBe('20000.00');
       expect(data.transaction.allocations[0].notes).toBe('Monthly Salary');
 
       // Cash balance updated from 10,000.00 to 30,000.00
-      expect(data.updated_balance.account_id).toBe('acc-demo-checking');
+      expect(data.updated_balance.account_id).toBe(CHECKING_ID);
       expect(data.updated_balance.current_balance).toBe('30000.00');
 
       // Opening balance on Checking Bank must be locked
@@ -267,7 +282,7 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
 
       expect(accountsRes.status).toBe(200);
       const accountsData = accountsRes.body.data.accounts;
-      const checkingInList = accountsData.find((a: any) => a.id === 'acc-demo-checking');
+      const checkingInList = accountsData.find((a: any) => a.id === CHECKING_ID);
       expect(checkingInList.opening_balance).toBe(10000.00);
       expect(checkingInList.current_balance).toBe(30000.00);
       expect(checkingInList.is_opening_locked).toBe(true);
@@ -286,10 +301,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
 
     it('accepts numeric total_amount and normalizes to 2-decimal string', async () => {
       const payload = {
-        primary_account_id: 'acc-demo-checking',
+        primary_account_id: CHECKING_ID,
         total_amount: 5000.5,
         transaction_date: '2026-11-06',
-        income_account_id: 'acc-demo-salary',
+        income_account_id: SALARY_ID,
         description: 'Bonus'
       };
 
@@ -305,7 +320,7 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
     });
 
     it('handles repeated income transactions idempotently without lock failure', async () => {
-      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+      const checking = mockAccounts.find((a) => a.id === CHECKING_ID)!;
       checking.opening_balance = new Prisma.Decimal('1000.00');
 
       // First income
@@ -314,10 +329,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '2000.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(checking.is_opening_locked).toBe(true);
@@ -328,10 +343,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '3000.00',
           transaction_date: '2026-11-07',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res2.status).toBe(201);
@@ -349,9 +364,9 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -365,10 +380,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '0.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -381,10 +396,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '-100.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -397,10 +412,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: 'abc',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -413,10 +428,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '100.123',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -429,10 +444,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '10000000000.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -445,10 +460,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '1e3',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -461,9 +476,9 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '100.00',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -476,10 +491,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '100.00',
           transaction_date: 'not-a-date',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -500,10 +515,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
           .set('Cookie', userACookie)
           .set('Origin', TRUSTED_ORIGIN)
           .send({
-            primary_account_id: 'acc-demo-checking',
+            primary_account_id: CHECKING_ID,
             total_amount: '100.00',
             transaction_date: d,
-            income_account_id: 'acc-demo-salary'
+            income_account_id: SALARY_ID
           });
 
         expect(res.status, `Expected 400 for date ${d}`).toBe(400);
@@ -518,10 +533,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '100.00',
           transaction_date: '2026-02-29',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(resNonLeap.status).toBe(400);
@@ -533,14 +548,40 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '100.00',
           transaction_date: '2024-02-29',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(resLeap.status).toBe(201);
       expect(resLeap.body.data.transaction.transaction_date).toBe('2024-02-29');
+    });
+
+    it('strictly rejects date with leading, trailing, or internal whitespace per canonical YYYY-MM-DD contract', async () => {
+      const whitespaceDates = [
+        ' 2026-11-06',
+        '2026-11-06 ',
+        ' 2026-11-06 ',
+        '\t2026-11-06',
+        '2026-11-06\n',
+        '2026- 11-06',
+        '2026-11- 06'
+      ];
+      for (const d of whitespaceDates) {
+        const res = await request(app)
+          .post('/api/transactions/income')
+          .set('Cookie', userACookie)
+          .set('Origin', TRUSTED_ORIGIN)
+          .send({
+            primary_account_id: CHECKING_ID,
+            total_amount: '100.00',
+            transaction_date: d,
+            income_account_id: SALARY_ID
+          });
+        expect(res.status, `Expected 400 for whitespace date "${d}"`).toBe(400);
+        expect(res.body.error.code).toBe('INVALID_TRANSACTION_DATE');
+      }
     });
 
     it('rejects malformed account IDs with 400 INVALID_ACCOUNT_ID before database lookup', async () => {
@@ -561,11 +602,44 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
             primary_account_id: badId,
             total_amount: '100.00',
             transaction_date: '2026-11-06',
-            income_account_id: 'acc-demo-salary'
+            income_account_id: SALARY_ID
           });
 
         expect(res.status, `Expected 400 for primary_account_id "${badId}"`).toBe(400);
         expect(res.body.error.code).toBe('INVALID_ACCOUNT_ID');
+      }
+    });
+
+    it('rejects fixture-style account IDs with HTTP 400 INVALID_ACCOUNT_ID (strict UUID enforcement)', async () => {
+      const fixtureIds = ['acc-demo-checking', 'acc-demo-salary', 'acc-user-1', 'acc-12345'];
+      for (const fid of fixtureIds) {
+        // Test primary_account_id
+        const resPrimary = await request(app)
+          .post('/api/transactions/income')
+          .set('Cookie', userACookie)
+          .set('Origin', TRUSTED_ORIGIN)
+          .send({
+            primary_account_id: fid,
+            total_amount: '100.00',
+            transaction_date: '2026-11-06',
+            income_account_id: SALARY_ID
+          });
+        expect(resPrimary.status, `Expected 400 for primary fixture ID "${fid}"`).toBe(400);
+        expect(resPrimary.body.error.code).toBe('INVALID_ACCOUNT_ID');
+
+        // Test income_account_id
+        const resIncome = await request(app)
+          .post('/api/transactions/income')
+          .set('Cookie', userACookie)
+          .set('Origin', TRUSTED_ORIGIN)
+          .send({
+            primary_account_id: CHECKING_ID,
+            total_amount: '100.00',
+            transaction_date: '2026-11-06',
+            income_account_id: fid
+          });
+        expect(resIncome.status, `Expected 400 for income fixture ID "${fid}"`).toBe(400);
+        expect(resIncome.body.error.code).toBe('INVALID_ACCOUNT_ID');
       }
     });
 
@@ -579,7 +653,7 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
           primary_account_id: 'not-a-valid-uuid-1234',
           total_amount: '100.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(malformedRes.status).toBe(400);
@@ -595,7 +669,7 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
           primary_account_id: nonExistentUuid,
           total_amount: '100.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(notFoundRes.status).toBe(404);
@@ -609,10 +683,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '100.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary',
+          income_account_id: SALARY_ID,
           description: 'A'.repeat(256)
         });
 
@@ -626,10 +700,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-cc', // Visa Credit Card (LOAN_TAKEN)
+          primary_account_id: CC_ID, // Visa Credit Card (LOAN_TAKEN)
           total_amount: '100.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(400);
@@ -642,10 +716,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '100.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-dining' // Dining (EXPENSE)
+          income_account_id: DINING_ID // Dining (EXPENSE)
         });
 
       expect(res.status).toBe(400);
@@ -658,13 +732,13 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
   // -------------------------------------------------------------------------
   describe('TEST-OPEN-04: End-to-End Account Lock Integration (AC-03-3)', () => {
     it('locks opening balance upon income transaction commit, causing subsequent PATCH opening-balance to return 422', async () => {
-      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+      const checking = mockAccounts.find((a) => a.id === CHECKING_ID)!;
       checking.opening_balance = new Prisma.Decimal('5000.00');
       checking.is_opening_locked = false;
 
       // 1. Before transaction: updating opening balance succeeds
       const patch1 = await request(app)
-        .patch('/api/accounts/acc-demo-checking/opening-balance')
+        .patch(`/api/accounts/${CHECKING_ID}/opening-balance`)
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({ opening_balance: 10000.00 });
@@ -678,10 +752,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '20000.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(incomeRes.status).toBe(201);
@@ -689,7 +763,7 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
 
       // 3. Subsequent opening balance update is blocked with 422 OPENING_BALANCE_LOCKED
       const patch2 = await request(app)
-        .patch('/api/accounts/acc-demo-checking/opening-balance')
+        .patch(`/api/accounts/${CHECKING_ID}/opening-balance`)
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({ opening_balance: 15000.00 });
@@ -711,10 +785,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-other-checking', // Owned by User B
+          primary_account_id: OTHER_CHECKING_ID, // Owned by User B
           total_amount: '1000.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(404);
@@ -728,10 +802,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '1000.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-other-salary' // Owned by User B
+          income_account_id: OTHER_SALARY_ID // Owned by User B
         });
 
       expect(res.status).toBe(404);
@@ -750,10 +824,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', adminCookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-admin-checking',
+          primary_account_id: ADMIN_CHECKING_ID,
           total_amount: '1000.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-admin-salary'
+          income_account_id: ADMIN_SALARY_ID
         });
 
       expect(res.status).toBe(403);
@@ -766,10 +840,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .post('/api/transactions/income')
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '1000.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(401);
@@ -790,10 +864,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
           .set('Cookie', userACookie)
           .set('Origin', TRUSTED_ORIGIN)
           .send({
-            primary_account_id: 'acc-demo-checking',
+            primary_account_id: CHECKING_ID,
             total_amount: val,
             transaction_date: '2026-11-06',
-            income_account_id: 'acc-demo-salary'
+            income_account_id: SALARY_ID
           });
 
         expect(res.status).toBe(201);
@@ -808,7 +882,7 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
   // -------------------------------------------------------------------------
   describe('TEST-INC-ATOM: Transaction Atomicity & Rollback', () => {
     it('rolls back completely if an error occurs during allocation creation', async () => {
-      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+      const checking = mockAccounts.find((a) => a.id === CHECKING_ID)!;
       checking.is_opening_locked = false;
 
       // Mock allocationLine.create to throw
@@ -821,10 +895,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
-          primary_account_id: 'acc-demo-checking',
+          primary_account_id: CHECKING_ID,
           total_amount: '1000.00',
           transaction_date: '2026-11-06',
-          income_account_id: 'acc-demo-salary'
+          income_account_id: SALARY_ID
         });
 
       expect(res.status).toBe(500);
@@ -837,7 +911,7 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
   // -------------------------------------------------------------------------
   describe('TEST-INC-CONCURRENT: Concurrent Income Submissions', () => {
     it('handles concurrent income requests safely without balance corruption', async () => {
-      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+      const checking = mockAccounts.find((a) => a.id === CHECKING_ID)!;
       checking.opening_balance = new Prisma.Decimal('1000.00');
       checking.is_opening_locked = false;
 
@@ -847,20 +921,20 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
           .set('Cookie', userACookie)
           .set('Origin', TRUSTED_ORIGIN)
           .send({
-            primary_account_id: 'acc-demo-checking',
+            primary_account_id: CHECKING_ID,
             total_amount: '500.00',
             transaction_date: '2026-11-06',
-            income_account_id: 'acc-demo-salary'
+            income_account_id: SALARY_ID
           }),
         request(app)
           .post('/api/transactions/income')
           .set('Cookie', userACookie)
           .set('Origin', TRUSTED_ORIGIN)
           .send({
-            primary_account_id: 'acc-demo-checking',
+            primary_account_id: CHECKING_ID,
             total_amount: '700.00',
             transaction_date: '2026-11-06',
-            income_account_id: 'acc-demo-salary'
+            income_account_id: SALARY_ID
           })
       ]);
 
@@ -878,7 +952,7 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
     });
 
     it('retries safely and succeeds when initial attempt encounters an ACCOUNT_LOCK_CONCURRENCY_CONFLICT race', async () => {
-      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+      const checking = mockAccounts.find((a) => a.id === CHECKING_ID)!;
       checking.opening_balance = new Prisma.Decimal('1000.00');
       checking.is_opening_locked = false;
 
@@ -904,10 +978,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
       });
 
       const result = await recordIncome('user-a-uuid', {
-        primary_account_id: 'acc-demo-checking',
+        primary_account_id: CHECKING_ID,
         total_amount: '2500.00',
         transaction_date: '2026-11-06',
-        income_account_id: 'acc-demo-salary'
+        income_account_id: SALARY_ID
       });
 
       expect(result).toBeDefined();
@@ -916,6 +990,37 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
 
       // Restore original $transaction
       (prisma as any).$transaction = original$transaction;
+    });
+
+    it('excludes non-income transaction forms (e.g. PAYMENT_CHARGE) from total_income in summary report', async () => {
+      // 1. Manually insert a transaction with form PAYMENT_CHARGE targeting an income account
+      const txnRecord: MockTransactionRecord = {
+        id: 'txn-non-income-test',
+        user_id: 'user-a-uuid',
+        primary_account_id: CHECKING_ID,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('750.00'),
+        transaction_date: new Date('2026-11-06'),
+        description: 'Payment Charge test',
+        created_at: new Date()
+      };
+      mockTransactions.push(txnRecord);
+      mockAllocationLines.push({
+        id: 'alloc-non-income-test',
+        transaction_id: txnRecord.id,
+        target_account_id: SALARY_ID,
+        amount: new Prisma.Decimal('750.00'),
+        notes: null
+      });
+
+      // 2. Query summary report
+      const summaryRes = await request(app)
+        .get('/api/reports/summary')
+        .set('Cookie', userACookie);
+
+      expect(summaryRes.status).toBe(200);
+      // total_income must strictly exclude PAYMENT_CHARGE transactions even if allocated to an income account
+      expect(summaryRes.body.data.total_income).toBe(0.00);
     });
   });
 });
