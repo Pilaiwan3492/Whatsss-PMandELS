@@ -2,7 +2,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { app } from '../../src/app.js';
-import { assertTestDatabase, executeCleanupsSafely } from '../fixtures/testDbGuard.js';
+import { assertTestDatabase } from '../fixtures/testDbGuard.js';
+import { spawn, ChildProcess } from 'child_process';
+import path from 'path';
 
 interface AccountSnapshot {
   id: string;
@@ -10,16 +12,7 @@ interface AccountSnapshot {
   is_opening_locked: boolean;
 }
 
-/**
- * Integration Test: Database Persistence Across Server Restart (WP-06, Feature F-09)
- * Target: TEST-PERSIST-01, AC-09-2, NFR-DATA-01
- *
- * SAFETY INVARIANTS:
- * - Runs in CI or when ALLOW_LIVE_DB_TESTS=true is explicitly configured.
- * - Test database name MUST strictly equal "whatsss_test".
- * - Cleanups track EXACT IDs created by this test suite; broad table deletions are strictly prohibited.
- */
-describe('Integration Test: Relational Database Persistence Across Process Restart (TEST-PERSIST-01, AC-09-2)', () => {
+describe('Integration Test: Relational Database Persistence Across Real Process Restart (TEST-PERSIST-01, AC-09-2)', () => {
   let prisma: PrismaClient;
   let isDbConnected = false;
   const isGitHubActions = process.env.GITHUB_ACTIONS === 'true';
@@ -27,6 +20,7 @@ describe('Integration Test: Relational Database Persistence Across Process Resta
   const allowLiveDb = process.env.ALLOW_LIVE_DB_TESTS === 'true';
   const databaseUrl = process.env.DATABASE_URL || '';
   const TRUSTED_ORIGIN = 'http://localhost:5173';
+  const TEST_PORT = 5098;
 
   let demoUserId = '';
   let demoUserSessionCookie = '';
@@ -38,14 +32,81 @@ describe('Integration Test: Relational Database Persistence Across Process Resta
 
   const createdTxnIds: string[] = [];
   const accountSnapshots: AccountSnapshot[] = [];
-  const pendingCleanups: Array<() => Promise<void>> = [];
+
+  function spawnBackendProcess(port: number): Promise<{ child: ChildProcess; pid: number }> {
+    return new Promise((resolve, reject) => {
+      const tsxCli = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
+      const child = spawn(process.execPath, [tsxCli, 'src/index.ts'], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          PORT: String(port),
+          NODE_ENV: 'test',
+          DATABASE_URL: databaseUrl
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      const pid = child.pid!;
+      let isResolved = false;
+
+      const timer = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          child.kill('SIGKILL');
+          reject(new Error(`Timeout waiting for backend process (PID ${pid}) to start on port ${port}`));
+        }
+      }, 15000);
+
+      child.stdout?.on('data', (d) => {
+        if (d.toString().includes('listening') && !isResolved) {
+          isResolved = true;
+          clearTimeout(timer);
+          resolve({ child, pid });
+        }
+      });
+
+      child.stderr?.on('data', () => {});
+
+      child.on('error', (err) => {
+        if (!isResolved) {
+          isResolved = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      });
+
+      child.on('exit', (code) => {
+        if (!isResolved) {
+          isResolved = true;
+          clearTimeout(timer);
+          reject(new Error(`Process ${pid} exited prematurely with code ${code}`));
+        }
+      });
+    });
+  }
+
+  function terminateBackendProcess(child: ChildProcess): Promise<void> {
+    return new Promise((resolve) => {
+      if (child.killed || child.exitCode !== null) {
+        resolve();
+        return;
+      }
+      child.once('exit', () => resolve());
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        try {
+          if (!child.killed && child.exitCode === null) {
+            child.kill('SIGKILL');
+          }
+        } catch {}
+        resolve();
+      }, 2000);
+    });
+  }
 
   beforeAll(async () => {
     if (!isCI && !allowLiveDb) {
-      console.warn(
-        '[WP-06 NOTICE] Live PostgreSQL tests are disabled locally by default to protect developer databases. ' +
-        'Set ALLOW_LIVE_DB_TESTS=true with a dedicated test database ("whatsss_test") to run locally.'
-      );
       return;
     }
 
@@ -107,19 +168,19 @@ describe('Integration Test: Relational Database Persistence Across Process Resta
       if (a.name === 'Grocery') demoGroceryAccount = a;
     }
 
-    // Clean up any stale transactions for demo user before running test
+    // Clean up any stale transactions
     const staleTxns = await prisma.transaction.findMany({ where: { user_id: demoUserId }, select: { id: true } });
     if (staleTxns.length > 0) {
       await prisma.transaction.deleteMany({ where: { id: { in: staleTxns.map((t) => t.id) } } });
     }
 
-    // 1. Step 1: Set Checking Bank opening balance = 10,000.00 THB
+    // Step 1: Set Checking Bank opening balance = 10,000.00 THB
     await prisma.account.update({
       where: { id: demoCheckingAccount.id },
       data: { opening_balance: new Prisma.Decimal('10000.00'), is_opening_locked: true }
     });
 
-    // 2. Step 2: Salary 20,000.00 THB (RECEIVE_MONEY, 1 AllocationLine)
+    // Step 2: Salary 20,000.00 THB
     const txSalary = await prisma.transaction.create({
       data: {
         user_id: demoUserId,
@@ -129,19 +190,13 @@ describe('Integration Test: Relational Database Persistence Across Process Resta
         transaction_date: new Date('2026-11-02'),
         description: 'Salary',
         allocation_lines: {
-          create: [
-            {
-              target_account_id: demoSalaryAccount.id,
-              amount: new Prisma.Decimal('20000.00'),
-              notes: 'Monthly Salary'
-            }
-          ]
+          create: [{ target_account_id: demoSalaryAccount.id, amount: new Prisma.Decimal('20000.00'), notes: 'Salary' }]
         }
       }
     });
     createdTxnIds.push(txSalary.id);
 
-    // 3. Step 3: CC Purchase 3,000.00 THB (PAYMENT_CHARGE, 2 AllocationLines: Dining 1k, Grocery 2k)
+    // Step 3: CC Purchase 3,000.00 THB (Dining 1k, Grocery 2k)
     const txPurchase = await prisma.transaction.create({
       data: {
         user_id: demoUserId,
@@ -152,23 +207,15 @@ describe('Integration Test: Relational Database Persistence Across Process Resta
         description: 'Dining & Grocery',
         allocation_lines: {
           create: [
-            {
-              target_account_id: demoDiningAccount.id,
-              amount: new Prisma.Decimal('1000.00'),
-              notes: 'Dining'
-            },
-            {
-              target_account_id: demoGroceryAccount.id,
-              amount: new Prisma.Decimal('2000.00'),
-              notes: 'Grocery'
-            }
+            { target_account_id: demoDiningAccount.id, amount: new Prisma.Decimal('1000.00'), notes: 'Dining' },
+            { target_account_id: demoGroceryAccount.id, amount: new Prisma.Decimal('2000.00'), notes: 'Grocery' }
           ]
         }
       }
     });
     createdTxnIds.push(txPurchase.id);
 
-    // 4. Step 4: CC Repayment 3,000.00 THB (PAYMENT_CHARGE, 1 AllocationLine to CC)
+    // Step 4: CC Repayment 3,000.00 THB
     const txRepayment = await prisma.transaction.create({
       data: {
         user_id: demoUserId,
@@ -178,13 +225,7 @@ describe('Integration Test: Relational Database Persistence Across Process Resta
         transaction_date: new Date('2026-11-04'),
         description: 'CC Repayment',
         allocation_lines: {
-          create: [
-            {
-              target_account_id: demoCreditCardAccount.id,
-              amount: new Prisma.Decimal('3000.00'),
-              notes: 'Repayment'
-            }
-          ]
+          create: [{ target_account_id: demoCreditCardAccount.id, amount: new Prisma.Decimal('3000.00'), notes: 'Repayment' }]
         }
       }
     });
@@ -213,48 +254,85 @@ describe('Integration Test: Relational Database Persistence Across Process Resta
     await prisma.$disconnect();
   });
 
-  it('TEST-PERSIST-01: simulates process restart and verifies identical data retrieval (AC-09-2, NFR-DATA-01)', async () => {
+  it('TEST-PERSIST-01: restarts backend server process and verifies data retrieval identity (AC-09-2, NFR-DATA-01)', async () => {
     if (!isCI && !allowLiveDb) {
       return;
     }
 
-    // SIMULATE SERVER PROCESS RESTART:
-    // 1. Disconnect active PrismaClient instance
-    await prisma.$disconnect();
+    // --- PHASE 1: SPAWN BACKEND PROCESS 1 ---
+    const proc1 = await spawnBackendProcess(TEST_PORT);
+    expect(proc1.pid).toBeGreaterThan(0);
 
-    // 2. Instantiate a fresh PrismaClient representing a brand new server process instance
-    const freshPrisma = new PrismaClient();
-    await freshPrisma.$queryRaw`SELECT 1`;
+    // Query Pre-Restart state via HTTP
+    const preSumRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
+      headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+    });
+    expect(preSumRes.status).toBe(200);
+    const preSummary = (await preSumRes.json()).data;
+    expect(preSummary.bank_balance).toBe(27000.00);
+    expect(preSummary.credit_debt).toBe(0.00);
+    expect(preSummary.total_income).toBe(20000.00);
+    expect(preSummary.total_expense).toBe(3000.00);
 
-    // 3. Query GET /api/reports/summary
-    const summaryRes = await request(app)
-      .get('/api/reports/summary')
-      .set('Cookie', demoUserSessionCookie);
+    const preTxRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/transactions`, {
+      headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+    });
+    expect(preTxRes.status).toBe(200);
+    const preTxns = (await preTxRes.json()).data.transactions;
+    expect(preTxns).toHaveLength(3);
 
-    expect(summaryRes.status).toBe(200);
-    expect(summaryRes.body.success).toBe(true);
-    expect(summaryRes.body.data.bank_balance).toBe(27000.00);
-    expect(summaryRes.body.data.credit_debt).toBe(0.00);
-    expect(summaryRes.body.data.total_income).toBe(20000.00);
-    expect(summaryRes.body.data.total_expense).toBe(3000.00);
-    expect(summaryRes.body.data.category_breakdown['Dining']).toBe(1000.00);
-    expect(summaryRes.body.data.category_breakdown['Grocery']).toBe(2000.00);
+    // --- PHASE 2: TERMINATE BACKEND PROCESS 1 (OS Process Kill) ---
+    await terminateBackendProcess(proc1.child);
 
-    // 4. Query GET /api/transactions
-    const historyRes = await request(app)
-      .get('/api/transactions')
-      .set('Cookie', demoUserSessionCookie);
+    // Verify port is dead
+    let isTerminated = false;
+    try {
+      await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
+        headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+      });
+    } catch {
+      isTerminated = true;
+    }
+    expect(isTerminated).toBe(true);
 
-    expect(historyRes.status).toBe(200);
-    expect(historyRes.body.success).toBe(true);
+    // --- PHASE 3: SPAWN BACKEND PROCESS 2 (Without DB re-seeding) ---
+    const proc2 = await spawnBackendProcess(TEST_PORT);
+    expect(proc2.pid).toBeGreaterThan(0);
+    expect(proc2.pid).not.toBe(proc1.pid); // Strictly verifies brand new OS process
 
-    const txns = historyRes.body.data.transactions;
-    expect(txns).toHaveLength(3);
+    try {
+      // Query Post-Restart state via HTTP from Process 2
+      const postSumRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
+        headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+      });
+      expect(postSumRes.status).toBe(200);
+      const postSummary = (await postSumRes.json()).data;
 
-    const totalLines = txns.reduce((sum: number, t: any) => sum + t.allocation_lines.length, 0);
-    expect(totalLines).toBe(4);
+      // Assert identical financial balances
+      expect(postSummary.bank_balance).toBe(27000.00);
+      expect(postSummary.credit_debt).toBe(0.00);
+      expect(postSummary.total_income).toBe(20000.00);
+      expect(postSummary.total_expense).toBe(3000.00);
+      expect(postSummary.category_breakdown['Dining']).toBe(1000.00);
+      expect(postSummary.category_breakdown['Grocery']).toBe(2000.00);
 
-    // Re-assign prisma for cleanup
-    prisma = freshPrisma;
-  });
+      // Query Post-Restart transaction history
+      const postTxRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/transactions`, {
+        headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+      });
+      expect(postTxRes.status).toBe(200);
+      const postTxns = (await postTxRes.json()).data.transactions;
+      expect(postTxns).toHaveLength(3);
+
+      const totalLines = postTxns.reduce((sum: number, t: any) => sum + t.allocation_lines.length, 0);
+      expect(totalLines).toBe(4);
+
+      // Verify absolute identity between Process 1 and Process 2
+      expect(postSummary).toEqual(preSummary);
+      expect(postTxns).toEqual(preTxns);
+    } finally {
+      // Clean up Process 2
+      await terminateBackendProcess(proc2.child);
+    }
+  }, 35000);
 });
