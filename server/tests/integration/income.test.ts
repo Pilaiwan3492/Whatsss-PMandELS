@@ -486,20 +486,121 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
       expect(res.body.error.code).toBe('INVALID_TRANSACTION_DATE');
     });
 
-    it('rejects impossible calendar date like 2026-02-30 with 400 INVALID_TRANSACTION_DATE', async () => {
-      const res = await request(app)
+    it('rejects date with trailing characters or timestamps with 400 INVALID_TRANSACTION_DATE', async () => {
+      const invalidDates = [
+        '2026-11-06T12:00:00Z',
+        '2026-11-06-extra',
+        '2026-11-06 12:00',
+        '2026/11/06'
+      ];
+
+      for (const d of invalidDates) {
+        const res = await request(app)
+          .post('/api/transactions/income')
+          .set('Cookie', userACookie)
+          .set('Origin', TRUSTED_ORIGIN)
+          .send({
+            primary_account_id: 'acc-demo-checking',
+            total_amount: '100.00',
+            transaction_date: d,
+            income_account_id: 'acc-demo-salary'
+          });
+
+        expect(res.status, `Expected 400 for date ${d}`).toBe(400);
+        expect(res.body.error.code).toBe('INVALID_TRANSACTION_DATE');
+      }
+    });
+
+    it('rejects invalid leap year date 2026-02-29 and accepts valid leap year date 2024-02-29', async () => {
+      // 2026 is not a leap year -> reject
+      const resNonLeap = await request(app)
         .post('/api/transactions/income')
         .set('Cookie', userACookie)
         .set('Origin', TRUSTED_ORIGIN)
         .send({
           primary_account_id: 'acc-demo-checking',
           total_amount: '100.00',
-          transaction_date: '2026-02-30',
+          transaction_date: '2026-02-29',
           income_account_id: 'acc-demo-salary'
         });
 
-      expect(res.status).toBe(400);
-      expect(res.body.error.code).toBe('INVALID_TRANSACTION_DATE');
+      expect(resNonLeap.status).toBe(400);
+      expect(resNonLeap.body.error.code).toBe('INVALID_TRANSACTION_DATE');
+
+      // 2024 is a leap year -> accept
+      const resLeap = await request(app)
+        .post('/api/transactions/income')
+        .set('Cookie', userACookie)
+        .set('Origin', TRUSTED_ORIGIN)
+        .send({
+          primary_account_id: 'acc-demo-checking',
+          total_amount: '100.00',
+          transaction_date: '2024-02-29',
+          income_account_id: 'acc-demo-salary'
+        });
+
+      expect(resLeap.status).toBe(201);
+      expect(resLeap.body.data.transaction.transaction_date).toBe('2024-02-29');
+    });
+
+    it('rejects malformed account IDs with 400 INVALID_ACCOUNT_ID before database lookup', async () => {
+      const malformedIds = [
+        '',
+        '   ',
+        'invalid!id@#$',
+        '12345',
+        'not-a-uuid-format'
+      ];
+
+      for (const badId of malformedIds) {
+        const res = await request(app)
+          .post('/api/transactions/income')
+          .set('Cookie', userACookie)
+          .set('Origin', TRUSTED_ORIGIN)
+          .send({
+            primary_account_id: badId,
+            total_amount: '100.00',
+            transaction_date: '2026-11-06',
+            income_account_id: 'acc-demo-salary'
+          });
+
+        expect(res.status, `Expected 400 for primary_account_id "${badId}"`).toBe(400);
+        expect(res.body.error.code).toBe('INVALID_ACCOUNT_ID');
+      }
+    });
+
+    it('distinguishes malformed ID (400 INVALID_ACCOUNT_ID) from non-existent valid UUID (404 NOT_FOUND)', async () => {
+      // 1. Malformed ID -> 400
+      const malformedRes = await request(app)
+        .post('/api/transactions/income')
+        .set('Cookie', userACookie)
+        .set('Origin', TRUSTED_ORIGIN)
+        .send({
+          primary_account_id: 'not-a-valid-uuid-1234',
+          total_amount: '100.00',
+          transaction_date: '2026-11-06',
+          income_account_id: 'acc-demo-salary'
+        });
+
+      expect(malformedRes.status).toBe(400);
+      expect(malformedRes.body.error.code).toBe('INVALID_ACCOUNT_ID');
+
+      // 2. Syntactically valid UUID that does not exist in DB -> 404 NOT_FOUND
+      const nonExistentUuid = 'a0000000-0000-4000-8000-000000000000';
+      const notFoundRes = await request(app)
+        .post('/api/transactions/income')
+        .set('Cookie', userACookie)
+        .set('Origin', TRUSTED_ORIGIN)
+        .send({
+          primary_account_id: nonExistentUuid,
+          total_amount: '100.00',
+          transaction_date: '2026-11-06',
+          income_account_id: 'acc-demo-salary'
+        });
+
+      expect(notFoundRes.status).toBe(404);
+      expect(notFoundRes.body.error.code).toBe('NOT_FOUND');
+      expect(notFoundRes.body.error.message).toContain('Primary account not found');
     });
 
     it('rejects descriptions exceeding 255 characters with 400 INVALID_DESCRIPTION', async () => {
@@ -774,6 +875,47 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
 
       expect(summaryRes.body.data.bank_balance).toBe(2200.00);
       expect(summaryRes.body.data.total_income).toBe(1200.00);
+    });
+
+    it('retries safely and succeeds when initial attempt encounters an ACCOUNT_LOCK_CONCURRENCY_CONFLICT race', async () => {
+      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+      checking.opening_balance = new Prisma.Decimal('1000.00');
+      checking.is_opening_locked = false;
+
+      // Mock accountLock.service lockAccounts to throw once with ACCOUNT_LOCK_CONCURRENCY_CONFLICT, then succeed
+      const { lockAccounts, AccountLockError } = await import('../../src/services/accountLock.service.js');
+      let callCount = 0;
+
+      // Import the income.service recordIncome directly
+      const { recordIncome } = await import('../../src/services/income.service.js');
+      const { prisma } = await import('../../src/prisma.js');
+
+      // Create a wrapped prisma client where the first transaction call fails with concurrency conflict inside lockAccounts
+      const original$transaction = prisma.$transaction;
+      (prisma as any).$transaction = vi.fn(async (cb: any) => {
+        callCount++;
+        if (callCount === 1) {
+          throw new AccountLockError(
+            'Concurrency conflict: expected to lock 1 account(s), but updated 0. Aborting transaction.',
+            'ACCOUNT_LOCK_CONCURRENCY_CONFLICT'
+          );
+        }
+        return original$transaction(cb);
+      });
+
+      const result = await recordIncome('user-a-uuid', {
+        primary_account_id: 'acc-demo-checking',
+        total_amount: '2500.00',
+        transaction_date: '2026-11-06',
+        income_account_id: 'acc-demo-salary'
+      });
+
+      expect(result).toBeDefined();
+      expect(result.transaction.total_amount).toBe('2500.00');
+      expect(callCount).toBe(2); // Attempt 1 threw concurrency conflict; attempt 2 succeeded
+
+      // Restore original $transaction
+      (prisma as any).$transaction = original$transaction;
     });
   });
 });

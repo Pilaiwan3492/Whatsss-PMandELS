@@ -36,9 +36,13 @@ export const IncomeForm: React.FC<IncomeFormProps> = ({
       const defaultIncome = incomeAccounts.find((a) => a.name === 'Salary') || incomeAccounts[0];
       setIncomeAccountId(defaultIncome ? defaultIncome.id : '');
 
-      // Default transaction date to today (YYYY-MM-DD)
-      const today = new Date().toISOString().split('T')[0];
-      setTransactionDate(today);
+      // Default transaction date to user's local calendar date (YYYY-MM-DD)
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const localToday = `${year}-${month}-${day}`;
+      setTransactionDate(localToday);
 
       setTotalAmount('');
       setDescription('');

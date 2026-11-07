@@ -102,8 +102,9 @@ describe('IncomeForm Component (TEST-UI-INC)', () => {
     expect(incomeSelect.value).toBe('income-salary-1');
 
     const dateInput = screen.getByLabelText(/Transaction Date/i) as HTMLInputElement;
-    const today = new Date().toISOString().split('T')[0];
-    expect(dateInput.value).toBe(today);
+    const now = new Date();
+    const expectedToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    expect(dateInput.value).toBe(expectedToday);
   });
 
   it('validates amount: rejects non-positive amount', async () => {
