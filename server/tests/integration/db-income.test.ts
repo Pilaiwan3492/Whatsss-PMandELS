@@ -597,9 +597,9 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
   });
 
   // -------------------------------------------------------------------------
-  // 10. Live Cleanup Verification: Cleanup functions reliably after assertion failure
+  // 10. Live Cleanup Verification: Direct exercise of executeCleanupsSafely helper
   // -------------------------------------------------------------------------
-  it('demonstrates fixture cleanup and account restoration reliably executes even when an assertion fails after successful transaction creation', async (ctx) => {
+  it('executes cleanup queue directly via executeCleanupsSafely, purging exact transaction IDs and restoring account baseline', async (ctx) => {
     if (!isDbConnected) {
       ctx.skip();
       return;
@@ -612,18 +612,25 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     const baselineSnap = await snapshotAccount(demoCheckingAccount.id);
     const trackedTxnIds: string[] = [];
 
-    // Isolate cleanup function for this demonstration
-    const isolatedCleanup = async () => {
+    // Register cleanup tasks using the exact queue structure used by the suite
+    const isolatedQueue: Array<() => Promise<void>> = [];
+
+    // Task 1: Restore account baseline
+    isolatedQueue.push(async function restoreAccountBaselineTask() {
+      await restoreAccount(baselineSnap);
+    });
+
+    // Task 2: Purge exact transaction and allocation records
+    isolatedQueue.push(async function deleteCreatedTransactionsTask() {
       if (trackedTxnIds.length > 0) {
         await prisma.allocationLine.deleteMany({ where: { transaction_id: { in: trackedTxnIds } } });
         await prisma.transaction.deleteMany({ where: { id: { in: trackedTxnIds } } });
       }
-      await restoreAccount(baselineSnap);
-    };
+    });
 
     let assertionErrorCaught: any = null;
     try {
-      // 1. Execute successful transaction
+      // 1. Execute live income transaction
       const res = await request(app)
         .post('/api/transactions/income')
         .set('Cookie', demoUserSessionCookie)
@@ -633,7 +640,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
           total_amount: '1234.56',
           transaction_date: '2026-11-06',
           income_account_id: demoSalaryAccount.id,
-          description: 'Assertion Failure Cleanup Demo'
+          description: 'Assertion Failure Cleanup Helper Demo'
         });
 
       expect(res.status).toBe(201);
@@ -649,16 +656,18 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     } catch (err: any) {
       assertionErrorCaught = err;
     } finally {
-      // 3. Execute cleanup exactly as afterEach / executeCleanupsSafely does
-      await isolatedCleanup();
+      // 3. Execute cleanup directly via the actual executeCleanupsSafely helper used by afterEach
+      const summary = await executeCleanupsSafely(isolatedQueue);
+      expect(summary.failed).toBe(0);
+      expect(summary.succeeded).toBe(2);
+      expect(isolatedQueue).toHaveLength(0);
     }
 
     // Confirm that the assertion failure actually occurred
     expect(assertionErrorCaught).toBeDefined();
     expect(assertionErrorCaught.message).toContain('intentionally_different_expected_value');
 
-    // Confirm that despite the assertion failure, the cleanup successfully ran:
-    // A. The created transaction and allocation were deleted from PostgreSQL
+    // Confirm that executeCleanupsSafely successfully purged exact transaction records:
     for (const tid of trackedTxnIds) {
       const remainingTxn = await prisma.transaction.findUnique({ where: { id: tid } });
       expect(remainingTxn).toBeNull();
@@ -666,10 +675,78 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
       expect(remainingAlloc).toBeNull();
     }
 
-    // B. The account in PostgreSQL has been restored to its exact pristine baseline
+    // Confirm that executeCleanupsSafely restored the original account snapshot:
     const restoredAcc = await prisma.account.findUnique({ where: { id: demoCheckingAccount.id } });
     expect(restoredAcc!.opening_balance.equals(baselineSnap.opening_balance)).toBe(true);
     expect(restoredAcc!.is_opening_locked).toBe(baselineSnap.is_opening_locked);
     expect(restoredAcc!.updated_at.getTime()).toBe(baselineSnap.updated_at.getTime());
+  });
+
+  it('continues cleanup via executeCleanupsSafely when a task fails initially and succeeds on retry', async (ctx) => {
+    if (!isDbConnected) {
+      ctx.skip();
+      return;
+    }
+    if (!demoCheckingAccount) {
+      expect.fail('Missing demoCheckingAccount for cleanup retry test');
+    }
+
+    const baselineSnap = await snapshotAccount(demoCheckingAccount.id);
+    const retryQueue: Array<() => Promise<void>> = [];
+
+    // Task 1: account restoration that runs after task 2
+    let restoredSuccessfully = false;
+    retryQueue.push(async function secondTask() {
+      await restoreAccount(baselineSnap);
+      restoredSuccessfully = true;
+    });
+
+    // Task 2: initially fails on attempt 1, then succeeds on attempt 2
+    let taskAttempts = 0;
+    retryQueue.push(async function flakyTask() {
+      taskAttempts++;
+      if (taskAttempts === 1) {
+        throw new Error('SIMULATED_TRANSIENT_CLEANUP_FAILURE');
+      }
+    });
+
+    // Execute via executeCleanupsSafely with maxAttempts = 2
+    const summary = await executeCleanupsSafely(retryQueue, 2);
+
+    expect(taskAttempts).toBe(2);
+    expect(summary.succeeded).toBe(2);
+    expect(summary.failed).toBe(0);
+    expect(restoredSuccessfully).toBe(true);
+    expect(retryQueue).toHaveLength(0);
+
+    const record = summary.records.find((r) => r.name === 'flakyTask');
+    expect(record).toBeDefined();
+    expect(record!.success).toBe(true);
+    expect(record!.attempts).toBe(2);
+  });
+
+  it('surfaces permanent cleanup failure rather than silently ignoring it when retry limit is exhausted', async (ctx) => {
+    if (!isDbConnected) {
+      ctx.skip();
+      return;
+    }
+
+    const failingQueue: Array<() => Promise<void>> = [];
+    failingQueue.push(async function permanentFailureTask() {
+      throw new Error('SIMULATED_PERMANENT_DATABASE_FAILURE');
+    });
+
+    let caughtError: any = null;
+    try {
+      await executeCleanupsSafely(failingQueue, 2);
+    } catch (err: any) {
+      caughtError = err;
+    }
+
+    expect(caughtError).toBeDefined();
+    expect(caughtError.message).toContain('FATAL: Bounded-retry cleanup failed for 1 task(s)');
+    expect(caughtError.message).toContain('SIMULATED_PERMANENT_DATABASE_FAILURE');
+    expect(caughtError.summary?.failed).toBe(1);
+    expect(failingQueue).toHaveLength(0); // Safely emptied to avoid dangling tasks
   });
 });

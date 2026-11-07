@@ -211,18 +211,19 @@ export function validateDescription(val: unknown): string | null {
 /**
  * Account ID format validation.
  * In accordance with Phase 2.4 and NFR-DATA-01:
- * - Production validation must accept only valid UUID identifiers (8-4-4-4-12 hex).
+ * - Production validation strictly accepts canonical UUID identifiers (8-4-4-4-12 hex).
+ * - Whitespace Contract: Surrounding whitespace (leading or trailing) is strictly rejected rather than silently normalized.
  * - No fixture-specific IDs or environment-dependent bypasses in production code.
- * - Rejects malformed identifiers upfront with 400 INVALID_ACCOUNT_ID.
+ * - Rejects malformed identifiers and fixture-style IDs upfront with 400 INVALID_ACCOUNT_ID.
  * - Distinguishes malformed IDs (400) from well-formed IDs that do not exist (404).
  */
 export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isValidAccountId(val: unknown): val is string {
-  if (typeof val !== 'string') return false;
-  const trimmed = val.trim();
-  if (trimmed.length === 0) return false;
-  return UUID_REGEX.test(trimmed);
+  if (typeof val !== 'string' || val.length === 0) return false;
+  // Whitespace Contract: reject leading or trailing whitespace
+  if (val !== val.trim()) return false;
+  return UUID_REGEX.test(val);
 }
 
 /**
@@ -315,8 +316,8 @@ export async function recordIncome(
     );
   }
 
-  const primaryId = input.primary_account_id.trim();
-  const incomeId = input.income_account_id.trim();
+  const primaryId = input.primary_account_id;
+  const incomeId = input.income_account_id;
 
   // 2. Validate amount, date, description
   const amountDecimal = validateTransactionAmount(input.total_amount);

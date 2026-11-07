@@ -643,6 +643,46 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
       }
     });
 
+    it('strictly rejects account IDs with leading or trailing whitespace per canonical UUID contract', async () => {
+      const whitespaceUuids = [
+        ` ${CHECKING_ID}`,
+        `${CHECKING_ID} `,
+        `  ${CHECKING_ID}  `,
+        `\t${CHECKING_ID}`,
+        `${CHECKING_ID}\n`
+      ];
+
+      for (const badUuid of whitespaceUuids) {
+        // Test primary_account_id with whitespace
+        const resPrimary = await request(app)
+          .post('/api/transactions/income')
+          .set('Cookie', userACookie)
+          .set('Origin', TRUSTED_ORIGIN)
+          .send({
+            primary_account_id: badUuid,
+            total_amount: '100.00',
+            transaction_date: '2026-11-06',
+            income_account_id: SALARY_ID
+          });
+        expect(resPrimary.status, `Expected 400 for primary_account_id with whitespace "${badUuid}"`).toBe(400);
+        expect(resPrimary.body.error.code).toBe('INVALID_ACCOUNT_ID');
+
+        // Test income_account_id with whitespace
+        const resIncome = await request(app)
+          .post('/api/transactions/income')
+          .set('Cookie', userACookie)
+          .set('Origin', TRUSTED_ORIGIN)
+          .send({
+            primary_account_id: CHECKING_ID,
+            total_amount: '100.00',
+            transaction_date: '2026-11-06',
+            income_account_id: badUuid
+          });
+        expect(resIncome.status, `Expected 400 for income_account_id with whitespace "${badUuid}"`).toBe(400);
+        expect(resIncome.body.error.code).toBe('INVALID_ACCOUNT_ID');
+      }
+    });
+
     it('distinguishes malformed ID (400 INVALID_ACCOUNT_ID) from non-existent valid UUID (404 NOT_FOUND)', async () => {
       // 1. Malformed ID -> 400
       const malformedRes = await request(app)
