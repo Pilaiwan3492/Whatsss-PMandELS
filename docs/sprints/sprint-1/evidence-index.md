@@ -10,7 +10,7 @@
 
 ## 1. Release Identification
 
-* **Assessed Implementation Baseline Commit:** Branch `feat/summaries-history-e2e` (`756b569` / verified on CI Run #111 & #109: WP-06 Financial Summaries, Transaction History, Real Process Restart & Integration)
+* **Assessed Implementation Baseline Commit:** Branch `feat/summaries-history-e2e` (`ff081b3` / verified on CI Run #115: WP-06 Financial Summaries, Transaction History, Real Process Restart & Integration)
 * **Base Branch Commit:** `f9d4ad8` (`sprint-1` merge of PR #12)
 * **Release Tag:** `v0.1.0-sprint1` (Release Candidate ready for Deliverable 1 packaging)
 * **Target Issue:** [GitHub Issue #7](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/7)
@@ -41,9 +41,9 @@
     * Production Builds:
       * Backend TypeScript compilation: Passed.
       * Frontend TypeScript compilation and Vite production build: Passed.
-    * CI Run: [#111](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42401134299) (and [#109](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42399626196))
-    * Verified Commit: `756b569e59d248eb3a28b57b5463f699042b3bf0` (`756b569`)
-    * หมายเหตุ: ตัวเลขนี้ตรวจจาก Job Logs ของ Run #111 และ Run #109 (Backend 312 passed across 25 files, Frontend 53 passed across 7 files, TypeScript compilation & Vite build passed)
+    * CI Run: [#115](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42402962705) (and [#111](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42401134299))
+    * Verified Commit: `ff081b376d54d9c490a07106093cb4a2b9eb0270` (`ff081b3`)
+    * หมายเหตุ: ตัวเลขนี้ตรวจจาก Job Logs ของ Run #115 (Backend 312 passed across 25 files, Frontend 53 passed across 7 files, TypeScript compilation & Vite build passed)
   * **Detailed Suite Breakdown:**
     * `balance.test.ts`: 5 passed (TEST-BAL-01: arbitrary-precision Decimal balance calculations, opening balance exclusion BR-02, salary inflow balance impact, split purchase debt impact, Golden Journey final balances Bank 27,000 THB, Debt 0 THB, Income 20,000 THB, Expense 3,000 THB, Dining 1,000 THB, Grocery 2,000 THB)
     * `transaction.test.ts`: 7 passed (TEST-HIST-01: Mocked Prisma & HTTP API; 401 unauthenticated per BR-09, 403 admin financial barrier per BR-10, cross-tenant isolation per BR-01, empty state, exactly 3 transactions and 4 allocation lines total per AC-09-1, deterministic chronological sorting transaction_date DESC, created_at DESC, eagerly loaded primary account and target category metadata)
