@@ -127,17 +127,29 @@
 
 ---
 
-### 2.5 Pending Work Packages (WP-05 through WP-06: Repayment, Summary & E2E)
-> **Note:** Repayments, final balances, and historical ledger are scheduled for subsequent work packages. The following tests remain pending implementation and execution.
+### 2.5 Work Package 5 Evidence (WP-05: Credit Card Debt Settlement / Repayment)
+| Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |
+|---|---|---|---|:---:|
+| `TEST-REPAY-01` | `AC-07-1`, `BR-07`, `FR-09` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Recording CC repayment of 3,000.00 THB from Bank to Credit Card reduces Bank balance to 27,000.00 THB and debt to 0.00 THB with 1 allocation line targeting LOAN_TAKEN; locks opening balances atomically) | WP-05 Branch |
+| `TEST-REPAY-02` | `AC-07-2`, `BR-08` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Expense summary verified unchanged at 3,000.00 THB after debt repayment; repayments targeting LOAN_TAKEN are strictly excluded from total expenses per BR-08) | WP-05 Branch |
+| `TEST-REPAY-03` | `AC-07-4` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Repayment request of 3,500.00 THB against 3,000.00 THB debt rejected with 422 REPAYMENT_EXCEEDS_DEBT, zero records written to database) | WP-05 Branch |
+| `TEST-REPAY-04` | `AC-07-5` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Repayment request of 30,000.00 THB when bank balance is 27,000.00 THB rejected with 422 INSUFFICIENT_FUNDS, zero records written) | WP-05 Branch |
+| `TEST-REPAY-05` | `AC-07-3` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Partial repayment of 1,500.00 THB against 3,000.00 THB debt reduces debt to 1,500.00 THB and bank balance to 25,500.00 THB with zero expense impact) | WP-05 Branch |
+| `TEST-REPAY-06` | `AC-07-6` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Non-positive amount <= 0, alphanumeric "1000abc", exponent notation "1e3", or decimal precision >2 places rejected with 400 INVALID_AMOUNT) | WP-05 Branch |
+| `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Cross-tenant source or target accounts return 404 NOT_FOUND, 0 rows written) | WP-05 Branch |
+| `TEST-SEC-02` | `AC-02-1`, `BR-09` | `server/tests/integration/repayment.test.ts` | Passed — Mocked Prisma (Unauthenticated POST /api/transactions/repayment returns 401 UNAUTHORIZED) | WP-05 Branch |
+| `TEST-SEC-03` | `AC-02-2`, `BR-10` | `server/tests/integration/repayment.test.ts` | Passed — Mocked Prisma (ADMIN caller returns 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN with zero data leak) | WP-05 Branch |
+| `TEST-REPAY-ATOM` | `AC-03-3`, `BR-07` | `server/tests/integration/db-repayment.test.ts` | Passed — Live PostgreSQL (Mid-flight failure inside $transaction rolls back transaction and preserves opening balance lock state) | WP-05 Branch |
+| `TEST-REPAY-DECIMAL`| `NFR-DATA-01` | `server/tests/integration/repayment.test.ts`, `server/tests/integration/db-repayment.test.ts` | Passed — Mocked Prisma & Live PostgreSQL (Preserves exact boundary Decimal values without floating-point distortion) | WP-05 Branch |
+| `TEST-UI-REPAY` | `AC-07-1`..`06` | `client/src/components/RepaymentForm.test.tsx` | Passed — Vitest / Testing Library (10 test cases in RepaymentForm.test.tsx: TEST-UI-REPAY-01..10 covering layout, full repayment submission, partial repayment, pay full debt quick action, debt exceed warning, insufficient funds warning, invalid amount blocking, error banner, and cancel modal) | WP-05 Branch |
+
+---
+
+### 2.6 Pending Work Packages (WP-06: Financial Summaries, Transaction History & E2E)
+> **Note:** Final balances, chronological history, and Golden Journey E2E validation are scheduled for Work Package 6. The following tests remain pending implementation and execution.
 
 | Test ID | Linked AC / Feature | Test Location | Status |
 |---|---|---|:---:|
-| `TEST-REPAY-01`| `AC-07-1` (Credit Repayment) | `server/tests/integration/transaction.test.ts` | Pending Execution |
-| `TEST-REPAY-02`| `AC-07-2` (Repayment Balance Update) | `server/tests/integration/summary.test.ts` | Pending Execution |
-| `TEST-REPAY-03`| `AC-07-4` (Target Account Validation) | `server/tests/integration/repayment.test.ts` | Pending Execution |
-| `TEST-REPAY-04`| `AC-07-5` (Negative Amount Validation) | `server/tests/integration/repayment.test.ts` | Pending Execution |
-| `TEST-REPAY-05`| `AC-07-3` (Zero Repayment Amount) | `server/tests/integration/repayment.test.ts` | Pending Execution |
-| `TEST-REPAY-06`| `AC-07-6` (Overpayment Handling) | `server/tests/integration/repayment.test.ts` | Pending Execution |
 | `TEST-BAL-01` | `AC-08-1` (Balance Invariant Formula) | `server/tests/unit/balance.test.ts` | Pending Execution |
 | `TEST-HIST-01` | `AC-09-1` (Transaction History Order) | `server/tests/integration/transaction.test.ts` | Pending Execution |
 | `TEST-PERSIST-01`| `AC-09-2` (Relational DB Persistence) | `server/tests/integration/persistence.test.ts` | Pending Execution |
