@@ -3,7 +3,7 @@ import request from 'supertest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { app } from '../../src/app.js';
 import { assertTestDatabase } from '../fixtures/testDbGuard.js';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import path from 'path';
 
 interface AccountSnapshot {
@@ -12,6 +12,16 @@ interface AccountSnapshot {
   is_opening_locked: boolean;
 }
 
+/**
+ * Integration Test: Relational Database Persistence Across Real Process Restart
+ * Target: TEST-PERSIST-01, AC-09-2, NFR-DATA-01
+ *
+ * SAFETY INVARIANTS:
+ * - Runs in CI or when ALLOW_LIVE_DB_TESTS=true is explicitly configured.
+ * - Test database name MUST strictly equal "whatsss_test".
+ * - Cleanups track EXACT IDs created by this test suite; broad table deletions are strictly prohibited.
+ * - All spawned backend server processes are tracked and guaranteed terminated in finally and afterAll.
+ */
 describe('Integration Test: Relational Database Persistence Across Real Process Restart (TEST-PERSIST-01, AC-09-2)', () => {
   let prisma: PrismaClient;
   let isDbConnected = false;
@@ -32,6 +42,7 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
 
   const createdTxnIds: string[] = [];
   const accountSnapshots: AccountSnapshot[] = [];
+  const spawnedProcesses: ChildProcess[] = [];
 
   function spawnBackendProcess(port: number): Promise<{ child: ChildProcess; pid: number }> {
     return new Promise((resolve, reject) => {
@@ -47,13 +58,23 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
+      // Track process immediately to guarantee cleanup on error or timeout
+      spawnedProcesses.push(child);
+
       const pid = child.pid!;
       let isResolved = false;
 
       const timer = setTimeout(() => {
         if (!isResolved) {
           isResolved = true;
-          child.kill('SIGKILL');
+          try {
+            if (process.platform === 'win32' && pid) {
+              execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+            }
+          } catch {}
+          try {
+            child.kill('SIGKILL');
+          } catch {}
           reject(new Error(`Timeout waiting for backend process (PID ${pid}) to start on port ${port}`));
         }
       }, 15000);
@@ -86,22 +107,32 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
     });
   }
 
-  function terminateBackendProcess(child: ChildProcess): Promise<void> {
-    return new Promise((resolve) => {
+  async function terminateBackendProcess(child: ChildProcess): Promise<void> {
+    if (!child || child.killed || child.exitCode !== null) {
+      return;
+    }
+
+    const pid = child.pid;
+    if (process.platform === 'win32' && pid) {
+      try {
+        execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+      } catch {}
+    }
+
+    try {
+      child.kill('SIGKILL');
+    } catch {}
+
+    await new Promise<void>((resolve) => {
       if (child.killed || child.exitCode !== null) {
         resolve();
         return;
       }
-      child.once('exit', () => resolve());
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        try {
-          if (!child.killed && child.exitCode === null) {
-            child.kill('SIGKILL');
-          }
-        } catch {}
+      const exitTimer = setTimeout(() => resolve(), 2000);
+      child.once('exit', () => {
+        clearTimeout(exitTimer);
         resolve();
-      }, 2000);
+      });
     });
   }
 
@@ -233,6 +264,13 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
   });
 
   afterAll(async () => {
+    // 1. Guaranteed termination of ALL spawned backend processes (process 1, process 2, etc.)
+    for (const child of spawnedProcesses) {
+      try {
+        await terminateBackendProcess(child);
+      } catch {}
+    }
+
     if (!isDbConnected) return;
 
     if (createdTxnIds.length > 0) {
@@ -259,48 +297,51 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
       return;
     }
 
-    // --- PHASE 1: SPAWN BACKEND PROCESS 1 ---
-    const proc1 = await spawnBackendProcess(TEST_PORT);
-    expect(proc1.pid).toBeGreaterThan(0);
+    let proc1: { child: ChildProcess; pid: number } | undefined;
+    let proc2: { child: ChildProcess; pid: number } | undefined;
 
-    // Query Pre-Restart state via HTTP
-    const preSumRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
-      headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
-    });
-    expect(preSumRes.status).toBe(200);
-    const preSummary = (await preSumRes.json()).data;
-    expect(preSummary.bank_balance).toBe(27000.00);
-    expect(preSummary.credit_debt).toBe(0.00);
-    expect(preSummary.total_income).toBe(20000.00);
-    expect(preSummary.total_expense).toBe(3000.00);
-
-    const preTxRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/transactions`, {
-      headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
-    });
-    expect(preTxRes.status).toBe(200);
-    const preTxns = (await preTxRes.json()).data.transactions;
-    expect(preTxns).toHaveLength(3);
-
-    // --- PHASE 2: TERMINATE BACKEND PROCESS 1 (OS Process Kill) ---
-    await terminateBackendProcess(proc1.child);
-
-    // Verify port is dead
-    let isTerminated = false;
     try {
-      await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
+      // --- PHASE 1: SPAWN BACKEND PROCESS 1 ---
+      proc1 = await spawnBackendProcess(TEST_PORT);
+      expect(proc1.pid).toBeGreaterThan(0);
+
+      // Query Pre-Restart state via HTTP
+      const preSumRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
         headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
       });
-    } catch {
-      isTerminated = true;
-    }
-    expect(isTerminated).toBe(true);
+      expect(preSumRes.status).toBe(200);
+      const preSummary = (await preSumRes.json()).data;
+      expect(preSummary.bank_balance).toBe(27000.00);
+      expect(preSummary.credit_debt).toBe(0.00);
+      expect(preSummary.total_income).toBe(20000.00);
+      expect(preSummary.total_expense).toBe(3000.00);
 
-    // --- PHASE 3: SPAWN BACKEND PROCESS 2 (Without DB re-seeding) ---
-    const proc2 = await spawnBackendProcess(TEST_PORT);
-    expect(proc2.pid).toBeGreaterThan(0);
-    expect(proc2.pid).not.toBe(proc1.pid); // Strictly verifies brand new OS process
+      const preTxRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/transactions`, {
+        headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+      });
+      expect(preTxRes.status).toBe(200);
+      const preTxns = (await preTxRes.json()).data.transactions;
+      expect(preTxns).toHaveLength(3);
 
-    try {
+      // --- PHASE 2: TERMINATE BACKEND PROCESS 1 (OS Process Kill) ---
+      await terminateBackendProcess(proc1.child);
+
+      // Verify port is dead
+      let isTerminated = false;
+      try {
+        await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
+          headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+        });
+      } catch {
+        isTerminated = true;
+      }
+      expect(isTerminated).toBe(true);
+
+      // --- PHASE 3: SPAWN BACKEND PROCESS 2 (Without DB re-seeding) ---
+      proc2 = await spawnBackendProcess(TEST_PORT);
+      expect(proc2.pid).toBeGreaterThan(0);
+      expect(proc2.pid).not.toBe(proc1.pid); // Strictly verifies brand new OS process
+
       // Query Post-Restart state via HTTP from Process 2
       const postSumRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
         headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
@@ -331,8 +372,13 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
       expect(postSummary).toEqual(preSummary);
       expect(postTxns).toEqual(preTxns);
     } finally {
-      // Clean up Process 2
-      await terminateBackendProcess(proc2.child);
+      // Guaranteed cleanup of both processes even if assertions fail before Phase 3
+      if (proc1) {
+        await terminateBackendProcess(proc1.child);
+      }
+      if (proc2) {
+        await terminateBackendProcess(proc2.child);
+      }
     }
   }, 35000);
 });
