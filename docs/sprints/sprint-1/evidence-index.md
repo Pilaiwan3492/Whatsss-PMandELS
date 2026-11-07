@@ -34,7 +34,7 @@
     * `config.test.ts`: 5 passed
     * `seed.test.ts`: 8 passed
     * `password.test.ts`: 4 passed
-  * Backend Integration Tests: 122 passed / 12 skipped locally (136 passed in CI when PostgreSQL 16 service is active) across 10 suites
+  * Backend Integration Tests: 122 passed / 14 skipped locally (136 passed in CI when PostgreSQL 16 service is active) across 10 suites
     * `income.test.ts`: 27 passed (Mocked Prisma & HTTP API; records salary inflow, updates destination bank balance from 10,000.00 to 30,000.00 THB, increases income summary to 20,000.00 THB, locks destination account opening balance per AC-03-3, validates negative/zero/invalid decimal amounts, validates calendar dates, rejects cross-tenant accounts with 404 and admin access with 403)
     * `account.test.ts`: 26 passed (Mocked Prisma & HTTP API; captures and asserts HTTP 200 and persisted values across all 5 account PATCH requests, decimal validation, real concurrent requests serialized under PostgreSQL row locking, arbitrary precision summation in summary, database error propagation without fake zero summary, and BR-02 category account balance exclusion)
     * `access.test.ts`: 17 passed (App-tier Stub & Mocked Prisma)
@@ -50,7 +50,7 @@
     * `ProtectedRoute.test.tsx`: 4 passed
     * `AccountListPage.test.tsx`: 7 passed (5 grouped account sections, decimal validation, and maximum allowed limit enforcement)
   * Execution Environment Totals:
-    * Local Environment (without live PostgreSQL): 212 passed | 12 skipped (224 total)
+    * Local Environment (without live PostgreSQL): 210 passed | 14 skipped (224 total)
     * CI Environment (with live PostgreSQL 16 container): 224 passed | 0 skipped (224 total)
 
 ### 2.1 Completed Work Package Evidence (WP-01: Authentication & Access Control)

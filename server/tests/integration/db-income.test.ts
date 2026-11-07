@@ -46,9 +46,13 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     }
 
     // Verify test database safety invariant
-    assertTestDatabase(databaseUrl, { allowLiveDb });
+    assertTestDatabase(databaseUrl, {
+      isCI,
+      allowLiveDb,
+      nodeEnv: process.env.NODE_ENV
+    });
 
-    prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+    prisma = new PrismaClient();
     try {
       await prisma.$queryRaw`SELECT 1`;
       isDbConnected = true;
@@ -107,8 +111,12 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
   // -------------------------------------------------------------------------
   // 1. Live TEST-INC-01: Full Round-Trip Income Processing
   // -------------------------------------------------------------------------
-  it('records salary of 20000.00 THB in live PostgreSQL, creates 1 allocation line, and atomically locks opening balance (TEST-INC-01, AC-04-1, BR-03)', async () => {
-    if (!isDbConnected || !demoUserSessionCookie || !demoCheckingAccount || !demoSalaryAccount) {
+  it('records salary of 20000.00 THB in live PostgreSQL, creates 1 allocation line, and atomically locks opening balance (TEST-INC-01, AC-04-1, BR-03)', async (ctx) => {
+    if (!isDbConnected) {
+      ctx.skip();
+      return;
+    }
+    if (!demoUserSessionCookie || !demoCheckingAccount || !demoSalaryAccount) {
       return;
     }
 
@@ -200,8 +208,12 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
   // -------------------------------------------------------------------------
   // 2. Live TEST-INC-DECIMAL: Decimal Boundary Precision Verification
   // -------------------------------------------------------------------------
-  it('preserves exact boundary Decimal values in live PostgreSQL without floating-point distortion', async () => {
-    if (!isDbConnected || !demoUserSessionCookie || !demoCheckingAccount || !demoSalaryAccount) {
+  it('preserves exact boundary Decimal values in live PostgreSQL without floating-point distortion', async (ctx) => {
+    if (!isDbConnected) {
+      ctx.skip();
+      return;
+    }
+    if (!demoUserSessionCookie || !demoCheckingAccount || !demoSalaryAccount) {
       return;
     }
 
