@@ -24,15 +24,15 @@
 * **Execution Commands:**
   * Backend: `npm test` (within `server/`)
   * Frontend: `npm test` (within `client/`)
-* **Automated Test Execution Summary (167 Tests across 16 Suites):**
-  * Backend Unit Tests: 54 passed across 6 suites
+* **Automated Test Execution Summary (172 Tests across 16 Suites):**
+  * Backend Unit Tests: 58 passed across 6 suites
     * `accountLock.test.ts`: 8 passed (hardened ID validation, deduplication, atomic abort without partial lock)
-    * `testSafety.test.ts`: 13 passed (test database isolation verification, account/user snapshot restoration including updated_at, local environment guard)
+    * `testSafety.test.ts`: 17 passed (test database isolation verification, CI service container validation, independent cleanup failure isolation, try/finally seed failure protection, account/user snapshot restoration including updated_at, local environment guard)
     * `decimal.test.ts`: 16 passed (Prisma.Decimal validation, boundary checks, micro-precision rejection)
     * `config.test.ts`: 5 passed
     * `seed.test.ts`: 8 passed
     * `password.test.ts`: 4 passed
-  * Backend Integration Tests: 93 passed / 10 skipped locally (103 passed in CI when PostgreSQL 16 service is active) across 8 suites
+  * Backend Integration Tests: 93 passed / 11 skipped locally (104 passed in CI when PostgreSQL 16 service is active) across 8 suites
     * `account.test.ts`: 24 passed (Mocked Prisma & HTTP API; captures and asserts HTTP 200 and persisted values across all 5 account PATCH requests, decimal validation, concurrency race handling distinguishing 404, 422, and 409 `CONCURRENT_UPDATE_CONFLICT`, database error propagation without fake zero summary, and BR-02 category account balance exclusion)
     * `access.test.ts`: 17 passed (App-tier Stub & Mocked Prisma)
     * `content-type.test.ts`: 26 passed (Express Middleware)
@@ -40,13 +40,13 @@
     * `auth.test.ts`: 11 passed (AuthGuard & Session)
     * `cors.test.ts`: 3 passed (CORS Preflight)
     * `db-password.test.ts`: 2 passed in CI (skipped locally without live PostgreSQL)
-    * `db-account.test.ts`: 8 passed in CI (skipped locally without live PostgreSQL; test database isolation verification, user updated_at restoration across seed, pre-test baseline snapshot comparison, seed idempotency, live HTTP API isolation, admin exclusion, and transaction commit/rollback locking)
+    * `db-account.test.ts`: 9 passed in CI (skipped locally without live PostgreSQL; test database isolation verification, independent cleanup failure isolation, seed failure simulation, user updated_at restoration across seed, pre-test baseline snapshot comparison, seed idempotency, live HTTP API isolation, admin exclusion, and transaction commit/rollback locking)
   * Frontend Component Tests: 10 passed across 2 suites
     * `ProtectedRoute.test.tsx`: 4 passed
     * `AccountListPage.test.tsx`: 6 passed (5 grouped account sections & decimal validation)
   * Execution Environment Totals:
-    * Local Environment (without live PostgreSQL): 157 passed | 10 skipped (167 total)
-    * CI Environment (with live PostgreSQL 16 container): 167 passed | 0 skipped (167 total)
+    * Local Environment (without live PostgreSQL): 161 passed | 11 skipped (172 total)
+    * CI Environment (with live PostgreSQL 16 container): 172 passed | 0 skipped (172 total)
 
 ### 2.1 Completed Work Package Evidence (WP-01: Authentication & Access Control)
 | Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |

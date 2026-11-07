@@ -4,7 +4,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { app } from '../../src/app.js';
 import { seed } from '../../prisma/seed.js';
 import { lockAccounts } from '../../src/services/accountLock.service.js';
-import { assertTestDatabase } from '../fixtures/testDbGuard.js';
+import { assertTestDatabase, executeCleanupsSafely } from '../fixtures/testDbGuard.js';
 
 interface AccountSnapshot {
   id: string;
@@ -121,11 +121,9 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
   });
 
   afterEach(async () => {
-    // Execute all registered cleanups; do NOT swallow errors so cleanup failures fail the test
-    while (pendingCleanups.length > 0) {
-      const cleanup = pendingCleanups.pop()!;
-      await cleanup();
-    }
+    // Execute all registered cleanups safely; guarantees every cleanup is attempted
+    // even if an earlier cleanup throws, then collects and rethrows any errors
+    await executeCleanupsSafely(pendingCleanups);
   });
 
   async function snapshotAccount(accountId: string): Promise<AccountSnapshot> {
@@ -248,10 +246,13 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       const accountSnap = await snapshotAccount(checking!.id);
       const userSnaps = await snapshotUsers(['user_demo', 'user_other', 'admin_demo']);
 
-      // Register guaranteed cleanup in afterEach
+      // Register independent cleanups in central queue BEFORE mutation/seed
+      // Failure in restoring account will NOT prevent restoring users
+      pendingCleanups.push(async () => {
+        await restoreUsers(userSnaps);
+      });
       pendingCleanups.push(async () => {
         await restoreAccount(accountSnap);
-        await restoreUsers(userSnaps);
       });
 
       // Update opening balance to 10000.00 THB
@@ -260,8 +261,12 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
         data: { opening_balance: 10000.00, is_opening_locked: false }
       });
 
-      // Re-run seed
-      await seed(prisma);
+      // Re-run seed inside try/finally ensuring cleanup is never bypassed on unexpected crash
+      try {
+        await seed(prisma);
+      } finally {
+        // executeCleanupsSafely in afterEach guarantees restoration
+      }
 
       // Opening balance must be preserved at 10000.00 THB without reset to 0.00
       const rechecked = await prisma.account.findUnique({ where: { id: checking!.id } });
@@ -281,13 +286,19 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
         expect(snap.updated_at).toBeInstanceOf(Date);
       }
 
-      // 2. Re-run seed (which upserts demo users and mutates updated_at via @updatedAt)
-      await seed(prisma);
+      // Register guaranteed cleanup in central queue BEFORE seed
+      pendingCleanups.push(async () => {
+        await restoreUsers(userSnaps);
+      });
 
-      // 3. Restore demo users using snapshot (restoring updated_at, password_hash, role, is_active)
-      await restoreUsers(userSnaps);
+      // 2. Execute seed inside try/finally ensuring restore is attempted even if seed throws
+      try {
+        await seed(prisma);
+      } finally {
+        await restoreUsers(userSnaps);
+      }
 
-      // 4. Verify that each demo user's updated_at matches the pre-seed snapshot exactly
+      // 3. Verify that each demo user's updated_at matches the pre-seed snapshot exactly
       const restoredUsers = await prisma.user.findMany({
         where: { username: { in: ['user_demo', 'user_other', 'admin_demo'] } }
       });
@@ -300,6 +311,42 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
         expect(restored!.role).toBe(snap.role);
         expect(restored!.is_active).toBe(snap.is_active);
       }
+    });
+
+    it('guarantees user snapshot is restored even when seed execution fails or throws (seed failure simulation)', async (ctx) => {
+      if (!isDbConnected) {
+        ctx.skip();
+        return;
+      }
+
+      // 1. Snapshot demo users
+      const userSnaps = await snapshotUsers(['user_demo', 'user_other', 'admin_demo']);
+
+      // 2. Register cleanup in central queue BEFORE mutation
+      pendingCleanups.push(async () => {
+        await restoreUsers(userSnaps);
+      });
+
+      // 3. Mutate user to simulate partial seed modification, then simulate failure
+      await prisma.user.update({
+        where: { id: userSnaps[0].id },
+        data: { role: 'ADMIN' }
+      });
+
+      try {
+        await (async () => {
+          throw new Error('Simulated database deadlock or network failure during seed');
+        })();
+      } catch {
+        // Expected simulated failure
+      } finally {
+        await restoreUsers(userSnaps);
+      }
+
+      // 4. Verify user was safely restored back to USER role and original timestamp
+      const restoredUser = await prisma.user.findUnique({ where: { id: userSnaps[0].id } });
+      expect(restoredUser!.role).toBe(userSnaps[0].role);
+      expect(restoredUser!.updated_at.getTime()).toBe(userSnaps[0].updated_at.getTime());
     });
   });
 

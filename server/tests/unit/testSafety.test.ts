@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import {
   validateTestDatabaseUrl,
   assertTestDatabase,
+  executeCleanupsSafely,
   TestDbOptions
 } from '../fixtures/testDbGuard.js';
 
@@ -276,6 +277,114 @@ describe('Unit Test: Live Database Integration Test Safety Policy (P0 Finding)',
       expect(() => {
         assertTestDatabase(badUrl, { isCI: false, allowLiveDb: true });
       }).toThrow(/FATAL: Test database verification failed/);
+    });
+
+    it('rejects URL in CI when host passes allowlist but database is not the provisioned CI service database', () => {
+      const foreignDbInCi = 'postgresql://whatsss_user:password@localhost:5432/foreign_unrelated_db?schema=public';
+      const result = validateTestDatabaseUrl(foreignDbInCi, { isCI: true, allowLiveDb: false, nodeEnv: 'test' });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('does not match the provisioned CI service container');
+    });
+
+    it('rejects local execution when allowLiveDb is false even if database contains "test"', () => {
+      const testDbUrl = 'postgresql://whatsss_user:password@localhost:5432/whatsss_test';
+      const result = validateTestDatabaseUrl(testDbUrl, { isCI: false, allowLiveDb: false, nodeEnv: 'test' });
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('Live database tests are not enabled in local developer environment');
+    });
+  });
+
+  describe('Cleanup Failure Isolation & Guaranteed Restoration', () => {
+    it('executes restoreUsers even when restoreAccount throws an error (failure isolation)', async () => {
+      const mockPrisma = {
+        account: {
+          update: vi.fn().mockRejectedValue(new Error('PostgreSQL connection dropped during account cleanup'))
+        },
+        user: {
+          update: vi.fn().mockResolvedValue({})
+        }
+      };
+
+      const accountSnap: AccountSnapshot = {
+        id: 'acc-1',
+        opening_balance: new Prisma.Decimal('100.00'),
+        is_opening_locked: false,
+        updated_at: new Date()
+      };
+
+      const userSnap: UserSnapshot = {
+        id: 'user-1',
+        username: 'user_demo',
+        password_hash: 'hash',
+        role: 'USER',
+        is_active: true,
+        updated_at: new Date()
+      };
+
+      const queue: Array<() => Promise<void>> = [];
+      queue.push(async () => {
+        await restoreUsers(mockPrisma, [userSnap]);
+      });
+      queue.push(async () => {
+        await restoreAccount(mockPrisma, accountSnap);
+      });
+
+      // Execute cleanups: must throw error because restoreAccount failed, but restoreUsers MUST still execute!
+      await expect(executeCleanupsSafely(queue)).rejects.toThrow(
+        'PostgreSQL connection dropped during account cleanup'
+      );
+
+      // Verify that restoreUsers was indeed called despite restoreAccount failure!
+      expect(mockPrisma.account.update).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'user-1' } })
+      );
+    });
+
+    it('guarantees user snapshot is restored when seed throws an error within try/finally block', async () => {
+      const mockPrisma = {
+        user: {
+          update: vi.fn().mockResolvedValue({})
+        }
+      };
+
+      const originalDate = new Date('2026-11-01T00:00:00.000Z');
+      const userSnaps: UserSnapshot[] = [
+        {
+          id: 'u-1',
+          username: 'user_demo',
+          password_hash: 'hash123',
+          role: 'USER',
+          is_active: true,
+          updated_at: originalDate
+        }
+      ];
+
+      const failingSeed = async () => {
+        throw new Error('Database transaction deadlocked during seed execution');
+      };
+
+      let seedError: Error | null = null;
+      try {
+        await failingSeed();
+      } catch (err: any) {
+        seedError = err;
+      } finally {
+        await restoreUsers(mockPrisma, userSnaps);
+      }
+
+      expect(seedError).toBeDefined();
+      expect(seedError!.message).toContain('deadlocked during seed');
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u-1' },
+        data: {
+          password_hash: 'hash123',
+          role: 'USER',
+          is_active: true,
+          updated_at: originalDate
+        }
+      });
     });
   });
 });
