@@ -71,8 +71,9 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     const loginRes = await request(app)
       .post('/api/auth/login')
       .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
       .send({
-        identifier: 'user_demo',
+        username: 'user_demo',
         password: 'Password123!'
       });
 
@@ -81,6 +82,10 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
       if (setCookie && setCookie.length > 0) {
         demoUserSessionCookie = setCookie[0];
       }
+    } else if (isCI) {
+      throw new Error(
+        `[WP-03 CI FAILURE] Failed to authenticate user_demo in live DB. Status: ${loginRes.status}, body: ${JSON.stringify(loginRes.body)}`
+      );
     }
 
     // Load demo user's checking bank and salary accounts
@@ -99,6 +104,12 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
       if (salary) {
         demoSalaryAccount = salary;
       }
+    }
+
+    if (isCI && (!demoCheckingAccount || !demoSalaryAccount)) {
+      throw new Error(
+        '[WP-03 CI FAILURE] Seeded Checking Bank or Salary account not found for user_demo in PostgreSQL'
+      );
     }
   });
 
