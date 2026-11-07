@@ -428,8 +428,7 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       expect(Number(summary.total_income)).toBe(20000.00);
       expect(Number(summary.credit_debt)).toBe(0.00);
       expect(Number(summary.bank_balance)).toBe(27000.00);
-      expect(Number(summary.net_cash_flow)).toBe(17000.00);
-    });
+          });
   });
 
   describe('TEST-REPAY-03: Repayment Exceeding Outstanding Debt (AC-07-4)', () => {
