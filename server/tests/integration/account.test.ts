@@ -85,6 +85,24 @@ vi.mock('../../src/prisma.js', () => {
           }
           return { count };
         })
+      },
+      transaction: {
+        groupBy: vi.fn(async () => {
+          if ((prisma as any).__mockCharges) {
+            return (prisma as any).__mockCharges;
+          }
+          return [];
+        }),
+        aggregate: vi.fn(async () => {
+          if ((prisma as any).__mockAggregate) {
+            return (prisma as any).__mockAggregate;
+          }
+          return { _sum: { total_amount: null } };
+        })
+      },
+      allocationLine: {
+        groupBy: vi.fn(async () => []),
+        aggregate: vi.fn(async () => ({ _sum: { amount: null } }))
       }
     }
   };
@@ -675,6 +693,46 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       await lockAccounts(mockTx, [], 'user-a-uuid');
       expect(mockTx.account.findMany).not.toHaveBeenCalled();
       expect(mockTx.account.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Credit Card Current Debt calculation on LOAN_TAKEN accounts (F-05, BR-04)', () => {
+    it('calculates dynamic current_balance as Opening Balance + Charges - Repayments in GET /api/accounts', async () => {
+      (prisma as any).__mockCharges = [
+        {
+          primary_account_id: 'acc-demo-cc',
+          _sum: { total_amount: new Prisma.Decimal('3000.00') }
+        }
+      ];
+
+      const res = await request(app)
+        .get('/api/accounts')
+        .set('Cookie', userACookie);
+
+      expect(res.status).toBe(200);
+      const ccAcc = res.body.data.accounts.find((a: any) => a.id === 'acc-demo-cc');
+      expect(ccAcc).toBeDefined();
+      expect(ccAcc.type).toBe('LOAN_TAKEN');
+      expect(ccAcc.opening_balance).toBe(0.00);
+      expect(ccAcc.current_balance).toBe(3000.00);
+
+      delete (prisma as any).__mockCharges;
+    });
+
+    it('calculates dynamic current_balance on GET /api/accounts/:id for LOAN_TAKEN', async () => {
+      (prisma as any).__mockAggregate = {
+        _sum: { total_amount: new Prisma.Decimal('3000.00') }
+      };
+
+      const res = await request(app)
+        .get('/api/accounts/acc-demo-cc')
+        .set('Cookie', userACookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.account.type).toBe('LOAN_TAKEN');
+      expect(res.body.data.account.current_balance).toBe(3000.00);
+
+      delete (prisma as any).__mockAggregate;
     });
   });
 });

@@ -147,17 +147,19 @@ As an authenticated user, I want to record my received salary into my bank accou
 As an authenticated user, I want to record an expense charged to my credit card and split the amount into Dining and Grocery allocations, so that my debt increases and my expense breakdown is mathematically balanced.
 
 #### Implementation Tasks
-- [ ] Implement `POST /api/transactions/expense` endpoint accepting credit card primary account, total amount, date, and allocation lines.
-- [ ] Implement split allocation validation engine: verify that sum of allocation lines strictly equals total amount (`BR-05`, `BR-06`).
-- [ ] Reject unbalanced allocation submissions with HTTP 422 Unprocessable Entity (`ALLOCATION_SUM_MISMATCH`).
-- [ ] Record purchase transaction (Transaction 2 of Golden Journey) with 2 allocation lines (Dining 1000.00, Grocery 2000.00) and increase credit card debt balance (`BR-04`).
-- [ ] Implement unit and integration tests (`TEST-EXP-01..02`, `TEST-ALLOC-01..02`) including TDD evidence for allocation validation.
+- [x] Implement `POST /api/transactions/expense` endpoint accepting credit card primary account, total amount, date, and allocation lines.
+- [x] Implement split allocation validation engine: verify that sum of allocation lines strictly equals total amount (`BR-05`, `BR-06`).
+- [x] Reject unbalanced allocation submissions with HTTP 422 Unprocessable Entity (`ALLOCATION_SUM_MISMATCH`).
+- [x] Record purchase transaction (Transaction 2 of Golden Journey) with 2 allocation lines (Dining 1000.00, Grocery 2000.00) and increase credit card debt balance (`BR-04`).
+- [x] Implement unit and integration tests (`TEST-EXP-01..02`, `TEST-ALLOC-01..02`) including TDD evidence for allocation validation.
 
 #### Acceptance Criteria Checklist
-- [ ] `AC-05-1`: Recording credit purchase of 3000.00 THB returns 201 Created and increases debt (`TEST-EXP-01`).
-- [ ] `AC-05-2`: Omitting credit card primary account ID returns 400 Bad Request (`TEST-EXP-02`).
-- [ ] `AC-06-1`: Split allocation with Dining 1000.00 + Grocery 2000.00 = 3000.00 THB persists successfully with 2 allocation lines (`TEST-ALLOC-01`).
-- [ ] `AC-06-2`: Unbalanced allocation sum rejected with 422 Unprocessable Entity (`TEST-ALLOC-02`, `BR-06`).
+- [x] `AC-05-1`: Recording credit purchase of 3000.00 THB returns 201 Created and increases debt (`TEST-EXP-01`).
+- [x] `AC-05-2`: Omitting credit card primary account ID returns 400 Bad Request (`TEST-EXP-02`).
+- [x] `AC-05-3`: Submitting invalid, negative, non-numeric (1000abc), exponent (1e3), or excessive precision (>2 decimals) rejected with 400 Bad Request (`TEST-VAL-01`).
+- [x] `AC-06-1`: Split allocation with Dining 1000.00 + Grocery 2000.00 = 3000.00 THB persists successfully with 2 allocation lines (`TEST-ALLOC-01`).
+- [x] `AC-06-2`: Unbalanced allocation sum rejected with 422 Unprocessable Entity (`TEST-ALLOC-02`, `BR-06`).
+- [x] `AC-06-3`: Submitting duplicate allocation categories rejected with 400 Bad Request (`TEST-ALLOC-03`).
 
 ---
 

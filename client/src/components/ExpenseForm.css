@@ -1,0 +1,746 @@
+/* ==========================================================================
+   ExpenseForm.css — Premium Minimal Fintech Design Tokens & Scoped Styles
+   Component: ExpenseForm (Work Package 4 / Issue #5)
+   Design Language: Minimal, High-Contrast, Calm Green Accents (#285747)
+   Scope: Strictly isolated to .expense-modal-container (No global :root leaks)
+   ========================================================================== */
+
+/* 1. Backdrop Overlay */
+.expense-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(20, 30, 24, 0.48);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1055;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+/* 2. Modal Window Container (Scoped Design Tokens) */
+.expense-modal-container {
+  /* Scoped CSS Custom Properties */
+  --fintech-primary: #285747;
+  --fintech-primary-hover: #1e4537;
+  --fintech-primary-light: #eaf1ec;
+  --fintech-primary-border: #b8cfc3;
+  --fintech-text-main: #202923;
+  --fintech-text-muted: #65716a;
+  --fintech-text-subtle: #8a968f;
+  --fintech-border: #e4e9e5;
+  --fintech-card-bg: #fafbfa;
+  --fintech-card-hover: #f5f7f5;
+  --fintech-warning-bg: #fffbeb;
+  --fintech-warning-border: #fde68a;
+  --fintech-warning-text: #92400e;
+  --fintech-danger-bg: #fef2f2;
+  --fintech-danger-border: #fecaca;
+  --fintech-danger-text: #b91c1c;
+  --fintech-success-bg: #ecfdf5;
+  --fintech-success-border: #a7f3d0;
+  --fintech-success-text: #065f46;
+
+  background-color: #ffffff;
+  width: 100%;
+  max-width: 720px;
+  max-height: 90vh;
+  border-radius: 14px;
+  border: 1px solid var(--fintech-border);
+  box-shadow: 0 20px 40px -12px rgba(20, 30, 24, 0.16),
+              0 1px 3px 0 rgba(20, 30, 24, 0.06);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--fintech-text-main);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  animation: expenseModalFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes expenseModalFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* 3. Header */
+.expense-modal-header {
+  padding: 24px 28px;
+  border-bottom: 1px solid var(--fintech-border);
+  background-color: #ffffff;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.expense-modal-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--fintech-text-main);
+  line-height: 1.25;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.expense-modal-subtitle {
+  font-size: 13px;
+  color: var(--fintech-text-muted);
+  margin: 4px 0 0 0;
+  line-height: 1.4;
+}
+
+.expense-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--fintech-text-muted);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.expense-close-btn:hover:not(:disabled) {
+  background-color: #f1f4f2;
+  color: var(--fintech-text-main);
+}
+
+.expense-close-btn:focus-visible {
+  outline: 2px solid var(--fintech-primary);
+  outline-offset: 2px;
+}
+
+.expense-close-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 4. Form & Body Content */
+.expense-form {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.expense-modal-body {
+  padding: 24px 28px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  background-color: #ffffff;
+}
+
+/* Section Dividers & Headers */
+.expense-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.expense-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.expense-section-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fintech-primary);
+  margin-bottom: 2px;
+}
+
+.expense-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fintech-text-main);
+  margin: 0;
+}
+
+.expense-section-desc {
+  font-size: 12px;
+  color: var(--fintech-text-muted);
+  margin: 2px 0 0 0;
+}
+
+.expense-counter-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fintech-text-muted);
+  background-color: #eef2ef;
+  border: 1px solid var(--fintech-border);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+/* 5. Inputs & Labels */
+.expense-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.expense-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fintech-text-main);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.expense-required-star {
+  color: var(--fintech-danger-text);
+  font-weight: 600;
+  margin-left: 2px;
+}
+
+.expense-optional-badge {
+  font-weight: 400;
+  color: var(--fintech-text-muted);
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.expense-helper {
+  font-size: 11px;
+  color: var(--fintech-text-muted);
+  margin-top: 2px;
+}
+
+.expense-input,
+.expense-select {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  font-size: 14px;
+  color: var(--fintech-text-main);
+  background-color: #ffffff;
+  border: 1px solid var(--fintech-border);
+  border-radius: 8px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.expense-input:focus,
+.expense-select:focus {
+  outline: none;
+  border-color: var(--fintech-primary);
+  box-shadow: 0 0 0 3px rgba(40, 87, 71, 0.12);
+}
+
+.expense-input:focus-visible,
+.expense-select:focus-visible {
+  outline: 2px solid var(--fintech-primary);
+  outline-offset: 1px;
+  border-color: var(--fintech-primary);
+  box-shadow: 0 0 0 3px rgba(40, 87, 71, 0.15);
+}
+
+.expense-input:disabled,
+.expense-select:disabled {
+  background-color: #f7f9f7;
+  color: var(--fintech-text-subtle);
+  cursor: not-allowed;
+}
+
+/* Prominent Total Amount */
+.expense-amount-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.expense-currency-symbol {
+  position: absolute;
+  left: 16px;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--fintech-text-muted);
+  pointer-events: none;
+}
+
+.expense-amount-input {
+  height: 56px;
+  padding-left: 38px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace, sans-serif;
+  color: var(--fintech-text-main);
+}
+
+/* Card Specific Input Sub-Classes */
+.expense-card-currency-symbol {
+  position: absolute;
+  left: 12px;
+  font-size: 14px;
+  color: var(--fintech-text-muted);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.expense-alloc-amount-input {
+  padding-left: 28px;
+  font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace, sans-serif;
+  font-weight: 600;
+}
+
+.expense-alloc-notes-input {
+  height: 40px;
+}
+
+/* 6. Grid Layouts */
+.expense-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* 7. Allocation Cards (Row List) */
+.expense-allocations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.expense-allocation-card {
+  border: 1px solid var(--fintech-border);
+  border-radius: 12px;
+  background-color: var(--fintech-card-bg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.expense-allocation-card:focus-within {
+  border-color: var(--fintech-primary-border);
+  background-color: #ffffff;
+}
+
+.expense-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.expense-card-index {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fintech-text-main);
+  letter-spacing: 0.02em;
+}
+
+.expense-remove-btn {
+  background: transparent;
+  border: none;
+  color: var(--fintech-text-subtle);
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.expense-remove-btn:hover:not(:disabled) {
+  color: #b91c1c;
+  background-color: #fee2e2;
+}
+
+.expense-remove-btn:focus-visible {
+  outline: 2px solid var(--fintech-danger-text);
+  outline-offset: 1px;
+}
+
+.expense-remove-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.expense-card-grid {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 12px;
+}
+
+/* Add Category Button */
+.expense-add-category-btn {
+  width: 100%;
+  height: 44px;
+  background-color: #ffffff;
+  border: 1px dashed var(--fintech-primary-border);
+  color: var(--fintech-primary);
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.expense-add-category-btn:hover:not(:disabled) {
+  background-color: var(--fintech-primary-light);
+  border-color: var(--fintech-primary);
+}
+
+.expense-add-category-btn:focus-visible {
+  outline: 2px solid var(--fintech-primary);
+  outline-offset: 2px;
+}
+
+.expense-add-category-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 8. Allocation Summary Panel */
+.expense-summary-panel {
+  border: 1px solid var(--fintech-border);
+  border-radius: 12px;
+  background-color: #f7faf8;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.expense-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.expense-summary-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fintech-text-main);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+
+.expense-summary-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: 0.02em;
+}
+
+.expense-summary-badge.balanced {
+  background-color: var(--fintech-success-bg);
+  border: 1px solid var(--fintech-success-border);
+  color: var(--fintech-success-text);
+}
+
+.expense-summary-badge.incomplete {
+  background-color: var(--fintech-warning-bg);
+  border: 1px solid var(--fintech-warning-border);
+  color: var(--fintech-warning-text);
+}
+
+.expense-summary-badge.over {
+  background-color: var(--fintech-danger-bg);
+  border: 1px solid var(--fintech-danger-border);
+  color: var(--fintech-danger-text);
+}
+
+.expense-summary-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  background-color: #ffffff;
+  border: 1px solid var(--fintech-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.expense-metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.expense-metric-label {
+  font-size: 11px;
+  color: var(--fintech-text-muted);
+  font-weight: 500;
+}
+
+.expense-metric-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fintech-text-main);
+  font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace, sans-serif;
+}
+
+.expense-metric-value.remaining-balanced {
+  color: var(--fintech-primary);
+}
+
+.expense-metric-value.remaining-warning {
+  color: var(--fintech-warning-text);
+}
+
+.expense-metric-value.remaining-danger {
+  color: var(--fintech-danger-text);
+}
+
+/* Progress Bar */
+.expense-progress-track {
+  width: 100%;
+  height: 6px;
+  background-color: #e2e8e4;
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.expense-progress-track:focus-visible {
+  outline: 2px solid var(--fintech-primary);
+  outline-offset: 2px;
+}
+
+.expense-progress-bar {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.25s ease;
+}
+
+.expense-progress-bar.balanced {
+  background-color: var(--fintech-primary);
+}
+
+.expense-progress-bar.incomplete {
+  background-color: #d97706;
+}
+
+.expense-progress-bar.over {
+  background-color: #dc2626;
+}
+
+.expense-summary-hint {
+  font-size: 12px;
+  color: var(--fintech-text-muted);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.expense-hint-icon-balanced {
+  color: var(--fintech-primary);
+  font-weight: 700;
+}
+
+.expense-hint-icon-warning {
+  color: #d97706;
+  font-weight: 700;
+}
+
+.expense-hint-icon-danger {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+/* Alert Message */
+.expense-error-alert {
+  padding: 12px 16px;
+  border-radius: 8px;
+  background-color: var(--fintech-danger-bg);
+  border: 1px solid var(--fintech-danger-border);
+  color: var(--fintech-danger-text);
+  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.expense-error-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* 9. Modal Footer */
+.expense-modal-footer {
+  padding: 18px 28px;
+  border-top: 1px solid var(--fintech-border);
+  background-color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.expense-btn {
+  height: 44px;
+  padding: 0 20px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.expense-btn-secondary {
+  background-color: #ffffff;
+  border: 1px solid var(--fintech-border);
+  color: var(--fintech-text-main);
+}
+
+.expense-btn-secondary:hover:not(:disabled) {
+  background-color: #f5f7f5;
+  border-color: #d6ded8;
+}
+
+.expense-btn-secondary:focus-visible {
+  outline: 2px solid var(--fintech-text-main);
+  outline-offset: 2px;
+}
+
+.expense-btn-primary {
+  background-color: var(--fintech-primary);
+  border: 1px solid var(--fintech-primary);
+  color: #ffffff;
+}
+
+.expense-btn-primary:hover:not(:disabled) {
+  background-color: var(--fintech-primary-hover);
+  border-color: var(--fintech-primary-hover);
+}
+
+.expense-btn-primary:focus-visible {
+  outline: 2px solid var(--fintech-primary);
+  outline-offset: 2px;
+}
+
+.expense-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.expense-btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Spinner */
+.expense-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: expenseSpin 0.7s linear infinite;
+}
+
+@keyframes expenseSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 10. Responsive Design for Mobile (< 640px) */
+@media (max-width: 640px) {
+  .expense-modal-backdrop {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .expense-modal-container {
+    max-width: 100%;
+    max-height: 94vh;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+  }
+
+  .expense-modal-header {
+    padding: 20px 20px 16px 20px;
+  }
+
+  .expense-modal-body {
+    padding: 20px;
+    gap: 22px;
+  }
+
+  .expense-modal-footer {
+    padding: 16px 20px;
+    flex-direction: column-reverse;
+  }
+
+  .expense-grid-2 {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .expense-card-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  /* Compact 2-column + full-width Remaining row for mobile */
+  .expense-summary-metrics {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .expense-metric-item.metric-remaining {
+    grid-column: span 2;
+    padding-top: 8px;
+    border-top: 1px solid var(--fintech-border);
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+
+  .expense-metric-item.metric-remaining .expense-metric-label {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .expense-metric-item.metric-remaining .expense-metric-value {
+    font-size: 16px;
+  }
+
+  .expense-btn {
+    width: 100%;
+  }
+}

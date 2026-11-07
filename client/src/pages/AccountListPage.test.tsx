@@ -387,4 +387,45 @@ describe('Frontend Financial Accounts & Opening Balance Suite (WP-02)', () => {
     // Accounts view not rendered
     expect(screen.queryByText('Financial Accounts')).toBeNull();
   });
+
+  it('renders LOAN_TAKEN accounts with Current Debt and formatted balance', async () => {
+    const mockAccountsWithDebt = [
+      {
+        id: 'acc-cc-1',
+        user_id: 'u1-uuid',
+        name: 'Visa Credit Card',
+        type: 'LOAN_TAKEN',
+        opening_balance: 0.00,
+        current_balance: 3000.00,
+        is_opening_locked: true,
+        created_at: '2026-11-01T00:00:01.000Z',
+        updated_at: '2026-11-01T00:00:01.000Z'
+      }
+    ];
+
+    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/auth/me') {
+        return { data: { success: true, data: { user: mockUserDemo } } };
+      }
+      if (url === '/accounts') {
+        return { data: { success: true, data: { accounts: mockAccountsWithDebt } } };
+      }
+      throw new Error(`Unhandled get url: ${url}`);
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Visa Credit Card')).toBeDefined();
+    });
+
+    expect(screen.getByText('Current Debt')).toBeDefined();
+    expect(screen.getByText(/3,000\.00/)).toBeDefined();
+  });
 });

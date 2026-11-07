@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getAccounts, updateOpeningBalance, Account, AccountType } from '../api/accountApi.js';
 import { IncomeForm } from '../components/IncomeForm.js';
+import { ExpenseForm } from '../components/ExpenseForm.js';
 
 interface AccountGroupConfig {
   type: AccountType;
@@ -55,6 +56,9 @@ export const AccountListPage: React.FC = () => {
 
   // Income form modal state
   const [isIncomeModalOpen, setIsIncomeModalOpen] = useState<boolean>(false);
+
+  // Expense form modal state (WP-04)
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState<boolean>(false);
 
   const fetchAccounts = async () => {
     setIsLoading(true);
@@ -147,10 +151,17 @@ export const AccountListPage: React.FC = () => {
         <div>
           <button
             type="button"
-            className="btn btn-success fw-semibold shadow-sm"
+            className="btn btn-success fw-semibold shadow-sm me-2"
             onClick={() => setIsIncomeModalOpen(true)}
           >
             Record Income
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary fw-semibold shadow-sm"
+            onClick={() => setIsExpenseModalOpen(true)}
+          >
+            Record Purchase
           </button>
         </div>
       </div>
@@ -205,6 +216,16 @@ export const AccountListPage: React.FC = () => {
                                   Opening: {formatCurrency(acc.opening_balance)}
                                 </small>
                               </>
+                            ) : acc.type === 'LOAN_TAKEN' && acc.current_balance !== undefined ? (
+                              <>
+                                <span className="text-muted small d-block">Current Debt</span>
+                                <span className="fs-4 fw-bold text-danger">
+                                  {formatCurrency(acc.current_balance)}
+                                </span>
+                                <small className="text-muted d-block mt-1">
+                                  Opening: {formatCurrency(acc.opening_balance)}
+                                </small>
+                              </>
                             ) : (
                               <>
                                 <span className="text-muted small d-block">Opening Balance</span>
@@ -249,6 +270,16 @@ export const AccountListPage: React.FC = () => {
         accounts={accounts}
         isOpen={isIncomeModalOpen}
         onClose={() => setIsIncomeModalOpen(false)}
+        onSuccess={() => {
+          fetchAccounts();
+        }}
+      />
+
+      {/* Record Credit Card Purchase Modal (WP-04) */}
+      <ExpenseForm
+        accounts={accounts}
+        isOpen={isExpenseModalOpen}
+        onClose={() => setIsExpenseModalOpen(false)}
         onSuccess={() => {
           fetchAccounts();
         }}
