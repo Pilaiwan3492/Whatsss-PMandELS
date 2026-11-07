@@ -28,6 +28,9 @@ export const Navbar: React.FC = () => {
                   <Link className="btn btn-outline-light btn-sm" to="/accounts">
                     Accounts
                   </Link>
+                  <Link className="btn btn-outline-light btn-sm" to="/transactions">
+                    History
+                  </Link>
                 </>
               )}
               <span className="text-light small">

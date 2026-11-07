@@ -212,18 +212,18 @@ As an authenticated user, I want to record repayment of my credit card debt from
 As an authenticated user, I want to view my real-time balances, income/expense summaries, and complete transaction history through a clean web interface, so that I can verify my financial state across the complete Golden Domain Journey.
 
 #### Implementation Tasks
-- [ ] Implement `GET /api/reports/summary` returning computed cash balance, credit debt, total income, and total expense (`FR-10`).
-- [ ] Implement `GET /api/transactions` returning chronological transaction history (verifying exactly 3 transactions and 4 allocation lines total) (`FR-11`).
-- [ ] Implement frontend client slice in `client/` (React + Vite + Bootstrap):
+- [x] Implement `GET /api/reports/summary` returning computed cash balance, credit debt, total income, and total expense (`FR-10`).
+- [x] Implement `GET /api/transactions` returning chronological transaction history (verifying exactly 3 transactions and 4 allocation lines total) (`FR-11`).
+- [x] Implement frontend client slice in `client/` (React + Vite + Bootstrap):
   - Login view supporting authenticated HttpOnly cookie session (no localStorage token storage).
   - Dashboard displaying real-time balance cards (Bank: 27000, Debt: 0, Income: 20000, Expense: 3000).
   - Transaction submission forms for Opening Balance, Salary, Split Expense, and Repayment.
   - Transaction history table displaying recorded entries.
-- [ ] Implement E2E / Golden Journey integration test verifying complete sequential workflow (`TEST-E2E-01`).
-- [ ] Implement persistence test asserting exact data retrieval after stopping/restarting backend server process against persistent database (`TEST-PERSIST-01`, `NFR-DATA-01`).
+- [x] Implement E2E / Golden Journey integration test verifying complete sequential workflow (`TEST-E2E-01`).
+- [x] Implement persistence test asserting exact data retrieval after stopping/restarting backend server process against persistent database (`TEST-PERSIST-01`, `NFR-DATA-01`).
 
 #### Acceptance Criteria Checklist
-- [ ] `AC-08-1`: Summary endpoint returns Bank 27000.00, Debt 0.00, Income 20000.00, Expense 3000.00 (`TEST-BAL-01`).
-- [ ] `AC-09-1`: Transaction history returns exactly 3 recorded transactions with 4 allocation lines total (`TEST-HIST-01`).
-- [ ] `AC-09-2`: Records persist accurately across backend server process restarts (`TEST-PERSIST-01`, `NFR-DATA-01`).
-- [ ] `TEST-E2E-01`: End-to-end Golden Domain Journey executes successfully.
+- [x] `AC-08-1`: Summary endpoint returns Bank 27000.00, Debt 0.00, Income 20000.00, Expense 3000.00 (`TEST-BAL-01`).
+- [x] `AC-09-1`: Transaction history returns exactly 3 recorded transactions with 4 allocation lines total (`TEST-HIST-01`).
+- [x] `AC-09-2`: Records persist accurately across backend server process restarts (`TEST-PERSIST-01`, `NFR-DATA-01`).
+- [x] `TEST-E2E-01`: End-to-end Golden Domain Journey executes successfully.

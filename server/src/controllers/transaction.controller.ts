@@ -2,11 +2,47 @@ import { Request, Response, NextFunction } from 'express';
 import { recordIncome, IncomeError } from '../services/income.service.js';
 import { recordExpense, ExpenseError } from '../services/expense.service.js';
 import { recordRepayment, RepaymentError } from '../services/repayment.service.js';
+import { getTransactionHistory } from '../services/report.service.js';
 
 /**
  * Transaction Controller
  * Handles financial transaction endpoints in Whatsss.
  */
+
+/**
+ * GET /api/transactions
+ * Retrieves chronological transaction history for the authenticated tenant (F-09, WP-06, FR-11, AC-09-1).
+ * Ordered by transaction_date DESC, created_at DESC.
+ */
+export async function getTransactions(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const transactions = await getTransactionHistory(userId);
+
+    res.status(200).json({
+      success: true,
+      data: { transactions }
+    });
+  } catch (err) {
+    next(err);
+  }
+}
 
 /**
  * POST /api/transactions/income

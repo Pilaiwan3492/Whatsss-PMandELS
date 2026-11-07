@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authGuard } from '../middlewares/authGuard.js';
 import { roleGuard } from '../middlewares/roleGuard.js';
 import {
+  getTransactions,
   createIncomeTransaction,
   createExpenseTransaction,
   createRepaymentTransaction
@@ -13,6 +14,7 @@ const router = Router();
 router.use(authGuard);
 router.use(roleGuard);
 
+router.get('/', getTransactions);
 router.post('/income', createIncomeTransaction);
 router.post('/expense', createExpenseTransaction);
 router.post('/repayment', createRepaymentTransaction);

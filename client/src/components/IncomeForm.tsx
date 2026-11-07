@@ -10,13 +10,14 @@ export interface IncomeFormProps {
 }
 
 export const IncomeForm: React.FC<IncomeFormProps> = ({
-  accounts,
+  accounts = [],
   isOpen,
   onClose,
   onSuccess
 }) => {
-  const cashAccounts = accounts.filter((a) => a.type === 'CASH');
-  const incomeAccounts = accounts.filter((a) => a.type === 'INCOME');
+  const safeAccounts = accounts || [];
+  const cashAccounts = safeAccounts.filter((a) => a.type === 'CASH');
+  const incomeAccounts = safeAccounts.filter((a) => a.type === 'INCOME');
 
   const [primaryAccountId, setPrimaryAccountId] = useState<string>('');
   const [incomeAccountId, setIncomeAccountId] = useState<string>('');
