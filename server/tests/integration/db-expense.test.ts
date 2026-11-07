@@ -439,7 +439,7 @@ describe('Integration Test: PostgreSQL Live Database Expense & Split Allocation 
       });
 
     expect(res.status).toBe(404);
-    expect(res.body.error.code).toBe('ACCOUNT_NOT_FOUND');
+    expect(res.body.error.code).toBe('NOT_FOUND');
 
     // Confirm zero writes to PostgreSQL
     const txnCountAfter = await prisma.transaction.count();
@@ -483,7 +483,7 @@ describe('Integration Test: PostgreSQL Live Database Expense & Split Allocation 
       });
 
     expect(res.status).toBe(404);
-    expect(res.body.error.code).toBe('ACCOUNT_NOT_FOUND');
+    expect(res.body.error.code).toBe('NOT_FOUND');
 
     const txnCountAfter = await prisma.transaction.count();
     const allocCountAfter = await prisma.allocationLine.count();
