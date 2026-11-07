@@ -4,20 +4,21 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part F: Working Sprint 1 and Verification)  
-> **Status:** IN PROGRESS — Work Package 1 (WP-01) and Work Package 2 (WP-02) Merged into sprint-1; Work Package 3 (WP-03) Implemented & Verified on PR targeting sprint-1 (Awaiting Peer Review and Approval; WP-04 through WP-06 Pending Implementation)  
+> **Status:** IN PROGRESS — Work Package 1 (WP-01), Work Package 2 (WP-02), and Work Package 3 (WP-03) Merged into sprint-1; Work Package 4 (WP-04) Implemented & Verified on branch feat/credit-purchase-split-allocation (Awaiting Peer Review and Approval; WP-05 and WP-06 Pending Implementation)  
 
 ---
 
 ## 1. Release Identification
 
-* **Assessed Implementation Baseline Commit:** Commit `04055c4d6ce3353b7e5fe40e4ba987fc21785a53` (WP-03 Income Transaction Processing & Ledger Integration)
-* **Current Documentation HEAD Commit:** Commit `f645fcbddac65b31eb175b2ff5a2487e34dd382c` on branch `feat/income-transaction` (PR #10 targeting `sprint-1`)
-* **Base Branch Commit:** `a53f10d4272dc638de518bce3e0e7bd80fa2500a` (`sprint-1`)
+* **Assessed Implementation Baseline Commit:** Branch `feat/credit-purchase-split-allocation` (WP-04 Credit Card Purchase & Split Allocation Engine)
+* **Base Branch Commit:** `119fed2` (`sprint-1` merge of PR #10)
 * **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
-* **CI Verification Run:** GitHub Actions Run [#42362877322](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42362877322) (Status: Passed — 239 tests passed [220 backend + 19 frontend], 0 skipped in CI)
+* **Target Issue:** [GitHub Issue #5](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/5)
+* **Assignee:** Aphichaya Klinhual (`@Apichaya251400`)
+* **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
 * **Test Environment:** Node.js v20+, PostgreSQL 16 (GitHub Actions Service Container / Docker Compose)
 
-> **Sprint 1 Scope Note:** This record reflects the implementation verification for WP-01 (Authentication, Session Security & Access Control), WP-02 (Financial Account Model, Reproducible Seed & Opening Balance Lifecycle), and WP-03 (Income Transaction Processing & Ledger Integration). Final Deliverable 1 submission package evidence will be compiled upon completion of WP-04 through WP-06 (Expense Transactions, Allocations, Repayments, Summary, and Golden Domain Journey).
+> **Sprint 1 Scope Note:** This record reflects the implementation verification for WP-01 (Authentication & Session Security), WP-02 (Account Model & Opening Balance), WP-03 (Income Processing & Ledger Integration), and WP-04 (Credit Card Purchase & Split Allocation Engine). WP-05 (Debt Repayment) and WP-06 (Summary, History & Golden Domain Journey) will follow in sequence.
 
 ---
 
@@ -26,32 +27,35 @@
 * **Execution Commands:**
   * Backend: `npm test` (within `server/`)
   * Frontend: `npm test` (within `client/`)
-* **Automated Test Execution Summary (239 Tests across 19 Suites):**
-  * Backend Unit Tests: 69 passed across 6 suites
-    * `accountLock.test.ts`: 9 passed (hardened ID validation, deduplication, atomic abort without partial lock, and count mismatch concurrency conflict detection)
-    * `testSafety.test.ts`: 27 passed (immutable test database exact match verification [whatsss_test], rejection of whatsss_db, rejection of custom TEST_DATABASE_NAME and expectedDbName overrides, rejection of production_test regardless of GITHUB_ACTIONS/CI flags, bounded-retry snapshot restoration with failure reporting, user/account snapshot restoration, and local environment guard)
-    * `decimal.test.ts`: 16 passed (Prisma.Decimal validation, boundary checks, micro-precision rejection)
+* **Automated Test Execution Summary (WP-04 Complete Suite):**
+  * Backend Unit Tests: 83 passed across 7 suites (+14 new tests in `splitAllocation.test.ts`)
+    * `splitAllocation.test.ts`: 14 passed (BR-05/BR-06 split balance integrity, 422 ALLOCATION_SUM_MISMATCH on unbalanced sums, arbitrary-precision Decimal arithmetic, IEEE-754 floating point hazard prevention [0.10 + 0.20 === 0.30], single and multi-line validations, syntactic boundary checks, and over-precision rejection)
+    * `accountLock.test.ts`: 9 passed
+    * `testSafety.test.ts`: 27 passed
+    * `decimal.test.ts`: 16 passed
     * `config.test.ts`: 5 passed
     * `seed.test.ts`: 8 passed
     * `password.test.ts`: 4 passed
-  * Backend Integration Tests: 130 passed / 21 skipped locally (151 passed in CI when PostgreSQL 16 service is active) across 10 suites
-    * `income.test.ts`: 35 passed (Mocked Prisma & HTTP API; records salary inflow, updates destination bank balance from 10,000.00 to 30,000.00 THB, increases income summary to 20,000.00 THB, locks destination account opening balance per AC-03-3, validates negative/zero/invalid decimal amounts, validates canonical YYYY-MM-DD dates with leap year rules, strictly rejects leading/trailing/internal date whitespace, enforces strict canonical UUIDs without whitespace normalization, rejects leading/trailing whitespace on account IDs with 400 INVALID_ACCOUNT_ID, rejects fixture-style IDs, distinguishes malformed 400 from non-existent 404, retries opening balance lock concurrency conflicts safely, excludes non-income transaction forms from income summary, rejects cross-tenant accounts with 404 and admin access with 403)
-    * `account.test.ts`: 26 passed (Mocked Prisma & HTTP API; captures and asserts HTTP 200 and persisted values across all 5 account PATCH requests, decimal validation, real concurrent requests serialized under PostgreSQL row locking, arbitrary precision summation in summary, database error propagation without fake zero summary, and BR-02 category account balance exclusion)
-    * `access.test.ts`: 17 passed (App-tier Stub & Mocked Prisma)
-    * `content-type.test.ts`: 26 passed (Express Middleware)
-    * `csrf.test.ts`: 12 passed (Origin/Referer Guard)
-    * `auth.test.ts`: 11 passed (AuthGuard & Session)
-    * `cors.test.ts`: 3 passed (CORS Preflight)
-    * `db-income.test.ts`: 9 passed in CI (skipped locally without live PostgreSQL; dedicated test database verification [whatsss_test], live transaction commit and opening balance lock, allocation line failure rollback exercised through actual recordIncome service with failure injection, account locking failure rollback exercised through actual recordIncome service, failed request lock preservation, simultaneous concurrent income submissions with exact ID-tracked safe cleanup, live PostgreSQL boundary Decimal precision verification across 0.01, 0.29, 100.10, 9999999999.99, Section 10 direct execution of executeCleanupsSafely helper queue verifying exact ID purging and snapshot restoration on assertion failure, retry progression on transient failure, and fatal error propagation when retry limit is exhausted)
-    * `db-password.test.ts`: 2 passed in CI (skipped locally without live PostgreSQL)
-    * `db-account.test.ts`: 10 passed in CI (skipped locally without live PostgreSQL; dedicated test database verification [whatsss_test], bounded-retry cleanup failure isolation, real seed failure injection with proxy client and full snapshot restoration, live HTTP API isolation, admin exclusion, transaction commit/rollback locking, and live PostgreSQL boundary Decimal precision verification across accepted [0.01, 0.29, 100.10, 9999999999.99] and rejected [100.123, 10000000000.00, -0.01] inputs)
-  * Frontend Component Tests: 19 passed across 3 suites
-    * `IncomeForm.test.tsx`: 8 passed (modal rendering, destination CASH selection, INCOME category selection, valid amount/date submission, local calendar date default, field validations, loading state, and error handling)
+  * Backend Integration Tests: 147 passed / 23 skipped locally across 12 suites (+17 new tests in `expense.test.ts`, +2 new tests in `db-expense.test.ts`)
+    * `expense.test.ts`: 17 passed (Mocked Prisma & HTTP API; records purchase of 3,000.00 THB split into Dining 1,000.00 and Grocery 2,000.00, increases credit debt by 3,000.00 and expense summary by 3,000.00 per BR-04, locks account opening balances per AC-03-3, rejects missing primary account ID with 400, rejects unbalanced allocation sums with 422 ALLOCATION_SUM_MISMATCH, rejects non-LOAN_TAKEN primary account with 400 INVALID_PRIMARY_ACCOUNT, rejects non-EXPENSE target category with 400 INVALID_EXPENSE_ACCOUNT, rejects negative/zero/over-precision amounts, rejects cross-tenant accounts with 404 NOT_FOUND per BR-01, rejects unauthenticated requests with 401 per BR-09, and rejects ADMIN with 403 per BR-10)
+    * `db-expense.test.ts`: 2 passed in CI (skipped locally without live PostgreSQL; verifies live PostgreSQL persistence of Transaction form PAYMENT_CHARGE and child AllocationLines, verifies atomic opening balance locking in PostgreSQL, and verifies transaction rollback upon unbalanced allocations)
+    * `income.test.ts`: 35 passed
+    * `account.test.ts`: 26 passed
+    * `access.test.ts`: 17 passed
+    * `content-type.test.ts`: 26 passed
+    * `csrf.test.ts`: 12 passed
+    * `auth.test.ts`: 11 passed
+    * `cors.test.ts`: 3 passed
+    * `db-income.test.ts`: 9 passed in CI
+    * `db-password.test.ts`: 2 passed in CI
+    * `db-account.test.ts`: 10 passed in CI
+  * Frontend Component Tests: 26 passed across 4 suites (+7 new tests in `ExpenseForm.test.tsx`)
+    * `ExpenseForm.test.tsx`: 7 passed (modal rendering, LOAN_TAKEN credit card selection, EXPENSE categories dropdown, live client-side balance validation, disabled submit button when unbalanced per BR-06, enabled submit button when balanced per AC-06-1, dynamic addition and removal of split rows, successful submission, and backend error alert display)
+    * `IncomeForm.test.tsx`: 8 passed
     * `ProtectedRoute.test.tsx`: 4 passed
-    * `AccountListPage.test.tsx`: 7 passed (5 grouped account sections, decimal validation, and maximum allowed limit enforcement)
-  * Execution Environment Totals:
-    * Local Environment (without live PostgreSQL): 218 passed | 21 skipped (239 total)
-    * CI Environment (with live PostgreSQL 16 container): 239 passed | 0 skipped (239 total)
+    * `AccountListPage.test.tsx`: 7 passed
+
+---
 
 ### 2.1 Completed Work Package Evidence (WP-01: Authentication & Access Control)
 | Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |
@@ -59,47 +63,63 @@
 | `TEST-AUTH-01` | `AC-01-1` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | PR #8 (`b29ba59`) |
 | `TEST-AUTH-02` | `AC-01-2` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | PR #8 (`b29ba59`) |
 | `TEST-AUTH-03` | `AC-01-3` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | PR #8 (`b29ba59`) |
-| `TEST-AUTH-04` | `AC-01-4` | `server/tests/integration/db-password.test.ts`, `server/tests/unit/password.test.ts` | Passed — Live PostgreSQL / In-memory Fixture | PR #8 (`b29ba59`) |
-| `TEST-AUTH-05` | `AC-01-5` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | PR #8 (`b29ba59`) |
-| `TEST-SEC-01` | `AC-02-3` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | PR #8 (`b29ba59`) |
-| `TEST-SEC-02` | `AC-02-1` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | PR #8 (`b29ba59`) |
-| `TEST-SEC-03` | `AC-02-2` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | PR #8 (`b29ba59`) |
+| `TEST-AUTH-04` | `AC-01-4`, `NFR-SEC-01` | `server/tests/integration/db-password.test.ts`, `server/tests/unit/password.test.ts` | Passed — Live PostgreSQL / In-memory Fixture | PR #8 (`b29ba59`) |
+| `TEST-AUTH-05` | `AC-01-5`, `FR-01` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | PR #8 (`b29ba59`) |
+| `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | PR #8 (`b29ba59`) |
+| `TEST-SEC-02` | `AC-02-1`, `BR-09` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | PR #8 (`b29ba59`) |
+| `TEST-SEC-03` | `AC-02-2`, `BR-10` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | PR #8 (`b29ba59`) |
 | `TEST-SEC-04` | `AC-02-4` | `server/tests/integration/csrf.test.ts` | Passed — Mocked Prisma | PR #8 (`b29ba59`) |
 | `TEST-SEC-05` | System Contract (CORS) | `server/tests/integration/cors.test.ts` | Passed — Mocked Prisma | PR #8 (`b29ba59`) |
 | `TEST-SEC-06` | System Contract (Content-Type) | `server/tests/integration/content-type.test.ts` | Passed — Mocked Prisma | PR #8 (`b29ba59`) |
 
+---
+
 ### 2.2 Work Package 2 Evidence (WP-02: Financial Account Model & Opening Balance)
 | Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |
 |---|---|---|---|:---:|
-| `TEST-OPEN-01` | `AC-03-1`, `NFR-DATA-01` | `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Sets 10,000.00 THB on unlocked account, updates row, returns 200 OK) | WP-02 Branch |
-| `TEST-OPEN-02` | `AC-03-4`, `BR-02` | `server/tests/integration/account.test.ts` | Passed — Mocked Prisma (`GET /api/reports/summary` asserts HTTP 200 and saved balances across all 5 account PATCH requests [Checking: 10,000.00, Credit Card: 1,500.00, Salary: 5,000.00, Dining: 300.00, Grocery: 200.00], proving opening balance is strictly excluded from income/expense summaries; `total_income = 0.00`, `total_expense = 0.00`. Genuine DB errors propagate to 500 without fake zero summary. Transaction processing is scheduled for WP-03 and WP-04) | WP-02 Branch |
-| `TEST-OPEN-03` | `AC-03-2` | `server/tests/unit/decimal.test.ts`, `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Unit, Mocked Prisma & Live PostgreSQL HTTP API (Rejects negative [-0.01], non-numeric, >2 decimals like `100.123` and `1e-7`, >9,999,999,999.99 [`10000000000.00`] with 400 `INVALID_OPENING_BALANCE` leaving database untouched; accepts boundary values [`0.01`, `0.29`, `100.10`, `9999999999.99`] and confirms exact `Prisma.Decimal` persistence in PostgreSQL) | WP-02 Branch |
-| `TEST-OPEN-04` | `AC-03-3` | `server/tests/unit/accountLock.test.ts`, `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed (End-to-End Verified in WP-03) — Mocked Prisma & Live PostgreSQL Transaction (Proves HTTP 422 on locked account, `ACCOUNT_LOCK_CONCURRENCY_CONFLICT` on count mismatch; `lockAccounts` batch validation aborts on foreign/missing IDs without partial locks; proves lock persists on transaction commit and rolls back on failure in PostgreSQL. End-to-end invocation verified via `POST /api/transactions/income` in WP-03) | WP-02 Branch |
-| `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Cross-tenant account reads and opening balance updates return 404 NOT_FOUND through real auth middleware; foreign database rows untouched) | WP-02 Branch |
-| `TEST-SEC-03` | `BR-10` | `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Admin calling account endpoints returns 403 `ADMIN_FINANCIAL_ACCESS_FORBIDDEN` through real auth middleware) | WP-02 Branch |
+| `TEST-OPEN-01` | `AC-03-1`, `NFR-DATA-01` | `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API | WP-02 Branch |
+| `TEST-OPEN-02` | `AC-03-4`, `BR-02` | `server/tests/integration/account.test.ts` | Passed — Mocked Prisma | WP-02 Branch |
+| `TEST-OPEN-03` | `AC-03-2` | `server/tests/unit/decimal.test.ts`, `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Unit, Mocked Prisma & Live PostgreSQL HTTP API | WP-02 Branch |
+| `TEST-OPEN-04` | `AC-03-3` | `server/tests/unit/accountLock.test.ts`, `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL Transaction | WP-02 Branch |
+| `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API | WP-02 Branch |
+| `TEST-SEC-03` | `BR-10` | `server/tests/integration/account.test.ts`, `server/tests/integration/db-account.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API | WP-02 Branch |
+
+---
 
 ### 2.3 Work Package 3 Evidence (WP-03: Income Transaction Processing & Ledger Integration)
 | Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |
 |---|---|---|---|:---:|
-| `TEST-INC-01` | `AC-04-1`, `BR-03`, `FR-06` | `server/tests/integration/income.test.ts`, `server/tests/integration/db-income.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Recording salary of 20,000.00 THB on date 2026-11-06 returns 201 Created, destination cash balance increases from 10,000.00 THB to 30,000.00 THB, income summary increases to 20,000.00 THB) | WP-03 Branch |
-| `TEST-INC-02` | `AC-04-2` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma (Invalid dates [e.g. 2026-02-30, non-date string], leading/trailing/internal whitespace in dates, negative amounts [-100.00], zero [0.00], >2 decimals [100.123], exponential notation [1e5], >9,999,999,999.99, and whitespace-padded account UUIDs rejected with 400 INVALID_TRANSACTION_PAYLOAD or INVALID_ACCOUNT_ID) | WP-03 Branch |
-| `TEST-OPEN-04` (E2E) | `AC-03-3` | `server/tests/integration/income.test.ts`, `server/tests/integration/db-income.test.ts` | Passed — Mocked Prisma & Live PostgreSQL Transaction (Opening balance locked once first income transaction is committed; subsequent PATCH /api/accounts/:id/opening-balance returns 422 OPENING_BALANCE_LOCKED) | WP-03 Branch |
-| `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma (Cross-tenant account IDs for primary cash account or target category account return 404 NOT_FOUND, concealing existence) | WP-03 Branch |
-| `TEST-SEC-03` | `BR-10` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma (Admin role caller rejected with 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN) | WP-03 Branch |
-| `TEST-INC-DECIMAL` | `NFR-DATA-01` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma (Exact 2-decimal precision arithmetic in balance and income summary calculations without floating-point drift) | WP-03 Branch |
-| `TEST-INC-ATOM` | `AC-03-3`, `F-04` | `server/tests/integration/income.test.ts`, `server/tests/integration/db-income.test.ts` | Passed — Mocked Prisma & Live PostgreSQL (All-or-nothing database transaction rollback when transaction, allocation, or account lock fails; Section 10 verifies executeCleanupsSafely directly cleans up exact transaction IDs and restores account snapshot under simulated assertion failure, recovers on retry, and propagates fatal cleanup errors) | WP-03 Branch |
-| `TEST-INC-CONCURRENT` | `AC-03-3`, `F-04` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma (Concurrent income transactions handled without race conditions or corrupted balances) | WP-03 Branch |
-| `TEST-UI-INC` | `AC-04-1`, `AC-04-2` | `client/src/components/IncomeForm.test.tsx` | Passed — Vitest / Testing Library (Income form rendering, input validation, submission, and state management) | WP-03 Branch |
+| `TEST-INC-01` | `AC-04-1`, `BR-03`, `FR-06` | `server/tests/integration/income.test.ts`, `server/tests/integration/db-income.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API | PR #10 (`119fed2`) |
+| `TEST-INC-02` | `AC-04-2` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma | PR #10 (`119fed2`) |
+| `TEST-OPEN-04` (E2E) | `AC-03-3` | `server/tests/integration/income.test.ts`, `server/tests/integration/db-income.test.ts` | Passed — Mocked Prisma & Live PostgreSQL Transaction | PR #10 (`119fed2`) |
+| `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma | PR #10 (`119fed2`) |
+| `TEST-SEC-03` | `BR-10` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma | PR #10 (`119fed2`) |
+| `TEST-INC-DECIMAL` | `NFR-DATA-01` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma | PR #10 (`119fed2`) |
+| `TEST-INC-ATOM` | `AC-03-3`, `F-04` | `server/tests/integration/income.test.ts`, `server/tests/integration/db-income.test.ts` | Passed — Mocked Prisma & Live PostgreSQL | PR #10 (`119fed2`) |
+| `TEST-INC-CONCURRENT` | `AC-03-3`, `F-04` | `server/tests/integration/income.test.ts` | Passed — Mocked Prisma | PR #10 (`119fed2`) |
+| `TEST-UI-INC` | `AC-04-1`, `AC-04-2` | `client/src/components/IncomeForm.test.tsx` | Passed — Vitest / Testing Library | PR #10 (`119fed2`) |
 
-### 2.4 Pending Work Packages (WP-04 through WP-06: Financial Transactions & Ledger)
-> **Note:** Expense transactions, split allocations, repayments, and historical ledger are scheduled for subsequent work packages. The following tests remain pending implementation and execution.
+---
+
+### 2.4 Work Package 4 Evidence (WP-04: Credit Card Purchase & Split Allocation Engine)
+| Test ID | Linked AC / Contract | Test Location | Classification & Result | Tested Baseline |
+|---|---|---|---|:---:|
+| `TEST-EXP-01` | `AC-05-1`, `BR-04`, `FR-07` | `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Mocked Prisma & Live PostgreSQL HTTP API (Recording credit purchase of 3,000.00 THB on date 2026-11-06 increases credit debt by 3,000.00 THB and expense summary by 3,000.00 THB) | WP-04 Branch |
+| `TEST-EXP-02` | `AC-05-2` | `server/tests/integration/expense.test.ts` | Passed — Mocked Prisma (Omitting primary_account_id rejected with 400 INVALID_ACCOUNT_ID; non-LOAN_TAKEN primary account rejected with 400 INVALID_PRIMARY_ACCOUNT) | WP-04 Branch |
+| `TEST-ALLOC-01` | `AC-06-1`, `BR-05`, `FR-08` | `server/tests/unit/splitAllocation.test.ts`, `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Unit, Mocked Prisma & Live PostgreSQL HTTP API (Split allocation with Dining 1,000.00 + Grocery 2,000.00 = 3,000.00 THB persists successfully with 2 allocation lines) | WP-04 Branch |
+| `TEST-ALLOC-02` | `AC-06-2`, `BR-06` | `server/tests/unit/splitAllocation.test.ts`, `server/tests/integration/expense.test.ts`, `server/tests/integration/db-expense.test.ts` | Passed — Unit, Mocked Prisma & Live PostgreSQL HTTP API (Unbalanced allocation sum [1000 + 1500 != 3000] rejected with 422 ALLOCATION_SUM_MISMATCH without partial writes) | WP-04 Branch |
+| `TEST-SEC-01` | `AC-02-3`, `BR-01` | `server/tests/integration/expense.test.ts` | Passed — Mocked Prisma (Cross-tenant primary_account_id or target_account_id returns 404 NOT_FOUND, concealing foreign resource existence) | WP-04 Branch |
+| `TEST-SEC-02` | `AC-02-1`, `BR-09` | `server/tests/integration/expense.test.ts` | Passed — Mocked Prisma (Unauthenticated POST /api/transactions/expense returns 401 UNAUTHORIZED) | WP-04 Branch |
+| `TEST-SEC-03` | `AC-02-2`, `BR-10` | `server/tests/integration/expense.test.ts` | Passed — Mocked Prisma (ADMIN caller returns 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN with zero data leak) | WP-04 Branch |
+| `TEST-UI-EXP` | `AC-05-1`, `AC-06-1`, `AC-06-2` | `client/src/components/ExpenseForm.test.tsx` | Passed — Vitest / Testing Library (Expense form rendering, split allocations table, live balance validation, disable submit when unbalanced, dynamic add/remove rows) | WP-04 Branch |
+
+---
+
+### 2.5 Pending Work Packages (WP-05 through WP-06: Repayment, Summary & E2E)
+> **Note:** Repayments, final balances, and historical ledger are scheduled for subsequent work packages. The following tests remain pending implementation and execution.
 
 | Test ID | Linked AC / Feature | Test Location | Status |
 |---|---|---|:---:|
-| `TEST-EXP-01` | `AC-05-1` (Expense Transaction) | `server/tests/integration/transaction.test.ts` | Pending Execution |
-| `TEST-EXP-02` | `AC-05-2` (Expense Balance Deduction) | `server/tests/integration/transaction.test.ts` | Pending Execution |
-| `TEST-ALLOC-01`| `AC-06-1` (Equal Split Allocation) | `server/tests/integration/transaction.test.ts` | Pending Execution |
-| `TEST-ALLOC-02`| `AC-06-2` (Exact Split Allocation) | `server/tests/integration/allocation.test.ts` | Pending Execution |
 | `TEST-REPAY-01`| `AC-07-1` (Credit Repayment) | `server/tests/integration/transaction.test.ts` | Pending Execution |
 | `TEST-REPAY-02`| `AC-07-2` (Repayment Balance Update) | `server/tests/integration/summary.test.ts` | Pending Execution |
 | `TEST-REPAY-03`| `AC-07-4` (Target Account Validation) | `server/tests/integration/repayment.test.ts` | Pending Execution |
