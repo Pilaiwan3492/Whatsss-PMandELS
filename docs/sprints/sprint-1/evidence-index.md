@@ -10,10 +10,10 @@
 
 ## 1. Release Identification
 
-* **Assessed Release Commit:** `fdbc65cd31f1031b14934cf924080c86dde505e3` (`feat/auth-session-security` / PR #8)
+* **Assessed Release Commit:** `d8a2b7a5a8f5fc673b885be997576a89ea8eb9cf` (`feat/auth-session-security` / PR #8)
 * **Release Tag:** `v0.1.0-sprint1` (pending final merge into main)
 * **Test Environment:** Node.js v20+, PostgreSQL 16 (Docker Compose / GitHub Actions Service Container), local development environment
-* **CI Verification Run:** GitHub Actions Run [#42334882814](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42334882814) (PR #8)
+* **CI Verification Run:** GitHub Actions Run [#42336047490](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42336047490) (PR #8)
 
 > **Important Scope Note:** Deliverable 1 / Sprint 1 is IN PROGRESS. Only WP-01 (Authentication & Session Security) is assessed in this PR. Financial domain work packages WP-02 through WP-06 (Opening Balance, Income, Expense, Allocations, Repayments, Summary) are pending implementation in subsequent work packages.
 
@@ -43,17 +43,17 @@
 ### Test-to-Requirement Results Mapping
 | Test ID | Linked AC / System Contract | Test Name / Location | Execution Result | Tested Commit |
 |---|---|---|:---:|:---:|
-| `TEST-AUTH-01` | `AC-01-1` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `fdbc65c` |
-| `TEST-AUTH-02` | `AC-01-2` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `fdbc65c` |
-| `TEST-AUTH-03` | `AC-01-3` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `fdbc65c` |
-| `TEST-AUTH-04` | `AC-01-4` | `server/tests/integration/db-password.test.ts`, `server/tests/unit/password.test.ts` | Passed — Live PostgreSQL (db-password) / Mocked Bcrypt (unit) | `fdbc65c` |
-| `TEST-AUTH-05` | `AC-01-5` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `fdbc65c` |
-| `TEST-SEC-01` | `AC-02-3` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `fdbc65c` |
-| `TEST-SEC-02` | `AC-02-1` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `fdbc65c` |
-| `TEST-SEC-03` | `AC-02-2` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `fdbc65c` |
-| `TEST-SEC-04` | `AC-02-4` | `server/tests/integration/csrf.test.ts` | Passed — Mocked Prisma | `fdbc65c` |
-| `TEST-SEC-05` | `System Security Contract (CORS Preflight)` | `server/tests/integration/cors.test.ts` | Passed — Mocked Prisma | `fdbc65c` |
-| `TEST-SEC-06` | `System API Contract (Content-Type Validation and JSON Body Parsing)` | `server/tests/integration/content-type.test.ts` | Passed — Mocked Prisma | `fdbc65c` |
+| `TEST-AUTH-01` | `AC-01-1` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `d8a2b7a` |
+| `TEST-AUTH-02` | `AC-01-2` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `d8a2b7a` |
+| `TEST-AUTH-03` | `AC-01-3` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `d8a2b7a` |
+| `TEST-AUTH-04` | `AC-01-4` | `server/tests/integration/db-password.test.ts`, `server/tests/unit/password.test.ts` | Passed — Live PostgreSQL (db-password) / Mocked Bcrypt (unit) | `d8a2b7a` |
+| `TEST-AUTH-05` | `AC-01-5` | `server/tests/integration/auth.test.ts` | Passed — Mocked Prisma | `d8a2b7a` |
+| `TEST-SEC-01` | `AC-02-3` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `d8a2b7a` |
+| `TEST-SEC-02` | `AC-02-1` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `d8a2b7a` |
+| `TEST-SEC-03` | `AC-02-2` | `server/tests/integration/access.test.ts` | Passed — Application-tier Stub | `d8a2b7a` |
+| `TEST-SEC-04` | `AC-02-4` | `server/tests/integration/csrf.test.ts` | Passed — Mocked Prisma | `d8a2b7a` |
+| `TEST-SEC-05` | `System Security Contract (CORS Preflight)` | `server/tests/integration/cors.test.ts` | Passed — Mocked Prisma | `d8a2b7a` |
+| `TEST-SEC-06` | `System API Contract (Content-Type Validation and JSON Body Parsing)` | `server/tests/integration/content-type.test.ts` | Passed — Mocked Prisma | `d8a2b7a` |
 | `TEST-OPEN-01` | `AC-03-1` | `server/tests/integration/account.test.ts` | Pending Execution | Pending Execution |
 | `TEST-OPEN-02` | `AC-03-4` | `server/tests/integration/summary.test.ts` | Pending Execution | Pending Execution |
 | `TEST-OPEN-03` | `AC-03-2` | `server/tests/integration/account.test.ts` | Pending Execution | Pending Execution |
