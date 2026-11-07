@@ -248,12 +248,12 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
         </div>
 
         {/* Modal Form */}
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <form onSubmit={handleSubmit} className="expense-form">
           <div className="expense-modal-body">
             {/* Error Message Alert */}
             {errorMessage && (
               <div className="expense-error-alert" role="alert">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="expense-error-icon">
                   <circle cx="12" cy="12" r="10"></circle>
                   <line x1="12" y1="8" x2="12" y2="12"></line>
                   <line x1="12" y1="16" x2="12.01" y2="16"></line>
@@ -273,7 +273,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
               {/* Credit Card Account (Full Width) */}
               <div className="expense-field-group">
                 <label htmlFor="primaryAccountId" className="expense-label">
-                  Credit Card <span style={{ color: '#b91c1c' }}>*</span>
+                  Credit Card <span className="expense-required-star" aria-hidden="true">*</span>
                 </label>
                 <select
                   id="primaryAccountId"
@@ -295,7 +295,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
               {/* Total Amount (Prominent Hero Field) */}
               <div className="expense-field-group">
                 <label htmlFor="totalAmount" className="expense-label">
-                  Total Amount <span style={{ color: '#b91c1c' }}>*</span>
+                  Total Amount <span className="expense-required-star" aria-hidden="true">*</span>
                 </label>
                 <div className="expense-amount-wrapper">
                   <span className="expense-currency-symbol">฿</span>
@@ -318,7 +318,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
               <div className="expense-grid-2">
                 <div className="expense-field-group">
                   <label htmlFor="transactionDate" className="expense-label">
-                    Transaction Date <span style={{ color: '#b91c1c' }}>*</span>
+                    Transaction Date <span className="expense-required-star" aria-hidden="true">*</span>
                   </label>
                   <input
                     type="date"
@@ -333,7 +333,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
 
                 <div className="expense-field-group">
                   <label htmlFor="description" className="expense-label">
-                    Description <span style={{ fontWeight: 400, color: 'var(--fintech-text-muted)' }}>(Optional)</span>
+                    Description <span className="expense-optional-badge">(Optional)</span>
                   </label>
                   <input
                     type="text"
@@ -365,89 +365,96 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
 
               {/* Allocation Cards (Row List) */}
               <div className="expense-allocations-list" role="list">
-                {allocations.map((row, idx) => (
-                  <div key={idx} className="expense-allocation-card" role="listitem">
-                    <div className="expense-card-header">
-                      <span className="expense-card-index">
-                        Allocation {String(idx + 1).padStart(2, '0')}
-                      </span>
-                      <button
-                        type="button"
-                        className="expense-remove-btn"
-                        onClick={() => handleRemoveSplitLine(idx)}
-                        disabled={allocations.length <= 1 || isSubmitting}
-                        aria-label={`Remove allocation ${idx + 1}`}
-                        title="Remove split line"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="3 6 5 6 21 6"></polyline>
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                          <line x1="10" y1="11" x2="10" y2="17"></line>
-                          <line x1="14" y1="11" x2="14" y2="17"></line>
-                        </svg>
-                        <span>Remove</span>
-                      </button>
-                    </div>
+                {allocations.map((row, idx) => {
+                  const categoryId = `alloc-category-${idx}`;
+                  const amountId = `alloc-amount-${idx}`;
+                  const notesId = `alloc-notes-${idx}`;
 
-                    <div className="expense-card-grid">
-                      <div className="expense-field-group">
-                        <label className="expense-label">
-                          Expense Category <span style={{ color: '#b91c1c' }}>*</span>
-                        </label>
-                        <select
-                          className="expense-select"
-                          value={row.target_account_id}
-                          onChange={(e) => handleAllocationChange(idx, 'target_account_id', e.target.value)}
-                          disabled={isSubmitting}
-                          aria-label={`Category for line ${idx + 1}`}
+                  return (
+                    <div key={idx} className="expense-allocation-card" role="listitem">
+                      <div className="expense-card-header">
+                        <span className="expense-card-index">
+                          Allocation {String(idx + 1).padStart(2, '0')}
+                        </span>
+                        <button
+                          type="button"
+                          className="expense-remove-btn"
+                          onClick={() => handleRemoveSplitLine(idx)}
+                          disabled={allocations.length <= 1 || isSubmitting}
+                          aria-label={`Remove allocation ${idx + 1}`}
+                          title="Remove split line"
                         >
-                          <option value="">Select expense category</option>
-                          {expenseAccounts.map((acc) => (
-                            <option key={acc.id} value={acc.id}>
-                              {acc.name}
-                            </option>
-                          ))}
-                        </select>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            <line x1="10" y1="11" x2="10" y2="17"></line>
+                            <line x1="14" y1="11" x2="14" y2="17"></line>
+                          </svg>
+                          <span>Remove</span>
+                        </button>
                       </div>
 
-                      <div className="expense-field-group">
-                        <label className="expense-label">
-                          Amount (THB) <span style={{ color: '#b91c1c' }}>*</span>
-                        </label>
-                        <div className="expense-amount-wrapper">
-                          <span style={{ position: 'absolute', left: '12px', fontSize: '14px', color: 'var(--fintech-text-muted)', fontWeight: 600, pointerEvents: 'none' }}>฿</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            className="expense-input"
-                            style={{ paddingLeft: '28px', fontFamily: '"SF Mono", Consolas, monospace', fontWeight: 600 }}
-                            placeholder="0.00"
-                            value={row.amount}
-                            onChange={(e) => handleAllocationChange(idx, 'amount', e.target.value)}
+                      <div className="expense-card-grid">
+                        <div className="expense-field-group">
+                          <label htmlFor={categoryId} className="expense-label">
+                            Expense Category <span className="expense-required-star" aria-hidden="true">*</span>
+                          </label>
+                          <select
+                            id={categoryId}
+                            className="expense-select"
+                            value={row.target_account_id}
+                            onChange={(e) => handleAllocationChange(idx, 'target_account_id', e.target.value)}
                             disabled={isSubmitting}
-                            aria-label={`Amount for line ${idx + 1}`}
-                          />
+                            aria-label={`Category for line ${idx + 1}`}
+                          >
+                            <option value="">Select expense category</option>
+                            {expenseAccounts.map((acc) => (
+                              <option key={acc.id} value={acc.id}>
+                                {acc.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="expense-field-group">
+                          <label htmlFor={amountId} className="expense-label">
+                            Amount (THB) <span className="expense-required-star" aria-hidden="true">*</span>
+                          </label>
+                          <div className="expense-amount-wrapper">
+                            <span className="expense-card-currency-symbol">฿</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              id={amountId}
+                              className="expense-input expense-alloc-amount-input"
+                              placeholder="0.00"
+                              value={row.amount}
+                              onChange={(e) => handleAllocationChange(idx, 'amount', e.target.value)}
+                              disabled={isSubmitting}
+                              aria-label={`Amount for line ${idx + 1}`}
+                            />
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="expense-field-group">
-                      <label className="expense-label">
-                        Notes <span style={{ fontWeight: 400, color: 'var(--fintech-text-muted)' }}>(Optional)</span>
-                      </label>
-                      <input
-                        type="text"
-                        className="expense-input"
-                        style={{ height: '40px' }}
-                        placeholder="e.g. Dinner with friends"
-                        value={row.notes}
-                        onChange={(e) => handleAllocationChange(idx, 'notes', e.target.value)}
-                        disabled={isSubmitting}
-                        aria-label={`Notes for line ${idx + 1}`}
-                      />
+                      <div className="expense-field-group">
+                        <label htmlFor={notesId} className="expense-label">
+                          Notes <span className="expense-optional-badge">(Optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          id={notesId}
+                          className="expense-input expense-alloc-notes-input"
+                          placeholder="e.g. Dinner with friends"
+                          value={row.notes}
+                          onChange={(e) => handleAllocationChange(idx, 'notes', e.target.value)}
+                          disabled={isSubmitting}
+                          aria-label={`Notes for line ${idx + 1}`}
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Add Category Button */}
@@ -497,7 +504,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
                     ฿{roundedSum.toFixed(2)}
                   </span>
                 </div>
-                <div className="expense-metric-item">
+                <div className="expense-metric-item metric-remaining">
                   <span className="expense-metric-label">Remaining</span>
                   <span
                     className={`expense-metric-value ${
@@ -514,8 +521,23 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
                 </div>
               </div>
 
-              {/* Progress Bar */}
-              <div className="expense-progress-track" role="progressbar" aria-valuenow={progressPercent} aria-valuemin={0} aria-valuemax={100}>
+              {/* Progress Bar with Full Accessibility Attributes */}
+              <div
+                className="expense-progress-track"
+                role="progressbar"
+                aria-label="Allocation progress"
+                aria-valuenow={progressPercent}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuetext={
+                  isBalanced
+                    ? 'Fully allocated (100%)'
+                    : remaining < 0
+                    ? `Over-allocated by ฿${Math.abs(remaining).toFixed(2)}`
+                    : `${roundedSum.toFixed(2)} of ${roundedTotal.toFixed(2)} THB allocated (${Math.round(progressPercent)}%)`
+                }
+                tabIndex={0}
+              >
                 <div
                   className={`expense-progress-bar ${
                     isBalanced ? 'balanced' : remaining < 0 ? 'over' : 'incomplete'
@@ -528,19 +550,19 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
               <p className="expense-summary-hint">
                 {isBalanced && (
                   <>
-                    <span style={{ color: 'var(--fintech-primary)', fontWeight: 700 }}>✓</span>
+                    <span className="expense-hint-icon-balanced">✓</span>
                     <span>Fully allocated: ฿{roundedSum.toFixed(2)} of ฿{roundedTotal.toFixed(2)}. Ready to record.</span>
                   </>
                 )}
                 {!isBalanced && remaining > 0 && parsedTotal > 0 && (
                   <>
-                    <span style={{ color: '#d97706', fontWeight: 700 }}>⚠</span>
+                    <span className="expense-hint-icon-warning">⚠</span>
                     <span>Allocate the remaining ฿{remaining.toFixed(2)} to continue.</span>
                   </>
                 )}
                 {!isBalanced && remaining < 0 && (
                   <>
-                    <span style={{ color: '#dc2626', fontWeight: 700 }}>✕</span>
+                    <span className="expense-hint-icon-danger">✕</span>
                     <span>Over-allocated by ฿{Math.abs(remaining).toFixed(2)}. Total allocations exceed purchase amount.</span>
                   </>
                 )}
