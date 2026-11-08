@@ -10,7 +10,7 @@
 
 ## 1. Release Identification
 
-* **Assessed Implementation Baseline Commit:** Branch `feat/summaries-history-e2e` (`7fbbadf10a8080aab7461c4e2e0d9d356b0e4a65` / verified on CI Run #133: WP-06 Financial Summaries, Transaction History, Real Process Restart, Atomic Test Fixtures, Strict Cleanup Failure & Exact Match Isolation)
+* **Assessed Implementation Baseline Commit:** Branch `feat/summaries-history-e2e` (`3cc1b46828baa17c09e3617fb927ee1e59f93451` / verified on CI Run #137: WP-06 Financial Summaries, Transaction History, Real Process Restart, Atomic Test Fixtures, Strict Cleanup Failure & Exact Match Isolation)
 * **Base Branch Commit:** `f9d4ad8` (`sprint-1` merge of PR #12)
 * **Release Tag:** `v0.1.0-sprint1 (Release Candidate — Pending Tag Creation upon Sprint 1 Review & Merge)`
 * **Target Issue:** [GitHub Issue #7](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/7)
@@ -41,9 +41,9 @@
     * Production Builds:
       * Backend TypeScript compilation: Passed.
       * Frontend TypeScript compilation and Vite production build: Passed.
-    * CI Run: [#133](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42505098417) (and Push [#132](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42505092742))
-    * Verified Commit: `7fbbadf10a8080aab7461c4e2e0d9d356b0e4a65`
-    * หมายเหตุ: ตัวเลขนี้ตรวจจาก Job Logs ของ Run #133 (Backend 314 passed across 25 files, Frontend 55 passed across 7 files, TypeScript compilation & Vite build passed)
+    * CI Run: [#137](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42507008674) (and Push [#136](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42507004728))
+    * Verified Commit: `3cc1b46828baa17c09e3617fb927ee1e59f93451`
+    * หมายเหตุ: ตัวเลขนี้ตรวจจาก Job Logs ของ Run #137 (Backend 314 passed across 25 files, Frontend 55 passed across 7 files, TypeScript compilation & Vite build passed)
   * **Detailed Suite Breakdown:**
     * `balance.test.ts`: 5 passed (TEST-BAL-01: arbitrary-precision Decimal balance calculations, opening balance exclusion BR-02, salary inflow balance impact, split purchase debt impact, Golden Journey final balances Bank 27,000 THB, Debt 0 THB, Income 20,000 THB, Expense 3,000 THB, Dining 1,000 THB, Grocery 2,000 THB)
     * `transaction.test.ts`: 7 passed (TEST-HIST-01: Mocked Prisma & HTTP API; 401 unauthenticated per BR-09, 403 admin financial barrier per BR-10, cross-tenant isolation per BR-01, empty state, exactly 3 transactions and 4 allocation lines total per AC-09-1, deterministic chronological sorting transaction_date DESC, created_at DESC, eagerly loaded primary account and target category metadata)
