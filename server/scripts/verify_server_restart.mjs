@@ -77,6 +77,51 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isProcessRunning(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function killProcessTree(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try {
+      execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+    } catch {}
+  } else {
+    try {
+      execSync(`pkill -P ${pid} 2>/dev/null || true; kill -9 ${pid} 2>/dev/null || true`, { stdio: 'ignore' });
+    } catch {}
+  }
+}
+
+async function terminateAndVerifyProcess(pid, timeoutMs = 7000) {
+  if (!pid || !isProcessRunning(pid)) return;
+
+  await killProcessTree(pid);
+
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!isProcessRunning(pid)) {
+      return;
+    }
+    await sleep(200);
+  }
+
+  // Second aggressive kill attempt if still active
+  await killProcessTree(pid);
+  await sleep(300);
+
+  if (isProcessRunning(pid)) {
+    throw new Error(`Process with PID ${pid} could not be terminated and is still running after ${timeoutMs}ms.`);
+  }
+}
+
 async function waitForServer(url, timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -103,19 +148,6 @@ async function waitForServerDown(url, timeoutMs = 10000) {
     }
   }
   throw new Error(`Server at ${url} is still responding after ${timeoutMs}ms; termination verification failed.`);
-}
-
-async function killProcessTree(pid) {
-  if (!pid) return;
-  if (process.platform === 'win32') {
-    try {
-      execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-    } catch {}
-  } else {
-    try {
-      execSync(`pkill -P ${pid} 2>/dev/null || true; kill -9 ${pid} 2>/dev/null || true`, { stdio: 'ignore' });
-    } catch {}
-  }
 }
 
 const spawnedProcesses = [];
@@ -172,15 +204,22 @@ async function main() {
     console.log('[STEP 2] Verifying and capturing baseline of user_demo (data isolation check)...');
     const demoUser = await prisma.user.findUnique({
       where: { username: 'user_demo' },
-      include: { accounts: true, transactions: { select: { id: true } } }
+      include: {
+        accounts: { orderBy: { id: 'asc' } },
+        transactions: { select: { id: true }, orderBy: { id: 'asc' } }
+      }
     });
 
     if (demoUser) {
       demoUserInitialSnapshot = {
+        userId: demoUser.id,
         txnCount: demoUser.transactions.length,
+        transactionIds: demoUser.transactions.map((t) => t.id).sort(),
+        accountIds: demoUser.accounts.map((a) => a.id).sort(),
         accounts: demoUser.accounts.map((a) => ({
           id: a.id,
           name: a.name,
+          type: a.type,
           opening_balance: a.opening_balance.toFixed(2),
           is_opening_locked: a.is_opening_locked
         }))
@@ -190,75 +229,80 @@ async function main() {
       console.log('[STEP 2] user_demo not present in test database; skipping demo user baseline check.');
     }
 
-    // Provision dedicated isolated Test User and Accounts for WP-06 Restart Script
-    console.log('[STEP 2] Provisioning isolated test tenant and accounts...');
+    // Provision dedicated isolated Test User and Accounts for WP-06 Restart Script atomically
+    console.log('[STEP 2] Provisioning isolated test tenant and accounts atomically...');
     const uniqueToken = `restart_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
     const username = `test_restart_${uniqueToken}`;
     const rawPassword = 'Password123!';
     const passwordHash = await bcrypt.hash(rawPassword, 10);
 
-    testUser = await prisma.user.create({
-      data: {
-        username,
-        email: `${username}@whatsss.test`,
-        password_hash: passwordHash,
-        role: 'USER',
-        is_active: true
-      }
+    const { user: createdTestUser, checkingAcc, ccAcc, salaryAcc, diningAcc, groceryAcc } = await prisma.$transaction(async (tx) => {
+      const u = await tx.user.create({
+        data: {
+          username,
+          email: `${username}@whatsss.test`,
+          password_hash: passwordHash,
+          role: 'USER',
+          is_active: true
+        }
+      });
+
+      const cb = await tx.account.create({
+        data: {
+          user_id: u.id,
+          name: 'Checking Bank',
+          type: 'CASH',
+          opening_balance: new Prisma.Decimal('0.00'),
+          is_opening_locked: false
+        }
+      });
+
+      const cc = await tx.account.create({
+        data: {
+          user_id: u.id,
+          name: 'Visa Credit Card',
+          type: 'LOAN_TAKEN',
+          opening_balance: new Prisma.Decimal('0.00'),
+          is_opening_locked: false
+        }
+      });
+
+      const sal = await tx.account.create({
+        data: {
+          user_id: u.id,
+          name: 'Salary',
+          type: 'INCOME',
+          opening_balance: new Prisma.Decimal('0.00'),
+          is_opening_locked: false
+        }
+      });
+
+      const din = await tx.account.create({
+        data: {
+          user_id: u.id,
+          name: 'Dining',
+          type: 'EXPENSE',
+          opening_balance: new Prisma.Decimal('0.00'),
+          is_opening_locked: false
+        }
+      });
+
+      const gro = await tx.account.create({
+        data: {
+          user_id: u.id,
+          name: 'Grocery',
+          type: 'EXPENSE',
+          opening_balance: new Prisma.Decimal('0.00'),
+          is_opening_locked: false
+        }
+      });
+
+      return { user: u, checkingAcc: cb, ccAcc: cc, salaryAcc: sal, diningAcc: din, groceryAcc: gro };
     });
 
-    const checkingAcc = await prisma.account.create({
-      data: {
-        user_id: testUser.id,
-        name: 'Checking Bank',
-        type: 'CASH',
-        opening_balance: new Prisma.Decimal('0.00'),
-        is_opening_locked: false
-      }
-    });
-
-    const ccAcc = await prisma.account.create({
-      data: {
-        user_id: testUser.id,
-        name: 'Visa Credit Card',
-        type: 'LOAN_TAKEN',
-        opening_balance: new Prisma.Decimal('0.00'),
-        is_opening_locked: false
-      }
-    });
-
-    const salaryAcc = await prisma.account.create({
-      data: {
-        user_id: testUser.id,
-        name: 'Salary',
-        type: 'INCOME',
-        opening_balance: new Prisma.Decimal('0.00'),
-        is_opening_locked: false
-      }
-    });
-
-    const diningAcc = await prisma.account.create({
-      data: {
-        user_id: testUser.id,
-        name: 'Dining',
-        type: 'EXPENSE',
-        opening_balance: new Prisma.Decimal('0.00'),
-        is_opening_locked: false
-      }
-    });
-
-    const groceryAcc = await prisma.account.create({
-      data: {
-        user_id: testUser.id,
-        name: 'Grocery',
-        type: 'EXPENSE',
-        opening_balance: new Prisma.Decimal('0.00'),
-        is_opening_locked: false
-      }
-    });
-
+    testUser = createdTestUser;
     testAccounts = { checkingAcc, ccAcc, salaryAcc, diningAcc, groceryAcc };
-    console.log(`[STEP 2] Isolated test user created: ${username} with 5 dedicated financial accounts.\n`);
+    console.log(`[STEP 2] Isolated test user created atomically: ${username} with 5 dedicated financial accounts.\n`);
 
     // Step 3: Start Server Process 1
     console.log(`[STEP 3] Spawning Backend Server Process 1 on port ${PORT}...`);
@@ -441,7 +485,7 @@ async function main() {
 
     // Step 7: STOP Backend Server Process 1
     console.log(`[STEP 7] Stopping Backend Server Process 1 (PID: ${pid1})...`);
-    await killProcessTree(pid1);
+    await terminateAndVerifyProcess(pid1);
     await waitForServerDown(`${BASE_URL}/api/accounts`);
     console.log(`[STEP 7] Verified Server Process 1 (PID: ${pid1}) is completely terminated.\n`);
 
@@ -531,27 +575,49 @@ async function main() {
 
     // Step 11: Assert user_demo remained completely unmodified (Data Isolation Verification)
     if (demoUserInitialSnapshot && prisma) {
-      console.log('\n[DATA ISOLATION] Asserting user_demo remained 100% untouched...');
+      console.log('\n[DATA ISOLATION] Asserting user_demo remained 100% untouched (exact ID & attribute match)...');
       const currentDemo = await prisma.user.findUnique({
         where: { username: 'user_demo' },
-        include: { accounts: true, transactions: { select: { id: true } } }
+        include: {
+          accounts: { orderBy: { id: 'asc' } },
+          transactions: { select: { id: true }, orderBy: { id: 'asc' } }
+        }
       });
       if (currentDemo) {
         if (currentDemo.transactions.length !== demoUserInitialSnapshot.txnCount) {
-          throw new Error(`DATA ISOLATION VIOLATION: user_demo transaction count changed!`);
+          throw new Error(`DATA ISOLATION VIOLATION: user_demo transaction count changed from ${demoUserInitialSnapshot.txnCount} to ${currentDemo.transactions.length}!`);
         }
+
+        const currentTxnIds = currentDemo.transactions.map((t) => t.id).sort();
+        if (
+          currentTxnIds.length !== demoUserInitialSnapshot.transactionIds.length ||
+          currentTxnIds.some((id, idx) => id !== demoUserInitialSnapshot.transactionIds[idx])
+        ) {
+          throw new Error(`DATA ISOLATION VIOLATION: user_demo transaction IDs set altered! Baseline: [${demoUserInitialSnapshot.transactionIds.join(', ')}], Current: [${currentTxnIds.join(', ')}]`);
+        }
+
+        const currentAccIds = currentDemo.accounts.map((a) => a.id).sort();
+        if (
+          currentAccIds.length !== demoUserInitialSnapshot.accountIds.length ||
+          currentAccIds.some((id, idx) => id !== demoUserInitialSnapshot.accountIds[idx])
+        ) {
+          throw new Error(`DATA ISOLATION VIOLATION: user_demo account IDs set altered! Baseline: [${demoUserInitialSnapshot.accountIds.join(', ')}], Current: [${currentAccIds.join(', ')}]`);
+        }
+
         for (const baseAcc of demoUserInitialSnapshot.accounts) {
           const curAcc = currentDemo.accounts.find((a) => a.id === baseAcc.id);
-          if (!curAcc) throw new Error(`DATA ISOLATION VIOLATION: user_demo account missing!`);
+          if (!curAcc) throw new Error(`DATA ISOLATION VIOLATION: user_demo account ${baseAcc.name} (${baseAcc.id}) missing!`);
+          if (curAcc.name !== baseAcc.name) throw new Error(`DATA ISOLATION VIOLATION: user_demo account name changed for ${baseAcc.id}!`);
+          if (curAcc.type !== baseAcc.type) throw new Error(`DATA ISOLATION VIOLATION: user_demo account type changed for ${baseAcc.name}!`);
           if (curAcc.opening_balance.toFixed(2) !== baseAcc.opening_balance) {
-            throw new Error(`DATA ISOLATION VIOLATION: user_demo opening_balance changed!`);
+            throw new Error(`DATA ISOLATION VIOLATION: user_demo opening_balance changed from ${baseAcc.opening_balance} to ${curAcc.opening_balance.toFixed(2)}!`);
           }
           if (curAcc.is_opening_locked !== baseAcc.is_opening_locked) {
-            throw new Error(`DATA ISOLATION VIOLATION: user_demo lock flag changed!`);
+            throw new Error(`DATA ISOLATION VIOLATION: user_demo lock flag changed from ${baseAcc.is_opening_locked} to ${curAcc.is_opening_locked}!`);
           }
         }
       }
-      console.log('[DATA ISOLATION] Verified: user_demo accounts and transactions were completely untouched!');
+      console.log('[DATA ISOLATION] Verified: user_demo accounts, transactions, and exact IDs were 100% untouched!');
     }
   } finally {
     console.log('\n======================================================================');
@@ -559,22 +625,33 @@ async function main() {
     console.log('======================================================================');
 
     let cleanupFailed = false;
+    const cleanupErrors = [];
 
     // 1. Close browser if opened
     if (browser) {
       try {
         console.log('[CLEANUP] Closing Puppeteer browser instance...');
         await browser.close();
+        console.log('[CLEANUP] Puppeteer browser instance closed.');
       } catch (bErr) {
-        console.warn('[CLEANUP WARNING] Failed to close browser cleanly:', bErr.message);
+        console.error('[CLEANUP FAILURE] Failed to close browser cleanly:', bErr.message);
+        cleanupFailed = true;
+        cleanupErrors.push(`Browser close failed: ${bErr.message}`);
       }
     }
 
-    // 2. Kill all spawned server processes
+    // 2. Kill and verify all spawned server processes
     for (const p of spawnedProcesses) {
-      if (p && !p.killed) {
-        console.log(`[CLEANUP] Terminating spawned backend server process (PID: ${p.pid})...`);
-        await killProcessTree(p.pid);
+      if (p && p.pid) {
+        try {
+          console.log(`[CLEANUP] Terminating and verifying spawned backend server process (PID: ${p.pid})...`);
+          await terminateAndVerifyProcess(p.pid);
+          console.log(`[CLEANUP] Verified backend server process (PID: ${p.pid}) is stopped.`);
+        } catch (procErr) {
+          console.error(`[CLEANUP FAILURE] Failed to terminate server process (PID: ${p.pid}):`, procErr.message);
+          cleanupFailed = true;
+          cleanupErrors.push(`Process termination failed (PID: ${p.pid}): ${procErr.message}`);
+        }
       }
     }
 
@@ -611,22 +688,32 @@ async function main() {
       } catch (cleanErr) {
         console.error('[CLEANUP FAILURE] Could not cleanly remove test fixtures:', cleanErr.message);
         cleanupFailed = true;
+        cleanupErrors.push(`Fixture deletion failed: ${cleanErr.message}`);
       }
     }
 
     // 4. Disconnect prisma client
     if (prisma) {
       try {
+        console.log('[CLEANUP] Closing Prisma database connection...');
         await prisma.$disconnect();
         console.log('[CLEANUP] Prisma database connection closed.');
-      } catch {}
+      } catch (prismaErr) {
+        console.error('[CLEANUP FAILURE] Failed to disconnect Prisma cleanly:', prismaErr.message);
+        cleanupFailed = true;
+        cleanupErrors.push(`Prisma disconnect failed: ${prismaErr.message}`);
+      }
     }
 
     if (cleanupFailed) {
-      console.error('\n>>> SCRIPT CLEANUP FAILED! Orphan data may remain! <<<');
+      console.error('\n>>> SCRIPT CLEANUP FAILED! The following cleanup steps encountered errors: <<<');
+      for (const err of cleanupErrors) {
+        console.error(`  - ${err}`);
+      }
       process.exitCode = 1;
+      throw new Error(`Script cleanup failed across ${cleanupErrors.length} step(s): ${cleanupErrors.join('; ')}`);
     } else {
-      console.log('[CLEANUP] Cleanup and teardown completed cleanly.\n');
+      console.log('[CLEANUP] All cleanup and teardown steps completed cleanly.\n');
     }
   }
 }

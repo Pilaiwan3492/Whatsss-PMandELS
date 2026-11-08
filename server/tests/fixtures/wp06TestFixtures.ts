@@ -26,11 +26,15 @@ export interface WP06TestFixture {
 
 export interface DemoUserSnapshot {
   userFound: boolean;
+  userId?: string;
   username: string;
   transactionCount: number;
+  transactionIds: string[];
+  accountIds: string[];
   accounts: Array<{
     id: string;
     name: string;
+    type: string;
     opening_balance: string;
     is_opening_locked: boolean;
   }>;
@@ -38,17 +42,18 @@ export interface DemoUserSnapshot {
 
 /**
  * Captures an immutable snapshot of user_demo accounts and transactions before tests run.
- * Used to assert that user_demo was 100% untouched and preserved during test execution.
+ * Captures exact sets of account IDs and transaction IDs to guarantee complete, exact-match verification.
  */
 export async function captureDemoUserSnapshot(prisma: PrismaClient): Promise<DemoUserSnapshot> {
   const user = await prisma.user.findUnique({
     where: { username: 'user_demo' },
     include: {
       accounts: {
-        orderBy: { name: 'asc' }
+        orderBy: { id: 'asc' }
       },
       transactions: {
-        select: { id: true }
+        select: { id: true },
+        orderBy: { id: 'asc' }
       }
     }
   });
@@ -58,17 +63,26 @@ export async function captureDemoUserSnapshot(prisma: PrismaClient): Promise<Dem
       userFound: false,
       username: 'user_demo',
       transactionCount: 0,
+      transactionIds: [],
+      accountIds: [],
       accounts: []
     };
   }
 
+  const transactionIds = user.transactions.map((t) => t.id).sort();
+  const accountIds = user.accounts.map((a) => a.id).sort();
+
   return {
     userFound: true,
+    userId: user.id,
     username: user.username,
     transactionCount: user.transactions.length,
+    transactionIds,
+    accountIds,
     accounts: user.accounts.map((a) => ({
       id: a.id,
       name: a.name,
+      type: a.type,
       opening_balance: a.opening_balance.toFixed(2),
       is_opening_locked: a.is_opening_locked
     }))
@@ -77,6 +91,8 @@ export async function captureDemoUserSnapshot(prisma: PrismaClient): Promise<Dem
 
 /**
  * Asserts that the current user_demo state matches the pre-test snapshot exactly.
+ * Formally verifies transaction count, exact transaction IDs set, exact account IDs set,
+ * and individual account properties (name, type, opening_balance, lock flag).
  */
 export async function assertDemoUserUnmodified(
   prisma: PrismaClient,
@@ -94,10 +110,40 @@ export async function assertDemoUserUnmodified(
     );
   }
 
+  // Exact set match on transaction IDs
+  if (
+    current.transactionIds.length !== baseline.transactionIds.length ||
+    current.transactionIds.some((id, idx) => id !== baseline.transactionIds[idx])
+  ) {
+    throw new Error(
+      `DATA ISOLATION VIOLATION: user_demo transaction IDs set altered. Baseline: [${baseline.transactionIds.join(', ')}], Current: [${current.transactionIds.join(', ')}]`
+    );
+  }
+
+  // Exact set match on account IDs
+  if (
+    current.accountIds.length !== baseline.accountIds.length ||
+    current.accountIds.some((id, idx) => id !== baseline.accountIds[idx])
+  ) {
+    throw new Error(
+      `DATA ISOLATION VIOLATION: user_demo account IDs set altered. Baseline: [${baseline.accountIds.join(', ')}], Current: [${current.accountIds.join(', ')}]`
+    );
+  }
+
   for (const baseAcc of baseline.accounts) {
     const curAcc = current.accounts.find((a) => a.id === baseAcc.id);
     if (!curAcc) {
-      throw new Error(`DATA ISOLATION VIOLATION: user_demo account ${baseAcc.name} was removed`);
+      throw new Error(`DATA ISOLATION VIOLATION: user_demo account ${baseAcc.name} (${baseAcc.id}) was removed`);
+    }
+    if (curAcc.name !== baseAcc.name) {
+      throw new Error(
+        `DATA ISOLATION VIOLATION: user_demo account ${baseAcc.id} name changed from ${baseAcc.name} to ${curAcc.name}`
+      );
+    }
+    if (curAcc.type !== baseAcc.type) {
+      throw new Error(
+        `DATA ISOLATION VIOLATION: user_demo account ${baseAcc.name} type changed from ${baseAcc.type} to ${curAcc.type}`
+      );
     }
     if (curAcc.opening_balance !== baseAcc.opening_balance) {
       throw new Error(
@@ -115,6 +161,11 @@ export async function assertDemoUserUnmodified(
 /**
  * Provisions a completely isolated Test User and 5 standard Financial Accounts for WP-06.
  * Zero dependency on user_demo; each test run receives a globally unique test tenant.
+ *
+ * ATOMIC PROVISIONING GUARANTEE:
+ * The Test User and all 5 financial accounts are provisioned inside a single Prisma $transaction.
+ * If any entity fails to create, the entire transaction rolls back automatically, preventing orphaned
+ * test users or accounts in the test database.
  */
 export async function createWP06TestFixture(
   prisma: PrismaClient,
@@ -126,66 +177,76 @@ export async function createWP06TestFixture(
   const rawPassword = 'Password123!';
   const passwordHash = await bcrypt.hash(rawPassword, 10);
 
-  // 1. Create Test User
-  const user = await prisma.user.create({
-    data: {
-      username,
-      email,
-      password_hash: passwordHash,
-      role: 'USER',
-      is_active: true
-    }
-  });
+  // Atomically create User and all 5 required standard accounts within a single $transaction
+  const { user, checkingBank, creditCard, salary, dining, grocery } = await prisma.$transaction(async (tx) => {
+    const createdUser = await tx.user.create({
+      data: {
+        username,
+        email,
+        password_hash: passwordHash,
+        role: 'USER',
+        is_active: true
+      }
+    });
 
-  // 2. Create the 5 required standard accounts
-  const checkingBank = await prisma.account.create({
-    data: {
-      user_id: user.id,
-      name: 'Checking Bank',
-      type: 'CASH',
-      opening_balance: new Prisma.Decimal('0.00'),
-      is_opening_locked: false
-    }
-  });
+    const cb = await tx.account.create({
+      data: {
+        user_id: createdUser.id,
+        name: 'Checking Bank',
+        type: 'CASH',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
 
-  const creditCard = await prisma.account.create({
-    data: {
-      user_id: user.id,
-      name: 'Visa Credit Card',
-      type: 'LOAN_TAKEN',
-      opening_balance: new Prisma.Decimal('0.00'),
-      is_opening_locked: false
-    }
-  });
+    const cc = await tx.account.create({
+      data: {
+        user_id: createdUser.id,
+        name: 'Visa Credit Card',
+        type: 'LOAN_TAKEN',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
 
-  const salary = await prisma.account.create({
-    data: {
-      user_id: user.id,
-      name: 'Salary',
-      type: 'INCOME',
-      opening_balance: new Prisma.Decimal('0.00'),
-      is_opening_locked: false
-    }
-  });
+    const sal = await tx.account.create({
+      data: {
+        user_id: createdUser.id,
+        name: 'Salary',
+        type: 'INCOME',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
 
-  const dining = await prisma.account.create({
-    data: {
-      user_id: user.id,
-      name: 'Dining',
-      type: 'EXPENSE',
-      opening_balance: new Prisma.Decimal('0.00'),
-      is_opening_locked: false
-    }
-  });
+    const din = await tx.account.create({
+      data: {
+        user_id: createdUser.id,
+        name: 'Dining',
+        type: 'EXPENSE',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
 
-  const grocery = await prisma.account.create({
-    data: {
-      user_id: user.id,
-      name: 'Grocery',
-      type: 'EXPENSE',
-      opening_balance: new Prisma.Decimal('0.00'),
-      is_opening_locked: false
-    }
+    const gro = await tx.account.create({
+      data: {
+        user_id: createdUser.id,
+        name: 'Grocery',
+        type: 'EXPENSE',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
+
+    return {
+      user: createdUser,
+      checkingBank: cb,
+      creditCard: cc,
+      salary: sal,
+      dining: din,
+      grocery: gro
+    };
   });
 
   const createdTxnIds: string[] = [];
