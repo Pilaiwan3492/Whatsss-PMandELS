@@ -3,23 +3,26 @@ import request from 'supertest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { app } from '../../src/app.js';
 import { assertTestDatabase } from '../fixtures/testDbGuard.js';
+import {
+  createWP06TestFixture,
+  captureDemoUserSnapshot,
+  assertDemoUserUnmodified,
+  WP06TestFixture,
+  DemoUserSnapshot
+} from '../fixtures/wp06TestFixtures.js';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import path from 'path';
-
-interface AccountSnapshot {
-  id: string;
-  opening_balance: Prisma.Decimal;
-  is_opening_locked: boolean;
-}
 
 /**
  * Integration Test: Relational Database Persistence Across Real Process Restart
  * Target: TEST-PERSIST-01, AC-09-2, NFR-DATA-01
  *
- * SAFETY INVARIANTS:
+ * DATA ISOLATION & LIFECYCLE SAFETY INVARIANTS:
  * - Runs in CI or when ALLOW_LIVE_DB_TESTS=true is explicitly configured.
  * - Test database name MUST strictly equal "whatsss_test".
- * - Cleanups track EXACT IDs created by this test suite; broad table deletions are strictly prohibited.
+ * - Uses dedicated, isolated Test User and Accounts via createWP06TestFixture.
+ * - Does NOT mutate or delete user_demo accounts or transactions.
+ * - Captures user_demo snapshot before tests and asserts 100% data isolation after tests.
  * - All spawned backend server processes are tracked and guaranteed terminated in finally and afterAll.
  */
 describe('Integration Test: Relational Database Persistence Across Real Process Restart (TEST-PERSIST-01, AC-09-2)', () => {
@@ -32,16 +35,9 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
   const TRUSTED_ORIGIN = 'http://localhost:5173';
   const TEST_PORT = 5098;
 
-  let demoUserId = '';
-  let demoUserSessionCookie = '';
-  let demoCheckingAccount: { id: string; opening_balance: Prisma.Decimal; is_opening_locked: boolean };
-  let demoCreditCardAccount: { id: string; opening_balance: Prisma.Decimal; is_opening_locked: boolean };
-  let demoSalaryAccount: { id: string };
-  let demoDiningAccount: { id: string };
-  let demoGroceryAccount: { id: string };
-
-  const createdTxnIds: string[] = [];
-  const accountSnapshots: AccountSnapshot[] = [];
+  let fixture: WP06TestFixture | null = null;
+  let demoUserSnapshot: DemoUserSnapshot;
+  let testUserSessionCookie = '';
   const spawnedProcesses: ChildProcess[] = [];
 
   function spawnBackendProcess(port: number): Promise<{ child: ChildProcess; pid: number }> {
@@ -159,109 +155,89 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
       return;
     }
 
-    // Authenticate user_demo
+    // Capture baseline snapshot of user_demo to verify data isolation
+    demoUserSnapshot = await captureDemoUserSnapshot(prisma);
+
+    // Provision dedicated isolated Test User and Accounts for WP-06 Persistence Test
+    fixture = await createWP06TestFixture(prisma, 'persistence');
+
+    // Authenticate as the isolated test user
     const loginRes = await request(app)
       .post('/api/auth/login')
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/json')
       .send({
-        username: 'user_demo',
-        password: 'Password123!'
+        username: fixture.user.username,
+        password: fixture.user.rawPassword
       });
 
     if (loginRes.status === 200) {
       const setCookie = loginRes.headers['set-cookie'];
       if (setCookie && setCookie.length > 0) {
-        demoUserSessionCookie = setCookie[0];
+        testUserSessionCookie = setCookie[0];
       }
     } else if (isCI) {
-      throw new Error(`[WP-06 CI FAILURE] Failed to authenticate user_demo in live DB: ${loginRes.status}`);
+      throw new Error(`[WP-06 CI FAILURE] Failed to authenticate isolated test user: ${loginRes.status}`);
     }
 
-    const user = await prisma.user.findUnique({ where: { username: 'user_demo' } });
-    if (!user) {
-      if (isCI) throw new Error('[WP-06 CI FAILURE] user_demo not found in DB');
-      return;
-    }
-    demoUserId = user.id;
-
-    // Load accounts
-    const accounts = await prisma.account.findMany({ where: { user_id: demoUserId } });
-    for (const a of accounts) {
-      accountSnapshots.push({
-        id: a.id,
-        opening_balance: a.opening_balance,
-        is_opening_locked: a.is_opening_locked
-      });
-      if (a.name === 'Checking Bank') demoCheckingAccount = a;
-      if (a.name === 'Visa Credit Card') demoCreditCardAccount = a;
-      if (a.name === 'Salary') demoSalaryAccount = a;
-      if (a.name === 'Dining') demoDiningAccount = a;
-      if (a.name === 'Grocery') demoGroceryAccount = a;
-    }
-
-    // Clean up any stale transactions
-    const staleTxns = await prisma.transaction.findMany({ where: { user_id: demoUserId }, select: { id: true } });
-    if (staleTxns.length > 0) {
-      await prisma.transaction.deleteMany({ where: { id: { in: staleTxns.map((t) => t.id) } } });
-    }
+    const { accounts, user } = fixture;
 
     // Step 1: Set Checking Bank opening balance = 10,000.00 THB
     await prisma.account.update({
-      where: { id: demoCheckingAccount.id },
+      where: { id: accounts.checkingBank.id },
       data: { opening_balance: new Prisma.Decimal('10000.00'), is_opening_locked: true }
     });
 
     // Step 2: Salary 20,000.00 THB
     const txSalary = await prisma.transaction.create({
       data: {
-        user_id: demoUserId,
-        primary_account_id: demoCheckingAccount.id,
+        user_id: user.id,
+        primary_account_id: accounts.checkingBank.id,
         form: 'RECEIVE_MONEY',
         total_amount: new Prisma.Decimal('20000.00'),
         transaction_date: new Date('2026-11-02'),
         description: 'Salary',
         allocation_lines: {
-          create: [{ target_account_id: demoSalaryAccount.id, amount: new Prisma.Decimal('20000.00'), notes: 'Salary' }]
+          create: [{ target_account_id: accounts.salary.id, amount: new Prisma.Decimal('20000.00'), notes: 'Salary' }]
         }
       }
     });
-    createdTxnIds.push(txSalary.id);
+    fixture.trackTxnId(txSalary.id);
 
     // Step 3: CC Purchase 3,000.00 THB (Dining 1k, Grocery 2k)
     const txPurchase = await prisma.transaction.create({
       data: {
-        user_id: demoUserId,
-        primary_account_id: demoCreditCardAccount.id,
+        user_id: user.id,
+        primary_account_id: accounts.creditCard.id,
         form: 'PAYMENT_CHARGE',
         total_amount: new Prisma.Decimal('3000.00'),
         transaction_date: new Date('2026-11-03'),
         description: 'Dining & Grocery',
         allocation_lines: {
           create: [
-            { target_account_id: demoDiningAccount.id, amount: new Prisma.Decimal('1000.00'), notes: 'Dining' },
-            { target_account_id: demoGroceryAccount.id, amount: new Prisma.Decimal('2000.00'), notes: 'Grocery' }
+            { target_account_id: accounts.dining.id, amount: new Prisma.Decimal('1000.00'), notes: 'Dining' },
+            { target_account_id: accounts.grocery.id, amount: new Prisma.Decimal('2000.00'), notes: 'Grocery' }
           ]
         }
       }
     });
-    createdTxnIds.push(txPurchase.id);
+    fixture.trackTxnId(txPurchase.id);
 
     // Step 4: CC Repayment 3,000.00 THB
     const txRepayment = await prisma.transaction.create({
       data: {
-        user_id: demoUserId,
-        primary_account_id: demoCheckingAccount.id,
+        user_id: user.id,
+        primary_account_id: accounts.checkingBank.id,
         form: 'PAYMENT_CHARGE',
         total_amount: new Prisma.Decimal('3000.00'),
         transaction_date: new Date('2026-11-04'),
         description: 'CC Repayment',
         allocation_lines: {
-          create: [{ target_account_id: demoCreditCardAccount.id, amount: new Prisma.Decimal('3000.00'), notes: 'Repayment' }]
+          create: [{ target_account_id: accounts.creditCard.id, amount: new Prisma.Decimal('3000.00'), notes: 'Repayment' }]
         }
       }
     });
-    createdTxnIds.push(txRepayment.id);
+    fixture.trackTxnId(txRepayment.id);
   });
 
   afterAll(async () => {
@@ -274,21 +250,13 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
 
     if (!isDbConnected) return;
 
-    if (createdTxnIds.length > 0) {
-      await prisma.transaction.deleteMany({
-        where: { id: { in: createdTxnIds } }
-      });
+    // 2. Clean up only the isolated fixtures created by this test suite
+    if (fixture) {
+      await fixture.cleanup();
     }
 
-    for (const snap of accountSnapshots) {
-      await prisma.account.update({
-        where: { id: snap.id },
-        data: {
-          opening_balance: snap.opening_balance,
-          is_opening_locked: snap.is_opening_locked
-        }
-      });
-    }
+    // 3. Verify user_demo remained completely unmodified
+    await assertDemoUserUnmodified(prisma, demoUserSnapshot);
 
     await prisma.$disconnect();
   });
@@ -308,7 +276,7 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
 
       // Query Pre-Restart state via HTTP
       const preSumRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
-        headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+        headers: { Cookie: testUserSessionCookie, Origin: TRUSTED_ORIGIN }
       });
       expect(preSumRes.status).toBe(200);
       const preSummary = (await preSumRes.json()).data;
@@ -318,7 +286,7 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
       expect(preSummary.total_expense).toBe(3000.00);
 
       const preTxRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/transactions`, {
-        headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+        headers: { Cookie: testUserSessionCookie, Origin: TRUSTED_ORIGIN }
       });
       expect(preTxRes.status).toBe(200);
       const preTxns = (await preTxRes.json()).data.transactions;
@@ -332,7 +300,7 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
       for (let i = 0; i < 20; i++) {
         try {
           await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
-            headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN },
+            headers: { Cookie: testUserSessionCookie, Origin: TRUSTED_ORIGIN },
             signal: AbortSignal.timeout(500)
           });
           await new Promise((r) => setTimeout(r, 100));
@@ -350,7 +318,7 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
 
       // Query Post-Restart state via HTTP from Process 2
       const postSumRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/reports/summary`, {
-        headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+        headers: { Cookie: testUserSessionCookie, Origin: TRUSTED_ORIGIN }
       });
       expect(postSumRes.status).toBe(200);
       const postSummary = (await postSumRes.json()).data;
@@ -365,7 +333,7 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
 
       // Query Post-Restart transaction history
       const postTxRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/transactions`, {
-        headers: { Cookie: demoUserSessionCookie, Origin: TRUSTED_ORIGIN }
+        headers: { Cookie: testUserSessionCookie, Origin: TRUSTED_ORIGIN }
       });
       expect(postTxRes.status).toBe(200);
       const postTxns = (await postTxRes.json()).data.transactions;
@@ -387,4 +355,20 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
       }
     }
   }, 35000);
+
+  it('TEST-PERSIST-02: verifies data isolation preserving user_demo accounts and clean teardown of restart test fixtures', async () => {
+    if (!isCI && !allowLiveDb) {
+      return;
+    }
+
+    // Verify user_demo remained completely unmodified throughout the process restart test
+    await assertDemoUserUnmodified(prisma, demoUserSnapshot);
+
+    // Verify isolated fixture state is distinct and intact before teardown
+    expect(fixture).toBeDefined();
+    const testUserTxns = await prisma.transaction.count({
+      where: { user_id: fixture!.user.id }
+    });
+    expect(testUserTxns).toBe(3);
+  });
 });

@@ -3,6 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { PrismaClient, Prisma } from '@prisma/client';
+import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = path.resolve(__dirname, '..');
@@ -13,34 +15,61 @@ if (!fs.existsSync(SCREENSHOT_DIR)) {
 }
 
 /**
- * Enforces database safety invariants before any script activity (Priority 1, Safety Rule).
- * Strictly requires the connected database to be "whatsss_test".
+ * Enforces comprehensive database safety invariants before any script activity (Priority 1, Safety Rule).
+ * Strictly requires the connected database to be "whatsss_test" on an authorized local/container host.
  * Rejects "whatsss_db" (development database) and any production/unapproved database immediately.
+ * Sanitizes error messages to prevent leaking credentials or connection strings.
  */
 export function assertTestDatabase() {
   const databaseUrl = process.env.DATABASE_URL;
 
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL environment variable is required.');
+  if (!databaseUrl || typeof databaseUrl !== 'string' || databaseUrl.trim().length === 0) {
+    throw new Error('FATAL: DATABASE_URL environment variable is required.');
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('FATAL: NODE_ENV is set to "production". Live test scripts are strictly forbidden in production.');
   }
 
   let parsedUrl;
   try {
     parsedUrl = new URL(databaseUrl);
   } catch {
-    throw new Error(`DATABASE_URL is not a valid URL: ${databaseUrl}`);
+    throw new Error('FATAL: DATABASE_URL is not a valid URL.');
   }
 
-  const databaseName = parsedUrl.pathname.replace(/^\//, '');
+  const protocol = parsedUrl.protocol.toLowerCase();
+  if (protocol !== 'postgres:' && protocol !== 'postgresql:') {
+    throw new Error(`FATAL: Unsupported database protocol "${protocol}". Expected "postgresql:" or "postgres:".`);
+  }
 
-  if (databaseName !== 'whatsss_test') {
+  const hostname = parsedUrl.hostname.toLowerCase();
+  const allowedHosts = ['localhost', '127.0.0.1', '::1', 'postgres', 'db'];
+  if (!allowedHosts.includes(hostname)) {
+    throw new Error(`FATAL: Live DB operations are restricted to local/container test instances. Host "${hostname}" is not permitted.`);
+  }
+
+  const dbName = parsedUrl.pathname.replace(/^\//, '').toLowerCase();
+  if (!dbName) {
+    throw new Error('FATAL: DATABASE_URL does not specify a database name.');
+  }
+
+  const forbiddenKeywords = ['prod', 'production', 'live', 'staging', 'dev', 'development'];
+  for (const keyword of forbiddenKeywords) {
+    if (dbName.includes(keyword)) {
+      throw new Error(`FATAL: Database name contains forbidden keyword "${keyword}".`);
+    }
+  }
+
+  if (dbName === 'whatsss_db') {
     throw new Error(
-      `Unsafe database: "${databaseName}". This script only supports "whatsss_test".`
+      'FATAL: Database name "whatsss_db" is the development database, not an isolated test database. ' +
+      'This script only supports the dedicated test database "whatsss_test".'
     );
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('NODE_ENV is set to "production". Execution is strictly forbidden.');
+  if (dbName !== 'whatsss_test') {
+    throw new Error(`FATAL: Database name "${dbName}" is not the authorized test database. Expected exact match: "whatsss_test".`);
   }
 }
 
@@ -89,10 +118,7 @@ async function killProcessTree(pid) {
   }
 }
 
-let prismaClientInstance = null;
 const spawnedProcesses = [];
-const createdTxnIds = [];
-const accountSnapshots = [];
 
 function spawnServerProcess(port) {
   const distIndex = path.resolve(SERVER_DIR, 'dist/index.js');
@@ -119,7 +145,7 @@ async function main() {
   console.log('   STARTING REAL BACKEND SERVER PROCESS RESTART VERIFICATION');
   console.log('======================================================================\n');
 
-  // Step 1: Enforce Database Guard
+  // Step 1: Enforce Database Guard BEFORE any connections or mutations
   console.log('[STEP 1] Validating database safety guard...');
   assertTestDatabase();
   console.log('[STEP 1] Database guard passed: connected to isolated test database "whatsss_test".\n');
@@ -127,57 +153,113 @@ async function main() {
   const PORT = process.env.RESTART_TEST_PORT || '5099';
   const BASE_URL = `http://localhost:${PORT}`;
 
-  prismaClientInstance = new PrismaClient({
-    datasources: { db: { url: process.env.DATABASE_URL } }
-  });
-
-  // Verify DB connectivity
-  await prismaClientInstance.$queryRaw`SELECT 1`;
-
-  // Step 2: Snapshot and prepare fixtures
-  console.log('[STEP 2] Inspecting test fixtures and taking account snapshots...');
-  const user = await prismaClientInstance.user.findUnique({
-    where: { username: 'user_demo' },
-    include: { accounts: true }
-  });
-
-  if (!user) {
-    throw new Error('user_demo not found in whatsss_test. Please run npm run prisma:seed on whatsss_test first.');
-  }
-
-  for (const a of user.accounts) {
-    accountSnapshots.push({
-      id: a.id,
-      name: a.name,
-      opening_balance: a.opening_balance,
-      is_opening_locked: a.is_opening_locked
-    });
-  }
-
-  // Clear any stale transactions on whatsss_test from previous runs to ensure clean baseline
-  const staleTxns = await prismaClientInstance.transaction.findMany({
-    where: { user_id: user.id },
-    select: { id: true }
-  });
-  if (staleTxns.length > 0) {
-    console.log(`[STEP 2] Cleaning up ${staleTxns.length} stale transactions from prior tests on whatsss_test...`);
-    await prismaClientInstance.allocationLine.deleteMany({
-      where: { transaction: { user_id: user.id } }
-    });
-    await prismaClientInstance.transaction.deleteMany({
-      where: { user_id: user.id }
-    });
-  }
-
-  // Unlock accounts for opening balance configuration
-  await prismaClientInstance.account.updateMany({
-    where: { user_id: user.id },
-    data: { is_opening_locked: false }
-  });
-
-  console.log(`[STEP 2] Snapshotted ${accountSnapshots.length} accounts. Fixture state prepared.\n`);
+  let prisma = null;
+  let browser = null;
+  let testUser = null;
+  let testAccounts = null;
+  const createdTxnIds = [];
+  let demoUserInitialSnapshot = null;
 
   try {
+    prisma = new PrismaClient({
+      datasources: { db: { url: process.env.DATABASE_URL } }
+    });
+
+    // Verify DB connectivity
+    await prisma.$queryRaw`SELECT 1`;
+
+    // Step 2: Capture initial user_demo baseline to verify data isolation
+    console.log('[STEP 2] Verifying and capturing baseline of user_demo (data isolation check)...');
+    const demoUser = await prisma.user.findUnique({
+      where: { username: 'user_demo' },
+      include: { accounts: true, transactions: { select: { id: true } } }
+    });
+
+    if (demoUser) {
+      demoUserInitialSnapshot = {
+        txnCount: demoUser.transactions.length,
+        accounts: demoUser.accounts.map((a) => ({
+          id: a.id,
+          name: a.name,
+          opening_balance: a.opening_balance.toFixed(2),
+          is_opening_locked: a.is_opening_locked
+        }))
+      };
+      console.log(`[STEP 2] user_demo baseline captured (${demoUserInitialSnapshot.txnCount} transactions, ${demoUserInitialSnapshot.accounts.length} accounts).`);
+    } else {
+      console.log('[STEP 2] user_demo not present in test database; skipping demo user baseline check.');
+    }
+
+    // Provision dedicated isolated Test User and Accounts for WP-06 Restart Script
+    console.log('[STEP 2] Provisioning isolated test tenant and accounts...');
+    const uniqueToken = `restart_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    const username = `test_restart_${uniqueToken}`;
+    const rawPassword = 'Password123!';
+    const passwordHash = await bcrypt.hash(rawPassword, 10);
+
+    testUser = await prisma.user.create({
+      data: {
+        username,
+        email: `${username}@whatsss.test`,
+        password_hash: passwordHash,
+        role: 'USER',
+        is_active: true
+      }
+    });
+
+    const checkingAcc = await prisma.account.create({
+      data: {
+        user_id: testUser.id,
+        name: 'Checking Bank',
+        type: 'CASH',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
+
+    const ccAcc = await prisma.account.create({
+      data: {
+        user_id: testUser.id,
+        name: 'Visa Credit Card',
+        type: 'LOAN_TAKEN',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
+
+    const salaryAcc = await prisma.account.create({
+      data: {
+        user_id: testUser.id,
+        name: 'Salary',
+        type: 'INCOME',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
+
+    const diningAcc = await prisma.account.create({
+      data: {
+        user_id: testUser.id,
+        name: 'Dining',
+        type: 'EXPENSE',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
+
+    const groceryAcc = await prisma.account.create({
+      data: {
+        user_id: testUser.id,
+        name: 'Grocery',
+        type: 'EXPENSE',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false
+      }
+    });
+
+    testAccounts = { checkingAcc, ccAcc, salaryAcc, diningAcc, groceryAcc };
+    console.log(`[STEP 2] Isolated test user created: ${username} with 5 dedicated financial accounts.\n`);
+
     // Step 3: Start Server Process 1
     console.log(`[STEP 3] Spawning Backend Server Process 1 on port ${PORT}...`);
     const proc1 = spawnServerProcess(PORT);
@@ -187,8 +269,8 @@ async function main() {
     await waitForServer(`${BASE_URL}/api/accounts`);
     console.log(`[STEP 3] Server Process 1 is listening and responsive on ${BASE_URL}\n`);
 
-    // Step 4: Login as user_demo
-    console.log('[STEP 4] Authenticating as user_demo on Process 1...');
+    // Step 4: Login as the isolated test user
+    console.log(`[STEP 4] Authenticating as ${username} on Process 1...`);
     const loginRes = await fetch(`${BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: {
@@ -196,45 +278,25 @@ async function main() {
         Origin: 'http://localhost:5173'
       },
       body: JSON.stringify({
-        username: 'user_demo',
-        password: 'Password123!'
+        username,
+        password: rawPassword
       })
     });
 
     const loginJson = await loginRes.json();
     if (!loginJson.success) {
-      throw new Error(`Login failed: ${JSON.stringify(loginJson)}`);
+      throw new Error(`Login failed for isolated user: ${JSON.stringify(loginJson)}`);
     }
     const setCookie = loginRes.headers.get('set-cookie');
     if (!setCookie) throw new Error('No set-cookie returned from login');
     const tokenCookie = setCookie.split(';')[0];
     console.log(`[STEP 4] Authenticated successfully. Auth Cookie: ${tokenCookie.substring(0, 25)}...\n`);
 
-    // Step 5: Fetch Accounts
-    console.log('[STEP 5] Fetching accounts for user_demo...');
-    const accRes = await fetch(`${BASE_URL}/api/accounts`, {
-      headers: { Cookie: tokenCookie, Origin: 'http://localhost:5173' }
-    });
-    const accJson = await accRes.json();
-    const accounts = accJson.data.accounts;
+    // Step 5: Execute Golden Domain Journey on Process 1
+    console.log('[STEP 5] Executing Golden Domain Journey on Server Process 1:');
 
-    const checkingAcc = accounts.find((a) => a.name === 'Checking Bank');
-    const ccAcc = accounts.find((a) => a.name === 'Visa Credit Card');
-    const salaryAcc = accounts.find((a) => a.name === 'Salary');
-    const diningAcc = accounts.find((a) => a.name === 'Dining');
-    const groceryAcc = accounts.find((a) => a.name === 'Grocery');
-
-    console.log(`Checking Bank ID: ${checkingAcc.id}`);
-    console.log(`Visa Credit Card ID: ${ccAcc.id}`);
-    console.log(`Salary ID: ${salaryAcc.id}`);
-    console.log(`Dining ID: ${diningAcc.id}`);
-    console.log(`Grocery ID: ${groceryAcc.id}\n`);
-
-    // Step 6: Execute Golden Domain Journey
-    console.log('[STEP 6] Executing Golden Domain Journey on Server Process 1:');
-
-    // 6.1: Opening Balance 10,000 THB
-    console.log('  6.1 PATCH /api/accounts/:id/opening-balance (10,000.00 THB)...');
+    // 5.1: Opening Balance 10,000 THB
+    console.log('  5.1 PATCH /api/accounts/:id/opening-balance (10,000.00 THB)...');
     const opRes = await fetch(`${BASE_URL}/api/accounts/${checkingAcc.id}/opening-balance`, {
       method: 'PATCH',
       headers: {
@@ -248,8 +310,8 @@ async function main() {
     if (!opJson.success) throw new Error(`Opening balance failed: ${JSON.stringify(opJson)}`);
     console.log('      -> Success. Checking Bank opening balance set to 10,000.00 THB');
 
-    // 6.2: Income 20,000 THB
-    console.log('  6.2 POST /api/transactions/income (20,000.00 THB Salary)...');
+    // 5.2: Income 20,000 THB
+    console.log('  5.2 POST /api/transactions/income (20,000.00 THB Salary)...');
     const incRes = await fetch(`${BASE_URL}/api/transactions/income`, {
       method: 'POST',
       headers: {
@@ -271,8 +333,8 @@ async function main() {
     if (incTxId) createdTxnIds.push(incTxId);
     console.log('      -> Success. Recorded 20,000.00 THB Salary Income');
 
-    // 6.3: Expense 3,000 THB Split Purchase
-    console.log('  6.3 POST /api/transactions/expense (3,000.00 THB Split Dining/Grocery)...');
+    // 5.3: Expense 3,000 THB Split Purchase
+    console.log('  5.3 POST /api/transactions/expense (3,000.00 THB Split Dining/Grocery)...');
     const expRes = await fetch(`${BASE_URL}/api/transactions/expense`, {
       method: 'POST',
       headers: {
@@ -297,8 +359,8 @@ async function main() {
     if (expTxId) createdTxnIds.push(expTxId);
     console.log('      -> Success. Recorded 3,000.00 THB CC Split Purchase');
 
-    // 6.4: Repayment 3,000 THB
-    console.log('  6.4 POST /api/transactions/repayment (3,000.00 THB Full Repayment)...');
+    // 5.4: Repayment 3,000 THB
+    console.log('  5.4 POST /api/transactions/repayment (3,000.00 THB Full Repayment)...');
     const repRes = await fetch(`${BASE_URL}/api/transactions/repayment`, {
       method: 'POST',
       headers: {
@@ -320,8 +382,8 @@ async function main() {
     if (repTxId) createdTxnIds.push(repTxId);
     console.log('      -> Success. Recorded 3,000.00 THB CC Repayment\n');
 
-    // Step 7: Query Pre-Restart State
-    console.log('[STEP 7] Querying Pre-Restart State from Server Process 1 (PID: ' + pid1 + ')...');
+    // Step 6: Query Pre-Restart State
+    console.log('[STEP 6] Querying Pre-Restart State from Server Process 1 (PID: ' + pid1 + ')...');
     const preSumRes = await fetch(`${BASE_URL}/api/reports/summary`, {
       headers: { Cookie: tokenCookie, Origin: 'http://localhost:5173' }
     });
@@ -351,7 +413,7 @@ async function main() {
       try {
         console.log('[SCREENSHOT] Attempting Pre-Restart Screenshot Capture...');
         const puppeteer = (await import('puppeteer-core')).default;
-        const browser = await puppeteer.launch({
+        browser = await puppeteer.launch({
           executablePath: process.env.CHROME_BIN || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
           headless: true,
           args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -359,8 +421,8 @@ async function main() {
         const page = await browser.newPage();
         await page.setViewport({ width: 1440, height: 960 });
         await page.goto('http://localhost:5173/login', { waitUntil: 'networkidle0' });
-        await page.type('input[type="text"]', 'user_demo');
-        await page.type('input[type="password"]', 'Password123!');
+        await page.type('input[type="text"]', username);
+        await page.type('input[type="password"]', rawPassword);
         await page.click('button[type="submit"]');
         await page.waitForNavigation({ waitUntil: 'networkidle0' });
 
@@ -371,30 +433,29 @@ async function main() {
         await page.goto('http://localhost:5173/transactions', { waitUntil: 'networkidle0' });
         await sleep(600);
         await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'restart_02_history_pre.png') });
-        await browser.close();
         console.log('[SCREENSHOT] Pre-restart screenshots captured successfully.');
       } catch (shotErr) {
         console.warn(`[SCREENSHOT] Puppeteer pre-restart screenshot skipped: ${shotErr.message}`);
       }
     }
 
-    // Step 8: STOP Backend Server Process 1
-    console.log(`[STEP 8] Stopping Backend Server Process 1 (PID: ${pid1})...`);
+    // Step 7: STOP Backend Server Process 1
+    console.log(`[STEP 7] Stopping Backend Server Process 1 (PID: ${pid1})...`);
     await killProcessTree(pid1);
     await waitForServerDown(`${BASE_URL}/api/accounts`);
-    console.log(`[STEP 8] Verified Server Process 1 (PID: ${pid1}) is completely terminated.\n`);
+    console.log(`[STEP 7] Verified Server Process 1 (PID: ${pid1}) is completely terminated.\n`);
 
-    // Step 9: START Backend Server Process 2 (NO DB RESEEDING!)
-    console.log('[STEP 9] Spawning Backend Server Process 2 (WITHOUT touching or re-seeding database)...');
+    // Step 8: START Backend Server Process 2 (NO DB RESEEDING!)
+    console.log('[STEP 8] Spawning Backend Server Process 2 (WITHOUT touching or re-seeding database)...');
     const proc2 = spawnServerProcess(PORT);
     const pid2 = proc2.pid;
-    console.log(`[STEP 9] Server Process 2 spawned with NEW PID: ${pid2} (Different PID verified: ${pid2 !== pid1})`);
+    console.log(`[STEP 8] Server Process 2 spawned with NEW PID: ${pid2} (Different PID verified: ${pid2 !== pid1})`);
 
     await waitForServer(`${BASE_URL}/api/accounts`);
-    console.log(`[STEP 9] Server Process 2 is up and listening on ${BASE_URL}\n`);
+    console.log(`[STEP 8] Server Process 2 is up and listening on ${BASE_URL}\n`);
 
-    // Step 10: Query Post-Restart State from Process 2
-    console.log('[STEP 10] Querying Post-Restart State from Server Process 2 (PID: ' + pid2 + ')...');
+    // Step 9: Query Post-Restart State from Process 2
+    console.log('[STEP 9] Querying Post-Restart State from Server Process 2 (PID: ' + pid2 + ')...');
     const postSumRes = await fetch(`${BASE_URL}/api/reports/summary`, {
       headers: { Cookie: tokenCookie, Origin: 'http://localhost:5173' }
     });
@@ -417,23 +478,11 @@ async function main() {
     console.log(`Allocation Lines: ${postAllocCount} (Expected: 4)\n`);
 
     // Optional Puppeteer Post-Restart Screenshots
-    if (process.env.ENABLE_SCREENSHOTS === 'true') {
+    if (process.env.ENABLE_SCREENSHOTS === 'true' && browser) {
       try {
         console.log('[SCREENSHOT] Attempting Post-Restart Screenshot Capture...');
-        const puppeteer = (await import('puppeteer-core')).default;
-        const browser = await puppeteer.launch({
-          executablePath: process.env.CHROME_BIN || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        const page = await browser.newPage();
-        await page.setViewport({ width: 1440, height: 960 });
-        await page.goto('http://localhost:5173/login', { waitUntil: 'networkidle0' });
-        await page.type('input[type="text"]', 'user_demo');
-        await page.type('input[type="password"]', 'Password123!');
-        await page.click('button[type="submit"]');
-        await page.waitForNavigation({ waitUntil: 'networkidle0' });
-
+        const pages = await browser.pages();
+        const page = pages.length > 0 ? pages[0] : await browser.newPage();
         await page.goto('http://localhost:5173/dashboard', { waitUntil: 'networkidle0' });
         await sleep(600);
         await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'restart_03_dashboard_post.png') });
@@ -441,14 +490,13 @@ async function main() {
         await page.goto('http://localhost:5173/transactions', { waitUntil: 'networkidle0' });
         await sleep(600);
         await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'restart_04_history_post.png') });
-        await browser.close();
         console.log('[SCREENSHOT] Post-restart screenshots captured successfully.');
       } catch (shotErr) {
         console.warn(`[SCREENSHOT] Puppeteer post-restart screenshot skipped: ${shotErr.message}`);
       }
     }
 
-    // Step 11: Assertion Comparison Matrix
+    // Step 10: Assertion Comparison Matrix
     console.log('======================================================================');
     console.log('                  VERIFICATION COMPARISON MATRIX                      ');
     console.log('======================================================================');
@@ -480,47 +528,49 @@ async function main() {
     } else {
       throw new Error('Verification failed: Pre and post restart values do not match expected values.');
     }
+
+    // Step 11: Assert user_demo remained completely unmodified (Data Isolation Verification)
+    if (demoUserInitialSnapshot && prisma) {
+      console.log('\n[DATA ISOLATION] Asserting user_demo remained 100% untouched...');
+      const currentDemo = await prisma.user.findUnique({
+        where: { username: 'user_demo' },
+        include: { accounts: true, transactions: { select: { id: true } } }
+      });
+      if (currentDemo) {
+        if (currentDemo.transactions.length !== demoUserInitialSnapshot.txnCount) {
+          throw new Error(`DATA ISOLATION VIOLATION: user_demo transaction count changed!`);
+        }
+        for (const baseAcc of demoUserInitialSnapshot.accounts) {
+          const curAcc = currentDemo.accounts.find((a) => a.id === baseAcc.id);
+          if (!curAcc) throw new Error(`DATA ISOLATION VIOLATION: user_demo account missing!`);
+          if (curAcc.opening_balance.toFixed(2) !== baseAcc.opening_balance) {
+            throw new Error(`DATA ISOLATION VIOLATION: user_demo opening_balance changed!`);
+          }
+          if (curAcc.is_opening_locked !== baseAcc.is_opening_locked) {
+            throw new Error(`DATA ISOLATION VIOLATION: user_demo lock flag changed!`);
+          }
+        }
+      }
+      console.log('[DATA ISOLATION] Verified: user_demo accounts and transactions were completely untouched!');
+    }
   } finally {
     console.log('\n======================================================================');
     console.log('                 TEARDOWN & RESTORATION CLEANUP                       ');
     console.log('======================================================================');
 
-    // 1. Delete created transactions
-    if (createdTxnIds.length > 0 && prismaClientInstance) {
-      console.log(`[CLEANUP] Deleting ${createdTxnIds.length} created Golden Journey transactions...`);
+    let cleanupFailed = false;
+
+    // 1. Close browser if opened
+    if (browser) {
       try {
-        await prismaClientInstance.allocationLine.deleteMany({
-          where: { transaction_id: { in: createdTxnIds } }
-        });
-        await prismaClientInstance.transaction.deleteMany({
-          where: { id: { in: createdTxnIds } }
-        });
-        console.log('[CLEANUP] Transactions and allocation lines deleted.');
-      } catch (err) {
-        console.error('[CLEANUP ERROR] Failed to clean transactions:', err.message);
+        console.log('[CLEANUP] Closing Puppeteer browser instance...');
+        await browser.close();
+      } catch (bErr) {
+        console.warn('[CLEANUP WARNING] Failed to close browser cleanly:', bErr.message);
       }
     }
 
-    // 2. Restore account snapshot values
-    if (accountSnapshots.length > 0 && prismaClientInstance) {
-      console.log(`[CLEANUP] Restoring ${accountSnapshots.length} accounts to initial baseline...`);
-      for (const s of accountSnapshots) {
-        try {
-          await prismaClientInstance.account.update({
-            where: { id: s.id },
-            data: {
-              opening_balance: s.opening_balance,
-              is_opening_locked: s.is_opening_locked
-            }
-          });
-        } catch (err) {
-          console.error(`[CLEANUP ERROR] Failed to restore account ${s.name}:`, err.message);
-        }
-      }
-      console.log('[CLEANUP] Account snapshots restored.');
-    }
-
-    // 3. Kill all spawned server processes
+    // 2. Kill all spawned server processes
     for (const p of spawnedProcesses) {
       if (p && !p.killed) {
         console.log(`[CLEANUP] Terminating spawned backend server process (PID: ${p.pid})...`);
@@ -528,13 +578,56 @@ async function main() {
       }
     }
 
-    // 4. Disconnect prisma client
-    if (prismaClientInstance) {
-      await prismaClientInstance.$disconnect();
-      console.log('[CLEANUP] Prisma database connection closed.');
+    // 3. Atomically delete isolated test fixtures
+    if (testUser && prisma) {
+      console.log(`[CLEANUP] Deleting isolated test fixtures for ${testUser.username}...`);
+      try {
+        await prisma.$transaction(async (tx) => {
+          await tx.allocationLine.deleteMany({
+            where: {
+              OR: [
+                { transaction_id: { in: createdTxnIds } },
+                { transaction: { user_id: testUser.id } },
+                { target_account: { user_id: testUser.id } }
+              ]
+            }
+          });
+          await tx.transaction.deleteMany({
+            where: {
+              OR: [
+                { id: { in: createdTxnIds } },
+                { user_id: testUser.id }
+              ]
+            }
+          });
+          await tx.account.deleteMany({
+            where: { user_id: testUser.id }
+          });
+          await tx.user.delete({
+            where: { id: testUser.id }
+          });
+        });
+        console.log(`[CLEANUP] Isolated test fixtures for ${testUser.username} removed completely.`);
+      } catch (cleanErr) {
+        console.error('[CLEANUP FAILURE] Could not cleanly remove test fixtures:', cleanErr.message);
+        cleanupFailed = true;
+      }
     }
 
-    console.log('[CLEANUP] Cleanup and restoration completed cleanly.\n');
+    // 4. Disconnect prisma client
+    if (prisma) {
+      try {
+        await prisma.$disconnect();
+        console.log('[CLEANUP] Prisma database connection closed.');
+      } catch {}
+    }
+
+    if (cleanupFailed) {
+      console.error('\n>>> SCRIPT CLEANUP FAILED! Orphan data may remain! <<<');
+      process.exitCode = 1;
+    } else {
+      console.log('[CLEANUP] Cleanup and teardown completed cleanly.\n');
+    }
   }
 }
 

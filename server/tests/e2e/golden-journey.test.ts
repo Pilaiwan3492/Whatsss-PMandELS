@@ -1,23 +1,25 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { app } from '../../src/app.js';
-import { assertTestDatabase, executeCleanupsSafely } from '../fixtures/testDbGuard.js';
-
-interface AccountSnapshot {
-  id: string;
-  opening_balance: Prisma.Decimal;
-  is_opening_locked: boolean;
-}
+import { assertTestDatabase } from '../fixtures/testDbGuard.js';
+import {
+  createWP06TestFixture,
+  captureDemoUserSnapshot,
+  assertDemoUserUnmodified,
+  WP06TestFixture,
+  DemoUserSnapshot
+} from '../fixtures/wp06TestFixtures.js';
 
 /**
  * End-to-End Integration Test: Golden Domain Journey Full Sequential Flow (TEST-E2E-01)
  * Target: TEST-E2E-01, All Golden ACs (AC-03-1, AC-04-1, AC-05-1, AC-06-1, AC-07-1, AC-08-1, AC-09-1)
  *
- * SAFETY INVARIANTS:
- * - Runs in CI or when ALLOW_LIVE_DB_TESTS=true is explicitly configured.
- * - Test database name MUST strictly equal "whatsss_test".
- * - Cleanups track EXACT transaction IDs created during the sequential journey.
+ * DATA ISOLATION & INTEGRITY INVARIANTS:
+ * - Uses dedicated, isolated Test User and Accounts via createWP06TestFixture.
+ * - Does NOT mutate or delete user_demo accounts or transactions.
+ * - Verifies 100% data isolation: user_demo baseline snapshot is verified before and after the journey.
+ * - Deterministic teardown cleans up only fixtures created by this test suite.
  */
 describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST-E2E-01)', () => {
   let prisma: PrismaClient;
@@ -28,16 +30,9 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
   const databaseUrl = process.env.DATABASE_URL || '';
   const TRUSTED_ORIGIN = 'http://localhost:5173';
 
-  let demoUserId = '';
-  let demoUserCookie = '';
-  let checkingBankId = '';
-  let creditCardId = '';
-  let salaryAccountId = '';
-  let diningAccountId = '';
-  let groceryAccountId = '';
-
-  const createdTxnIds: string[] = [];
-  const accountSnapshots: AccountSnapshot[] = [];
+  let fixture: WP06TestFixture | null = null;
+  let demoUserSnapshot: DemoUserSnapshot;
+  let testUserCookie = '';
 
   beforeAll(async () => {
     if (!isCI && !allowLiveDb) {
@@ -65,77 +60,39 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
       return;
     }
 
-    // Authenticate user_demo
+    // Capture baseline snapshot of user_demo to verify zero side effects
+    demoUserSnapshot = await captureDemoUserSnapshot(prisma);
+
+    // Provision dedicated isolated Test User and Accounts for WP-06 Golden Journey
+    fixture = await createWP06TestFixture(prisma, 'golden_journey');
+
+    // Authenticate as the isolated test user
     const loginRes = await request(app)
       .post('/api/auth/login')
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/json')
       .send({
-        username: 'user_demo',
-        password: 'Password123!'
+        username: fixture.user.username,
+        password: fixture.user.rawPassword
       });
 
     expect(loginRes.status).toBe(200);
     const setCookie = loginRes.headers['set-cookie'];
     if (setCookie && setCookie.length > 0) {
-      demoUserCookie = setCookie[0];
+      testUserCookie = setCookie[0];
     }
-
-    const user = await prisma.user.findUnique({ where: { username: 'user_demo' } });
-    if (!user) throw new Error('user_demo not found');
-    demoUserId = user.id;
-
-    // Load accounts
-    const accounts = await prisma.account.findMany({ where: { user_id: demoUserId } });
-    for (const a of accounts) {
-      accountSnapshots.push({
-        id: a.id,
-        opening_balance: a.opening_balance,
-        is_opening_locked: a.is_opening_locked
-      });
-      if (a.name === 'Checking Bank') checkingBankId = a.id;
-      if (a.name === 'Visa Credit Card') creditCardId = a.id;
-      if (a.name === 'Salary') salaryAccountId = a.id;
-      if (a.name === 'Dining') diningAccountId = a.id;
-      if (a.name === 'Grocery') groceryAccountId = a.id;
-    }
-
-    // Clean up any stale transactions before running journey
-    const staleTxns = await prisma.transaction.findMany({
-      where: { user_id: demoUserId },
-      select: { id: true }
-    });
-    if (staleTxns.length > 0) {
-      await prisma.transaction.deleteMany({
-        where: { id: { in: staleTxns.map((t) => t.id) } }
-      });
-    }
-
-    // Reset account balances to unlocked 0.00
-    await prisma.account.updateMany({
-      where: { user_id: demoUserId },
-      data: { opening_balance: new Prisma.Decimal('0.00'), is_opening_locked: false }
-    });
   });
 
   afterAll(async () => {
     if (!isDbConnected) return;
 
-    if (createdTxnIds.length > 0) {
-      await prisma.transaction.deleteMany({
-        where: { id: { in: createdTxnIds } }
-      });
+    // Clean up only the fixtures created for this test run
+    if (fixture) {
+      await fixture.cleanup();
     }
 
-    for (const snap of accountSnapshots) {
-      await prisma.account.update({
-        where: { id: snap.id },
-        data: {
-          opening_balance: snap.opening_balance,
-          is_opening_locked: snap.is_opening_locked
-        }
-      });
-    }
+    // Verify user_demo was 100% untouched and preserved
+    await assertDemoUserUnmodified(prisma, demoUserSnapshot);
 
     await prisma.$disconnect();
   });
@@ -145,14 +102,17 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
       return;
     }
 
+    expect(fixture).toBeDefined();
+    const { accounts } = fixture!;
+
     // =========================================================================
     // STEP 1: Set Checking Bank Opening Balance to 10,000.00 THB (AC-03-1)
     // =========================================================================
     const step1Res = await request(app)
-      .patch(`/api/accounts/${checkingBankId}/opening-balance`)
+      .patch(`/api/accounts/${accounts.checkingBank.id}/opening-balance`)
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/json')
-      .set('Cookie', demoUserCookie)
+      .set('Cookie', testUserCookie)
       .send({ opening_balance: 10000.00 });
 
     expect(step1Res.status).toBe(200);
@@ -166,10 +126,10 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
       .post('/api/transactions/income')
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/json')
-      .set('Cookie', demoUserCookie)
+      .set('Cookie', testUserCookie)
       .send({
-        primary_account_id: checkingBankId,
-        income_account_id: salaryAccountId,
+        primary_account_id: accounts.checkingBank.id,
+        income_account_id: accounts.salary.id,
         total_amount: '20000.00',
         transaction_date: '2026-11-02',
         description: 'November Salary Inflow'
@@ -177,8 +137,9 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
 
     expect(step2Res.status).toBe(201);
     expect(step2Res.body.success).toBe(true);
-    expect(step2Res.body.data.transaction.id).toBeDefined();
-    createdTxnIds.push(step2Res.body.data.transaction.id);
+    const step2TxId = step2Res.body.data.transaction.id;
+    expect(step2TxId).toBeDefined();
+    fixture!.trackTxnId(step2TxId);
 
     // =========================================================================
     // STEP 3: Record Credit Card Purchase 3,000.00 THB split Dining 1k + Grocery 2k (AC-05-1, AC-06-1, BR-04, BR-05)
@@ -187,22 +148,23 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
       .post('/api/transactions/expense')
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/json')
-      .set('Cookie', demoUserCookie)
+      .set('Cookie', testUserCookie)
       .send({
-        primary_account_id: creditCardId,
+        primary_account_id: accounts.creditCard.id,
         total_amount: '3000.00',
         transaction_date: '2026-11-03',
         description: 'Weekend Dining & Grocery',
         allocations: [
-          { target_account_id: diningAccountId, amount: '1000.00', notes: 'Dinner' },
-          { target_account_id: groceryAccountId, amount: '2000.00', notes: 'Weekly grocery' }
+          { target_account_id: accounts.dining.id, amount: '1000.00', notes: 'Dinner' },
+          { target_account_id: accounts.grocery.id, amount: '2000.00', notes: 'Weekly grocery' }
         ]
       });
 
     expect(step3Res.status).toBe(201);
     expect(step3Res.body.success).toBe(true);
-    expect(step3Res.body.data.transaction.id).toBeDefined();
-    createdTxnIds.push(step3Res.body.data.transaction.id);
+    const step3TxId = step3Res.body.data.transaction.id;
+    expect(step3TxId).toBeDefined();
+    fixture!.trackTxnId(step3TxId);
 
     // =========================================================================
     // STEP 4: Record CC Repayment 3,000.00 THB from Bank to Credit Card (AC-07-1, BR-07, BR-08)
@@ -211,10 +173,10 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
       .post('/api/transactions/repayment')
       .set('Origin', TRUSTED_ORIGIN)
       .set('Content-Type', 'application/json')
-      .set('Cookie', demoUserCookie)
+      .set('Cookie', testUserCookie)
       .send({
-        from_account_id: checkingBankId,
-        to_account_id: creditCardId,
+        from_account_id: accounts.checkingBank.id,
+        to_account_id: accounts.creditCard.id,
         amount: '3000.00',
         transaction_date: '2026-11-04',
         description: 'Full Credit Card Debt Repayment'
@@ -222,8 +184,9 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
 
     expect(step4Res.status).toBe(201);
     expect(step4Res.body.success).toBe(true);
-    expect(step4Res.body.data.transaction.id).toBeDefined();
-    createdTxnIds.push(step4Res.body.data.transaction.id);
+    const step4TxId = step4Res.body.data.transaction.id;
+    expect(step4TxId).toBeDefined();
+    fixture!.trackTxnId(step4TxId);
 
     // =========================================================================
     // STEP 5: Verify Final Financial Summary (AC-08-1, FR-10)
@@ -232,7 +195,7 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
     const summaryRes = await request(app)
       .get('/api/reports/summary')
       .set('Origin', TRUSTED_ORIGIN)
-      .set('Cookie', demoUserCookie);
+      .set('Cookie', testUserCookie);
 
     expect(summaryRes.status).toBe(200);
     expect(summaryRes.body.success).toBe(true);
@@ -250,7 +213,7 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
     const historyRes = await request(app)
       .get('/api/transactions')
       .set('Origin', TRUSTED_ORIGIN)
-      .set('Cookie', demoUserCookie);
+      .set('Cookie', testUserCookie);
 
     expect(historyRes.status).toBe(200);
     expect(historyRes.body.success).toBe(true);
@@ -274,5 +237,25 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
     // Total allocation lines across all 3 transactions must equal 4
     const totalAllocations = txns.reduce((sum: number, t: any) => sum + t.allocation_lines.length, 0);
     expect(totalAllocations).toBe(4);
+  });
+
+  it('TEST-E2E-02: verifies data isolation preserving user_demo accounts and clean fixture teardown', async () => {
+    if (!isCI && !allowLiveDb) {
+      return;
+    }
+
+    // Assert that user_demo was NOT touched, modified, or depleted during the entire test flow
+    await assertDemoUserUnmodified(prisma, demoUserSnapshot);
+
+    // Assert that the test user has exactly 3 transactions and 5 accounts before teardown
+    const testUserTxnCount = await prisma.transaction.count({
+      where: { user_id: fixture!.user.id }
+    });
+    expect(testUserTxnCount).toBe(3);
+
+    const testUserAccCount = await prisma.account.count({
+      where: { user_id: fixture!.user.id }
+    });
+    expect(testUserAccCount).toBe(5);
   });
 });
