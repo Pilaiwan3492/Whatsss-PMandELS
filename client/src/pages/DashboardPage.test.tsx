@@ -212,4 +212,53 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
       expect(screen.getByTestId('metric-bank-balance').textContent).toContain('27,000.00 THB');
     });
   });
+
+  it('TEST-UI-DASH-06: handles history error gracefully with retry while financial summary renders normally', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+
+    let historyCalls = 0;
+    vi.spyOn(transactionApi, 'getTransactions').mockImplementation(async () => {
+      historyCalls++;
+      if (historyCalls === 1) {
+        throw new Error('Database connection failed');
+      }
+      return mockGoldenTransactions;
+    });
+
+    renderDashboard();
+
+    // Summary must still render normally even when history API fails
+    await waitFor(() => {
+      expect(screen.getByTestId('metric-bank-balance').textContent).toContain('27,000.00 THB');
+      expect(screen.getByTestId('metric-credit-debt').textContent).toContain('0.00 THB');
+      expect(screen.getByTestId('history-error-container')).toBeDefined();
+      expect(screen.getByText('Unable to load recent transactions.')).toBeDefined();
+    });
+
+    // Ensure it does NOT show "No transactions recorded yet" when it failed with an error
+    expect(screen.queryByTestId('history-empty')).toBeNull();
+
+    // Click retry on history error container
+    const retryBtn = screen.getByRole('button', { name: 'Retry' });
+    fireEvent.click(retryBtn);
+
+    // After retry succeeds, transactions table should be displayed
+    await waitFor(() => {
+      expect(screen.getByText('CC Repayment')).toBeDefined();
+      expect(screen.queryByTestId('history-error-container')).toBeNull();
+    });
+  });
+
+  it('TEST-UI-DASH-07: renders empty state placeholder when zero transactions are recorded', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue([]);
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('metric-bank-balance')).toBeDefined();
+      expect(screen.getByTestId('history-empty')).toBeDefined();
+      expect(screen.getByText('No transactions recorded yet.')).toBeDefined();
+    });
+  });
 });

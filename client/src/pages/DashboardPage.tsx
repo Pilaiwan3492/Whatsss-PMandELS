@@ -8,31 +8,47 @@ export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
 
   const [summary, setSummary] = useState<FinancialSummaryData | null>(null);
-  const [recentTransactions, setRecentTransactions] = useState<HistoryTransaction[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState<boolean>(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
-  const fetchDashboardData = async () => {
-    setIsLoading(true);
-    setErrorMessage(null);
+  const [recentTransactions, setRecentTransactions] = useState<HistoryTransaction[]>([]);
+  const [historyLoading, setHistoryLoading] = useState<boolean>(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  const loadSummary = async () => {
+    setSummaryLoading(true);
+    setSummaryError(null);
     try {
-      const [summaryData, txnsData] = await Promise.all([
-        getFinancialSummary().catch((err) => {
-          throw err;
-        }),
-        getTransactions().catch(() => [])
-      ]);
+      const summaryData = await getFinancialSummary();
       setSummary(summaryData);
-      setRecentTransactions(Array.isArray(txnsData) ? txnsData.slice(0, 5) : []);
     } catch (err: any) {
-      // In isolated tests like ProtectedRoute, /reports/summary may not be mocked
-      const msg = err?.response?.data?.error?.message || err?.message;
-      if (msg && !msg.includes('Unhandled url')) {
-        setErrorMessage(msg);
+      const msg = err?.response?.data?.error?.message || err?.message || 'Failed to load financial summary';
+      if (!msg.includes('Unhandled url')) {
+        setSummaryError(msg);
       }
     } finally {
-      setIsLoading(false);
+      setSummaryLoading(false);
     }
+  };
+
+  const loadRecentTransactions = async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const txns = await getTransactions();
+      setRecentTransactions(Array.isArray(txns) ? txns.slice(0, 5) : []);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message || err?.message || 'Unable to load recent transactions.';
+      if (!msg.includes('Unhandled url')) {
+        setHistoryError('Unable to load recent transactions.');
+      }
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const fetchDashboardData = async () => {
+    await Promise.all([loadSummary(), loadRecentTransactions()]);
   };
 
   useEffect(() => {
@@ -72,11 +88,11 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Error Alert */}
-      {errorMessage && (
-        <div className="alert alert-danger d-flex justify-content-between align-items-center mb-4" role="alert">
+      {/* Summary Error Alert */}
+      {summaryError && (
+        <div className="alert alert-danger d-flex justify-content-between align-items-center mb-4" role="alert" data-testid="summary-error-alert">
           <div>
-            <strong>Error:</strong> {errorMessage}
+            <strong>Error:</strong> {summaryError}
           </div>
           <button className="btn btn-outline-danger btn-sm" onClick={fetchDashboardData}>
             Retry
@@ -84,8 +100,8 @@ export const DashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* Loading State */}
-      {isLoading ? (
+      {/* Loading State for Summary */}
+      {summaryLoading ? (
         <div className="d-flex justify-content-center align-items-center py-5" data-testid="dashboard-loading">
           <div className="spinner-border text-primary" role="status">
             <span className="visually-hidden">Loading dashboard metrics...</span>
@@ -208,7 +224,23 @@ export const DashboardPage: React.FC = () => {
                   </Link>
                 </div>
                 <div className="card-body p-0" data-testid="recent-transactions-section">
-                  {recentTransactions.length > 0 ? (
+                  {historyLoading ? (
+                    <div className="text-center py-5 text-muted" data-testid="history-loading">
+                      <div className="spinner-border spinner-border-sm text-secondary me-2" role="status">
+                        <span className="visually-hidden">Loading...</span>
+                      </div>
+                      <span>Loading recent transactions...</span>
+                    </div>
+                  ) : historyError ? (
+                    <div className="p-4" data-testid="history-error-container">
+                      <div className="alert alert-warning d-flex justify-content-between align-items-center mb-0" role="alert">
+                        <span>{historyError}</span>
+                        <button className="btn btn-outline-dark btn-sm" onClick={loadRecentTransactions}>
+                          Retry
+                        </button>
+                      </div>
+                    </div>
+                  ) : recentTransactions.length > 0 ? (
                     <div className="table-responsive">
                       <table className="table table-hover align-middle mb-0">
                         <thead className="table-light">
@@ -254,7 +286,7 @@ export const DashboardPage: React.FC = () => {
                       </table>
                     </div>
                   ) : (
-                    <div className="text-center py-5 text-muted">
+                    <div className="text-center py-5 text-muted" data-testid="history-empty">
                       <p className="mb-0">No transactions recorded yet.</p>
                     </div>
                   )}
