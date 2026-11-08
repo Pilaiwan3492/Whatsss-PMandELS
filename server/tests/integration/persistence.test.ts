@@ -241,24 +241,53 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
   });
 
   afterAll(async () => {
-    // 1. Guaranteed termination of ALL spawned backend processes (process 1, process 2, etc.)
-    for (const child of spawnedProcesses) {
-      try {
-        await terminateBackendProcess(child);
-      } catch {}
+    const cleanupErrors: string[] = [];
+
+    try {
+      // 1. Stop every spawned backend process.
+      for (const child of spawnedProcesses) {
+        try {
+          await terminateBackendProcess(child);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          cleanupErrors.push(`Backend process cleanup failed: ${message}`);
+        }
+      }
+
+      // 2. Clean up isolated test fixtures.
+      if (isDbConnected && fixture) {
+        try {
+          await fixture.cleanup();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          cleanupErrors.push(`Fixture cleanup failed: ${message}`);
+        }
+      }
+
+      // 3. Verify user_demo was not modified.
+      if (isDbConnected && demoUserSnapshot) {
+        try {
+          await assertDemoUserUnmodified(prisma, demoUserSnapshot);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          cleanupErrors.push(`Demo user isolation check failed: ${message}`);
+        }
+      }
+    } finally {
+      // 4. Always attempt to disconnect Prisma.
+      if (prisma) {
+        try {
+          await prisma.$disconnect();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          cleanupErrors.push(`Prisma disconnect failed: ${message}`);
+        }
+      }
     }
 
-    if (!isDbConnected) return;
-
-    // 2. Clean up only the isolated fixtures created by this test suite
-    if (fixture) {
-      await fixture.cleanup();
+    if (cleanupErrors.length > 0) {
+      throw new Error(`Test cleanup failed:\n${cleanupErrors.join('\n')}`);
     }
-
-    // 3. Verify user_demo remained completely unmodified
-    await assertDemoUserUnmodified(prisma, demoUserSnapshot);
-
-    await prisma.$disconnect();
   });
 
   it('TEST-PERSIST-01: restarts backend server process and verifies data retrieval identity (AC-09-2, NFR-DATA-01)', async () => {
