@@ -10,9 +10,9 @@
 
 ## 1. Release Identification
 
-* **Assessed Implementation Baseline Commit:** Branch `feat/summaries-history-e2e` (`ff081b3` / verified on CI Run #115: WP-06 Financial Summaries, Transaction History, Real Process Restart & Integration)
+* **Assessed Implementation Baseline Commit:** Branch `feat/summaries-history-e2e` (`ceaea39c93ec9117da7a24d393278cf5225e21f1` / verified on CI Run #121: WP-06 Financial Summaries, Transaction History, Real Process Restart, Restart Script Safety & Decoupled Dashboard Error Handling)
 * **Base Branch Commit:** `f9d4ad8` (`sprint-1` merge of PR #12)
-* **Release Tag:** `v0.1.0-sprint1` (Release Candidate ready for Deliverable 1 packaging)
+* **Release Tag:** `v0.1.0-sprint1 (Release Candidate — Pending Tag Creation upon Sprint 1 Review & Merge)`
 * **Target Issue:** [GitHub Issue #7](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/7)
 * **Assignee:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
@@ -34,22 +34,22 @@
 * **Automated Test Execution Summary:**
   * **Local Suite Execution (without live DB):**
     * Backend: 275 passed, 37 skipped across 25 test files (89 Unit tests passed across 8 suites; 186 Integration tests passed across 15 suites; 37 live DB tests skipped locally).
-    * Frontend: 53 passed across 7 component test files (5 in `DashboardPage.test.tsx`, 5 in `TransactionHistoryPage.test.tsx`, 10 in `RepaymentForm.test.tsx`, 13 in `ExpenseForm.test.tsx`, 8 in `AccountListPage.test.tsx`, 8 in `IncomeForm.test.tsx`, 4 in `ProtectedRoute.test.tsx`).
+    * Frontend: 55 passed across 7 component test files (7 in `DashboardPage.test.tsx`, 5 in `TransactionHistoryPage.test.tsx`, 10 in `RepaymentForm.test.tsx`, 13 in `ExpenseForm.test.tsx`, 8 in `AccountListPage.test.tsx`, 8 in `IncomeForm.test.tsx`, 4 in `ProtectedRoute.test.tsx`).
   * **GitHub Actions CI Environment (Live PostgreSQL Service Container, ALLOW_LIVE_DB_TESTS=true):**
     * Backend: 312 passed, 0 failed, 0 skipped across 25 test files.
-    * Frontend: 53 passed, 0 failed across 7 test files.
+    * Frontend: 55 passed, 0 failed across 7 test files.
     * Production Builds:
       * Backend TypeScript compilation: Passed.
       * Frontend TypeScript compilation and Vite production build: Passed.
-    * CI Run: [#115](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42402962705) (and [#111](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42401134299))
-    * Verified Commit: `ff081b376d54d9c490a07106093cb4a2b9eb0270` (`ff081b3`)
-    * หมายเหตุ: ตัวเลขนี้ตรวจจาก Job Logs ของ Run #115 (Backend 312 passed across 25 files, Frontend 53 passed across 7 files, TypeScript compilation & Vite build passed)
+    * CI Run: [#121](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42499461128) (and Push [#120](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42499455829))
+    * Verified Commit: `ceaea39c93ec9117da7a24d393278cf5225e21f1`
+    * หมายเหตุ: ตัวเลขนี้ตรวจจาก Job Logs ของ Run #121 (Backend 312 passed across 25 files, Frontend 55 passed across 7 files, TypeScript compilation & Vite build passed)
   * **Detailed Suite Breakdown:**
     * `balance.test.ts`: 5 passed (TEST-BAL-01: arbitrary-precision Decimal balance calculations, opening balance exclusion BR-02, salary inflow balance impact, split purchase debt impact, Golden Journey final balances Bank 27,000 THB, Debt 0 THB, Income 20,000 THB, Expense 3,000 THB, Dining 1,000 THB, Grocery 2,000 THB)
     * `transaction.test.ts`: 7 passed (TEST-HIST-01: Mocked Prisma & HTTP API; 401 unauthenticated per BR-09, 403 admin financial barrier per BR-10, cross-tenant isolation per BR-01, empty state, exactly 3 transactions and 4 allocation lines total per AC-09-1, deterministic chronological sorting transaction_date DESC, created_at DESC, eagerly loaded primary account and target category metadata)
     * `persistence.test.ts`: 1 passed in CI (TEST-PERSIST-01: Live PostgreSQL HTTP API & Real OS Process Restart; verifies relational database persistence against whatsss_test without re-seeding across real OS server process restart: spawns Process 1, queries initial state, terminates Process 1 [port closed verified], spawns Process 2 with brand new PID, queries post-restart state, confirms 100% identical metrics Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k, 3 transactions, 4 allocation lines)
     * `golden-journey.test.ts`: 1 passed in CI (TEST-E2E-01: Live PostgreSQL HTTP API; executes complete 4-step sequential Golden Domain Journey via HTTP session cookies against whatsss_test: Step 1 Opening Balance 10k -> Step 2 Salary 20k -> Step 3 Split Purchase 3k -> Step 4 Repayment 3k -> Step 5 Final Summary Verification Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k -> Step 6 History Verification 3 transactions, 4 allocations)
-    * `DashboardPage.test.tsx`: 5 passed (TEST-UI-DASH-01..05: renders 4 summary metric cards with formatted THB currency, renders expense category breakdown progress bars with 33% Dining and 67% Grocery, renders recent transactions snippet table, quick action navigation links, handles loading spinner and error alerts with retry)
+    * `DashboardPage.test.tsx`: 7 passed (TEST-UI-DASH-01..07: renders 4 summary metric cards with formatted THB currency, renders expense category breakdown progress bars with 33% Dining and 67% Grocery, renders recent transactions snippet table, quick action navigation links, handles loading spinner, TEST-UI-DASH-06 history error handling with Retry while summary renders normally, TEST-UI-DASH-07 empty state placeholder when zero transactions recorded)
     * `TransactionHistoryPage.test.tsx`: 5 passed (TEST-UI-HIST-01..05: renders chronological transactions table with type badges, filter tabs All/Income/Expense/Repayment with counts, expandable nested accordion rows showing split allocations, empty state placeholder, handles loading spinner and error banner with retry)
     * `repayment.test.ts`: 24 passed (Mocked Prisma & HTTP API; records full CC repayment of 3,000.00 THB reducing Bank and Debt atomically with 1 allocation line targeting LOAN_TAKEN, verifies expense exclusion invariant per BR-08, supports partial repayment, rejects repayment exceeding debt with 422 REPAYMENT_EXCEEDS_DEBT, rejects insufficient funds with 422 INSUFFICIENT_FUNDS, rejects non-positive/over-precision/non-numeric amount with 400 INVALID_AMOUNT, rejects cross-tenant accounts with 404 NOT_FOUND per BR-01, rejects unauthenticated requests with 401 per BR-09, rejects ADMIN with 403 per BR-10, locks opening balance atomically)
     * `db-repayment.test.ts`: 9 passed in CI (skipped locally without live PostgreSQL; verifies live PostgreSQL persistence of Transaction form PAYMENT_CHARGE and child AllocationLine targeting LOAN_TAKEN, atomic reduction of Bank and Debt balances, expense exclusion invariant BR-08, boundary 422 rejection on exceeding debt or insufficient funds, concurrent race condition serialization via pessimistic row locks [TEST-REPAY-CONCURRENT-DEBT, TEST-REPAY-CONCURRENT-FUNDS], mid-flight rollback atomicity [TEST-REPAY-ATOM], and exact decimal arithmetic [TEST-REPAY-DECIMAL])
@@ -170,7 +170,7 @@
 | `TEST-HIST-01` | `AC-09-1`, `FR-11`, `BR-01`, `BR-09`, `BR-10` | `server/tests/integration/transaction.test.ts` | Passed — Mocked Prisma HTTP API (7 test cases: verifies 401 unauthenticated, 403 admin financial barrier, tenancy isolation, empty state, exactly 3 recorded transactions and 4 allocation lines total, chronological date descending order, primary and target category metadata) | WP-06 Branch |
 | `TEST-PERSIST-01`| `AC-09-2`, `NFR-DATA-01` | `server/tests/integration/persistence.test.ts`, `server/scripts/verify_server_restart.mjs` | Passed — Live PostgreSQL Integration & Real OS Process Restart (Automated suite in persistence.test.ts directly spawns Process 1, executes HTTP queries, kills Process 1, verifies port release, spawns Process 2 with new PID without DB re-seeding, and asserts 100% identical data retrieval: Bank 27,000 THB, Debt 0 THB, Income 20,000 THB, Expense 3,000 THB, Dining 1,000 THB, Grocery 2,000 THB, 3 transactions, 4 allocation lines) | WP-06 Branch |
 | `TEST-E2E-01` | All Golden ACs (`AC-03-1`..`AC-09-1`) | `server/tests/e2e/golden-journey.test.ts` | Passed — Live PostgreSQL HTTP API (Executes full sequential 4-step Golden Journey through HTTP API with live session cookies against whatsss_test: Step 1 Opening Balance 10,000 THB -> Step 2 Salary 20,000 THB -> Step 3 Split CC Purchase 3,000 THB -> Step 4 Repayment 3,000 THB -> Step 5 Final Summary Verification Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k -> Step 6 History Verification 3 transactions, 4 allocations) | WP-06 Branch |
-| `TEST-UI-DASH` | `AC-08-1`, `F-08` | `client/src/pages/DashboardPage.test.tsx` | Passed — Vitest / Testing Library (5 test cases: TEST-UI-DASH-01..05 covering 4 summary metric cards, category breakdown progress bars, recent transactions table, quick action navigation links, and error banner with retry) | WP-06 Branch |
+| `TEST-UI-DASH` | `AC-08-1`, `F-08` | `client/src/pages/DashboardPage.test.tsx` | Passed — Vitest / Testing Library (7 test cases: TEST-UI-DASH-01..07 covering 4 summary metric cards, category breakdown progress bars, recent transactions table, quick action navigation links, TEST-UI-DASH-06 history error handling with Retry while summary renders normally, TEST-UI-DASH-07 empty state placeholder) | WP-06 Branch |
 | `TEST-UI-HIST` | `AC-09-1`, `F-09` | `client/src/pages/TransactionHistoryPage.test.tsx` | Passed — Vitest / Testing Library (5 test cases: TEST-UI-HIST-01..05 covering 3 transactions and 4 allocation lines rendering, filter tabs by type, expandable split allocation rows, empty state placeholder, and error banner with retry) | WP-06 Branch |
 
 ---
