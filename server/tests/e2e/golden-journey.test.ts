@@ -84,17 +84,43 @@ describe('E2E Integration Test: Golden Domain Journey Full Sequential Flow (TEST
   });
 
   afterAll(async () => {
-    if (!isDbConnected) return;
+    const cleanupErrors: string[] = [];
 
-    // Clean up only the fixtures created for this test run
-    if (fixture) {
-      await fixture.cleanup();
+    try {
+      // 1. Clean up only the fixtures created for this test run
+      if (isDbConnected && fixture) {
+        try {
+          await fixture.cleanup();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          cleanupErrors.push(`Fixture cleanup failed: ${message}`);
+        }
+      }
+
+      // 2. Verify user_demo was 100% untouched and preserved
+      if (isDbConnected && demoUserSnapshot) {
+        try {
+          await assertDemoUserUnmodified(prisma, demoUserSnapshot);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          cleanupErrors.push(`Demo user isolation check failed: ${message}`);
+        }
+      }
+    } finally {
+      // 3. Always attempt Prisma disconnect
+      if (prisma) {
+        try {
+          await prisma.$disconnect();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          cleanupErrors.push(`Prisma disconnect failed: ${message}`);
+        }
+      }
     }
 
-    // Verify user_demo was 100% untouched and preserved
-    await assertDemoUserUnmodified(prisma, demoUserSnapshot);
-
-    await prisma.$disconnect();
+    if (cleanupErrors.length > 0) {
+      throw new Error(`Golden Journey cleanup failed:\n${cleanupErrors.join('\n')}`);
+    }
   });
 
   it('TEST-E2E-01: executes full 4-step Golden Journey and verifies final state', async () => {

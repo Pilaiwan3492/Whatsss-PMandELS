@@ -97,39 +97,113 @@ describe('Integration Test: Relational Database Persistence Across Real Process 
     });
   }
 
-  async function terminateBackendProcess(child: ChildProcess): Promise<void> {
-    if (!child || child.killed || child.exitCode !== null) {
+  async function terminateBackendProcess(
+    child: ChildProcess,
+    timeoutMs = 7000
+  ): Promise<void> {
+    if (!child) {
+      return;
+    }
+
+    // 1. If process already terminated, consider it successful
+    if (child.exitCode !== null || child.signalCode !== null) {
       return;
     }
 
     const pid = child.pid;
+    let terminationError: Error | null = null;
+
+    // 2. If still running, issue platform-specific process tree termination command
     if (pid) {
       if (process.platform === 'win32') {
         try {
-          execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-        } catch {}
+          execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'pipe' });
+        } catch (err: any) {
+          if (child.exitCode === null && child.signalCode === null) {
+            try {
+              process.kill(pid, 0);
+              terminationError = err instanceof Error ? err : new Error(String(err));
+            } catch {
+              // Process already dead
+            }
+          }
+        }
       } else {
-        // On Unix/Linux, kill child processes first, then the process itself
         try {
-          execSync(`pkill -P ${pid} 2>/dev/null || true; kill -9 ${pid} 2>/dev/null || true`, { stdio: 'ignore' });
-        } catch {}
+          execSync(`pkill -P ${pid} 2>/dev/null || true; kill -9 ${pid} 2>/dev/null || true`, { stdio: 'pipe' });
+        } catch (err: any) {
+          if (child.exitCode === null && child.signalCode === null) {
+            try {
+              process.kill(pid, 0);
+              terminationError = err instanceof Error ? err : new Error(String(err));
+            } catch {
+              // Process already dead
+            }
+          }
+        }
       }
     }
 
     try {
       child.kill('SIGKILL');
-    } catch {}
-
-    await new Promise<void>((resolve) => {
-      if (child.killed || child.exitCode !== null) {
-        resolve();
-        return;
+    } catch (err: any) {
+      if (child.exitCode === null && child.signalCode === null && !terminationError) {
+        terminationError = err instanceof Error ? err : new Error(String(err));
       }
-      const exitTimer = setTimeout(() => resolve(), 2000);
-      child.once('exit', () => {
-        clearTimeout(exitTimer);
-        resolve();
-      });
+    }
+
+    // Double check if process already exited
+    if (child.exitCode !== null || child.signalCode !== null) {
+      return;
+    }
+
+    // 3. Wait for exit or close event with timeout
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          if (child.exitCode !== null || child.signalCode !== null) {
+            resolve();
+            return;
+          }
+          if (pid) {
+            try {
+              process.kill(pid, 0);
+              reject(
+                new Error(
+                  `Backend process (PID ${pid}) did not exit within ${timeoutMs}ms${
+                    terminationError ? ` (Termination command error: ${terminationError.message})` : ''
+                  }`
+                )
+              );
+              return;
+            } catch {
+              resolve();
+              return;
+            }
+          }
+          reject(
+            new Error(
+              `Backend process did not exit within ${timeoutMs}ms${
+                terminationError ? ` (Termination command error: ${terminationError.message})` : ''
+              }`
+            )
+          );
+        }
+      }, timeoutMs);
+
+      const onExit = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+
+      child.once('exit', onExit);
+      child.once('close', onExit);
     });
   }
 
