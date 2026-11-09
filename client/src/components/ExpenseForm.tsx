@@ -17,13 +17,14 @@ interface AllocationRow {
 }
 
 export const ExpenseForm: React.FC<ExpenseFormProps> = ({
-  accounts,
+  accounts = [],
   isOpen,
   onClose,
   onSuccess
 }) => {
-  const creditCardAccounts = accounts.filter((a) => a.type === 'LOAN_TAKEN');
-  const expenseAccounts = accounts.filter((a) => a.type === 'EXPENSE');
+  const safeAccounts = accounts || [];
+  const creditCardAccounts = safeAccounts.filter((a) => a.type === 'LOAN_TAKEN');
+  const expenseAccounts = safeAccounts.filter((a) => a.type === 'EXPENSE');
 
   const [primaryAccountId, setPrimaryAccountId] = useState<string>('');
   const [totalAmount, setTotalAmount] = useState<string>('');

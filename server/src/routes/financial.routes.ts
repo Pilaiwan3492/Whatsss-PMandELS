@@ -1,9 +1,7 @@
 import { Router } from 'express';
 import { authGuard } from '../middlewares/authGuard.js';
 import { roleGuard } from '../middlewares/roleGuard.js';
-import {
-  getTransactions,
-} from '../controllers/mockFinancial.controller.js';
+import { getTransactions } from '../controllers/transaction.controller.js';
 import { getSummary } from '../controllers/report.controller.js';
 
 const router = Router();

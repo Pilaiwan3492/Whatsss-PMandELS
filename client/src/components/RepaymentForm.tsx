@@ -12,14 +12,15 @@ export interface RepaymentFormProps {
 }
 
 export const RepaymentForm: React.FC<RepaymentFormProps> = ({
-  accounts,
+  accounts = [],
   isOpen,
   onClose,
   onSuccess,
   initialCreditCardId
 }) => {
-  const cashAccounts = accounts.filter((a) => a.type === 'CASH');
-  const creditCardAccounts = accounts.filter((a) => a.type === 'LOAN_TAKEN');
+  const safeAccounts = accounts || [];
+  const cashAccounts = safeAccounts.filter((a) => a.type === 'CASH');
+  const creditCardAccounts = safeAccounts.filter((a) => a.type === 'LOAN_TAKEN');
 
   const [fromAccountId, setFromAccountId] = useState<string>('');
   const [toAccountId, setToAccountId] = useState<string>('');
