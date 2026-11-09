@@ -177,10 +177,34 @@
 
 ## 3. Golden Domain Journey Execution Log & Captures
 
-The complete 5-step Golden Domain Journey was executed sequentially against the PostgreSQL database (`whatsss_test`) via the automated integration test suite `server/tests/e2e/golden-journey.test.ts` (`TEST-E2E-01`). Below is the verified step-by-step transaction execution record:
+The Golden Domain Journey was executed against the dedicated PostgreSQL test database (`whatsss_test`) using isolated test users and accounts created by `createWP06TestFixture()`.
 
-### Step 1: Account Opening Balance (WP-02 / AC-03-1)
-* **Action:** Authenticated user `user_demo` sets opening balance on `Checking Bank` account.
+The automated integration test `server/tests/e2e/golden-journey.test.ts` (`TEST-E2E-01`) executes the following flow:
+
+1. Set Checking Bank opening balance to 10,000 THB.
+2. Record Salary Income of 20,000 THB.
+3. Record a Credit Card Purchase of 3,000 THB, allocated to Dining (1,000 THB) and Grocery (2,000 THB).
+4. Record Credit Card Repayment of 3,000 THB.
+5. Verify the final financial summary.
+6. Verify transaction history and allocation lines.
+
+Expected final results:
+
+- Bank Balance: 27,000 THB
+- Credit Card Debt: 0 THB
+- Total Income: 20,000 THB
+- Total Expenses: 3,000 THB
+- Transactions: 3
+- Allocation Lines: 4
+
+**Data Isolation:** The test uses a dedicated test tenant. The `user_demo` baseline is captured separately and checked after execution using `assertDemoUserUnmodified()`.
+
+### Illustrative API Examples
+
+> **Note:** The following HTTP request and response payloads are illustrative API schema examples representing endpoint contracts and payload shapes. They are not raw test execution logs. Actual test execution in `server/tests/e2e/golden-journey.test.ts` uses dynamically generated test user accounts and UUIDs provisioned by `createWP06TestFixture()`.
+
+#### Step 1: Account Opening Balance (WP-02 / AC-03-1)
+* **Action:** Authenticated user sets opening balance on `Checking Bank` account.
 * **HTTP Request:**
   ```http
   PATCH /api/accounts/11111111-1111-4111-8111-111111111101/opening-balance
@@ -208,7 +232,7 @@ The complete 5-step Golden Domain Journey was executed sequentially against the 
   ```
 * **Verified Ledger State:** Bank Balance = **10,000.00 THB**, Debt = **0.00 THB**, Income = **0.00 THB**, Expense = **0.00 THB**.
 
-### Step 2: Salary Inflow (WP-03 / AC-04-1, BR-03)
+#### Step 2: Salary Inflow (WP-03 / AC-04-1, BR-03)
 * **Action:** Record regular monthly salary inflow into `Checking Bank` from `Salary` income category.
 * **HTTP Request:**
   ```http
@@ -247,7 +271,7 @@ The complete 5-step Golden Domain Journey was executed sequentially against the 
   ```
 * **Verified Ledger State:** Bank Balance = **30,000.00 THB**, Debt = **0.00 THB**, Income = **20,000.00 THB**, Expense = **0.00 THB**. Primary account `Checking Bank` opening balance locked atomically (`is_opening_locked: true`).
 
-### Step 3: Credit Card Purchase with Split Allocation (WP-04 / AC-05-1, AC-06-1, BR-04, BR-05)
+#### Step 3: Credit Card Purchase with Split Allocation (WP-04 / AC-05-1, AC-06-1, BR-04, BR-05)
 * **Action:** Record credit card purchase charged to `Visa Credit Card` split into Dining (1,000.00 THB) and Grocery (2,000.00 THB).
 * **HTTP Request:**
   ```http
@@ -290,7 +314,7 @@ The complete 5-step Golden Domain Journey was executed sequentially against the 
   ```
 * **Verified Ledger State:** Bank Balance = **30,000.00 THB**, Debt = **3,000.00 THB**, Income = **20,000.00 THB**, Expense = **3,000.00 THB** (Dining: 1,000.00, Grocery: 2,000.00).
 
-### Step 4: Credit Card Debt Settlement Repayment (WP-05 / AC-07-1, BR-07, BR-08)
+#### Step 4: Credit Card Debt Settlement Repayment (WP-05 / AC-07-1, BR-07, BR-08)
 * **Action:** Record credit card debt repayment from `Checking Bank` to `Visa Credit Card`.
 * **HTTP Request:**
   ```http
@@ -328,8 +352,8 @@ The complete 5-step Golden Domain Journey was executed sequentially against the 
   ```
 * **Verified Ledger State:** Bank Balance = **27,000.00 THB**, Debt = **0.00 THB**, Income = **20,000.00 THB**, Expense = **3,000.00 THB** (Repayment strictly excluded from expense summary per BR-08).
 
-### Step 5: Final Real-Time Financial Summary & Audit History (WP-06 / AC-08-1, AC-09-1)
-* **Summary Query:** `GET /api/reports/summary` $ightarrow$ `200 OK`
+#### Step 5: Final Real-Time Financial Summary & Audit History (WP-06 / AC-08-1, AC-09-1)
+* **Summary Query:** `GET /api/reports/summary` $\rightarrow$ `200 OK`
   ```json
   {
     "success": true,
@@ -349,7 +373,7 @@ The complete 5-step Golden Domain Journey was executed sequentially against the 
     }
   }
   ```
-* **Transaction History Query:** `GET /api/transactions` $ightarrow$ `200 OK`
+* **Transaction History Query:** `GET /api/transactions` $\rightarrow$ `200 OK`
   * Returns **exactly 3 transactions** in chronological descending order:
     1. `2026-11-04`: Repayment (3,000.00 THB, 1 allocation line to Visa Credit Card)
     2. `2026-11-03`: Purchase (3,000.00 THB, 2 allocation lines: Dining 1k + Grocery 2k)
@@ -483,3 +507,9 @@ Allocation Lines Count     | 4                     | 4                      | PA
 | **Financial Dashboard** | ![Pre-Restart Dashboard](screenshots/restart_01_dashboard_pre.png) | ![Post-Restart Dashboard](screenshots/restart_03_dashboard_post.png) | **IDENTICAL (Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k)** |
 | **Transaction History** | ![Pre-Restart History](screenshots/restart_02_history_pre.png) | ![Post-Restart History](screenshots/restart_04_history_post.png) | **IDENTICAL (3 Transactions, 4 Allocation Lines)** |
 
+---
+
+## Linked Evidence & Documentation
+
+- [Evidence Index](./evidence-index.md)
+- [Issue Backlog](./issue-backlog.md)
