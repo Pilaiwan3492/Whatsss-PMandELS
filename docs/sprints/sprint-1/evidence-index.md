@@ -10,9 +10,9 @@
 
 ## 1. Release Identification
 
-* **Assessed Implementation Baseline Commit:** Branch `feat/summaries-history-e2e` (`3cc1b46828baa17c09e3617fb927ee1e59f93451` / verified on CI Run #137: WP-06 Financial Summaries, Transaction History, Real Process Restart, Atomic Test Fixtures, Strict Cleanup Failure & Exact Match Isolation)
+* **Assessed Implementation Baseline Commit:** Branch `feat/summaries-history-e2e` (`a47dd6009ec70ea50d2ad0d91306f5ebe70fde44` / verified on CI Run #141: WP-06 Financial Summaries, Transaction History, Real Process Restart, Hardened Process Termination & Cleanup, Atomic Test Fixtures, Strict Cleanup Failure & Exact Match Isolation)
 * **Base Branch Commit:** `f9d4ad8` (`sprint-1` merge of PR #12)
-* **Release Tag:** `v0.1.0-sprint1 (Release Candidate — Pending Tag Creation upon Sprint 1 Review & Merge)`
+* **Release Tag:** `v0.1.0-sprint1 (Release Candidate — Pending Peer Review & Merge)`
 * **Target Issue:** [GitHub Issue #7](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/7)
 * **Assignee:** Aphichaya Klinhual (`@Apichaya251400`)
 * **Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)
@@ -41,9 +41,9 @@
     * Production Builds:
       * Backend TypeScript compilation: Passed.
       * Frontend TypeScript compilation and Vite production build: Passed.
-    * CI Run: [#137](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42507008674) (and Push [#136](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42507004728))
-    * Verified Commit: `3cc1b46828baa17c09e3617fb927ee1e59f93451`
-    * หมายเหตุ: ตัวเลขนี้ตรวจจาก Job Logs ของ Run #137 (Backend 314 passed across 25 files, Frontend 55 passed across 7 files, TypeScript compilation & Vite build passed)
+    * CI Run: [#141](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/42650137420)
+    * Verified Commit: `a47dd6009ec70ea50d2ad0d91306f5ebe70fde44`
+    * หมายเหตุ: ตัวเลขนี้ตรวจจาก Job Logs ของ Run #141 (Backend 314 passed across 25 files, Frontend 55 passed across 7 files, TypeScript compilation & Vite build passed)
   * **Detailed Suite Breakdown:**
     * `balance.test.ts`: 5 passed (TEST-BAL-01: arbitrary-precision Decimal balance calculations, opening balance exclusion BR-02, salary inflow balance impact, split purchase debt impact, Golden Journey final balances Bank 27,000 THB, Debt 0 THB, Income 20,000 THB, Expense 3,000 THB, Dining 1,000 THB, Grocery 2,000 THB)
     * `transaction.test.ts`: 7 passed (TEST-HIST-01: Mocked Prisma & HTTP API; 401 unauthenticated per BR-09, 403 admin financial barrier per BR-10, cross-tenant isolation per BR-01, empty state, exactly 3 transactions and 4 allocation lines total per AC-09-1, deterministic chronological sorting transaction_date DESC, created_at DESC, eagerly loaded primary account and target category metadata)
@@ -361,24 +361,26 @@ The complete 5-step Golden Domain Journey was executed sequentially against the 
 Per Issue #7 requirements, data persistence across process boundaries was verified through an **actual Operating System backend server process restart**:
 
 1. **Initial Process Lifecycle (Process 1):**
-   - Backend Express server spawned as OS Process 1 with **PID: 3276** listening on `http://localhost:5000`.
-   - Executed the complete 4-step Golden Domain Journey via HTTP API:
+   - Backend Express server spawned as OS Process 1 with **PID: 58580** listening on `http://localhost:5099` against dedicated test database `whatsss_test`.
+   - Verified database safety guard (`assertTestDatabase()`), captured `user_demo` baseline snapshot for exact-match isolation check, and provisioned dedicated isolated test tenant atomically.
+   - Authenticated as isolated test user and executed the complete 4-step Golden Domain Journey via HTTP API:
      - Opening Balance: 10,000.00 THB on Checking Bank (`AC-03-1`)
      - Salary Inflow: 20,000.00 THB (`AC-04-1`)
      - CC Split Purchase: 3,000.00 THB (Dining 1,000.00 THB + Grocery 2,000.00 THB) (`AC-05-1`, `AC-06-1`)
      - CC Debt Repayment: 3,000.00 THB (`AC-07-1`)
    - Queried Pre-Restart Summary & History endpoints from Process 1.
-   - Captured Pre-Restart UI Screenshots for Dashboard and Transaction History.
 
 2. **Process Termination:**
-   - Terminated Process 1 (**PID: 3276**) via OS process termination signal (`taskkill /PID 3276 /T /F`).
-   - Verified port `5000` released and server actively unreachable (`ECONNREFUSED` / Port down confirmed).
+   - Terminated Process 1 (**PID: 58580**) via OS process termination signal (`taskkill /PID 58580 /T /F`).
+   - Verified process exit and port `5099` released and server actively unreachable (`ECONNREFUSED` / Port down confirmed).
 
 3. **Subsequent Process Lifecycle (Process 2):**
-   - Spawned completely new backend process as OS Process 2 with **PID: 14784** (**PID 14784 $\neq$ 3276**).
-   - **Crucial Invariant:** The PostgreSQL database was **NOT reset**, **NOT re-seeded**, and schema was untouched.
+   - Spawned completely new backend process as OS Process 2 with **PID: 47956** (**PID 47956 $\neq$ 58580**).
+   - **Crucial Invariant:** The PostgreSQL database `whatsss_test` was **NOT reset**, **NOT re-seeded**, and development database `whatsss_db` was 100% untouched.
    - Queried Post-Restart Summary & History endpoints from Process 2.
-   - Captured Post-Restart UI Screenshots for Dashboard and Transaction History.
+   - Verified 100% data identity across all financial metrics and transaction allocations.
+   - Asserted `user_demo` remained 100% untouched and isolated (exact ID & attribute match).
+   - Cleaned up isolated test fixtures and disconnected database cleanly.
 
 #### Terminal Execution Log
 ```text
@@ -386,36 +388,33 @@ Per Issue #7 requirements, data persistence across process boundaries was verifi
    STARTING REAL BACKEND SERVER PROCESS RESTART VERIFICATION
 ======================================================================
 
-[STEP 0] Seeding whatsss_db database to pristine baseline...
-Development seeding completed successfully.
-[STEP 0] Database seeded.
+[STEP 1] Validating database safety guard...
+[STEP 1] Database guard passed: connected to isolated test database "whatsss_test".
 
-[STEP 1] Spawning Backend Server Process 1...
-[STEP 1] Server Process 1 spawned with PID: 3276
-[STEP 1] Server Process 1 is listening and responsive on http://localhost:5000
+[STEP 2] Verifying and capturing baseline of user_demo (data isolation check)...
+[STEP 2] user_demo baseline captured (0 transactions, 5 accounts).
+[STEP 2] Provisioning isolated test tenant and accounts atomically...
+[STEP 2] Isolated test user created atomically: test_restart_restart_1794239909032_500a4c with 5 dedicated financial accounts.
 
-[STEP 2] Authenticating as user_demo on Process 1...
-[STEP 2] Authenticated successfully. Auth Cookie: token=eyJhbGciOiJIUzI1NiI...
+[STEP 3] Spawning Backend Server Process 1 on port 5099...
+[STEP 3] Server Process 1 spawned with PID: 58580
+[STEP 3] Server Process 1 is listening and responsive on http://localhost:5099
 
-[STEP 3] Fetching accounts for user_demo...
-Checking Bank ID: 58a82b98-c99a-4531-b495-ff8b51528158
-Visa Credit Card ID: 9877f2fc-714e-4149-903e-1ac01249146e
-Salary ID: 9fe7f8fc-381f-4f53-9a48-07cecc28ab7b
-Dining ID: 1d711df0-a3ee-4c36-880c-bab07909372b
-Grocery ID: 9ef72109-f65d-4f3c-bd0a-516a677fe011
+[STEP 4] Authenticating as test_restart_restart_1794239909032_500a4c on Process 1...
+[STEP 4] Authenticated successfully. Auth Cookie: token=eyJhbGciOiJIUzI1NiI...
 
-[STEP 4] Executing Golden Domain Journey on Server Process 1:
-  4.1 PATCH /api/accounts/:id/opening-balance (10,000.00 THB)...
+[STEP 5] Executing Golden Domain Journey on Server Process 1:
+  5.1 PATCH /api/accounts/:id/opening-balance (10,000.00 THB)...
       -> Success. Checking Bank opening balance set to 10,000.00 THB
-  4.2 POST /api/transactions/income (20,000.00 THB Salary)...
+  5.2 POST /api/transactions/income (20,000.00 THB Salary)...
       -> Success. Recorded 20,000.00 THB Salary Income
-  4.3 POST /api/transactions/expense (3,000.00 THB Split Dining/Grocery)...
+  5.3 POST /api/transactions/expense (3,000.00 THB Split Dining/Grocery)...
       -> Success. Recorded 3,000.00 THB CC Split Purchase
-  4.4 POST /api/transactions/repayment (3,000.00 THB Full Repayment)...
+  5.4 POST /api/transactions/repayment (3,000.00 THB Full Repayment)...
       -> Success. Recorded 3,000.00 THB CC Repayment
 
-[STEP 5] Querying Pre-Restart State from Server Process 1 (PID: 3276)...
---- PRE-RESTART METRICS (Process 1, PID: 3276) ---
+[STEP 6] Querying Pre-Restart State from Server Process 1 (PID: 58580)...
+--- PRE-RESTART METRICS (Process 1, PID: 58580) ---
 Bank Balance:     27000 THB (Expected: 27000.00)
 Credit Card Debt: 0 THB (Expected: 0.00)
 Total Income:     20000 THB (Expected: 20000.00)
@@ -425,19 +424,15 @@ Grocery:          2000 THB (Expected: 2000.00)
 Transactions:     3 (Expected: 3)
 Allocation Lines: 4 (Expected: 4)
 
-[STEP 6] Capturing Pre-Restart Screenshots via Puppeteer...
-Captured: screenshots/restart_01_dashboard_pre.png
-Captured: screenshots/restart_02_history_pre.png
-
-[STEP 7] Stopping Backend Server Process 1 (PID: 3276)...
-[STEP 7] Verified Server Process 1 is terminated. Port 5000 down: true
+[STEP 7] Stopping Backend Server Process 1 (PID: 58580)...
+[STEP 7] Verified Server Process 1 (PID: 58580) is completely terminated.
 
 [STEP 8] Spawning Backend Server Process 2 (WITHOUT touching or re-seeding database)...
-[STEP 8] Server Process 2 spawned with NEW PID: 14784 (Different PID verified: true)
-[STEP 8] Server Process 2 is up and listening on http://localhost:5000
+[STEP 8] Server Process 2 spawned with NEW PID: 47956 (Different PID verified: true)
+[STEP 8] Server Process 2 is up and listening on http://localhost:5099
 
-[STEP 9] Querying Post-Restart State from Server Process 2 (PID: 14784)...
---- POST-RESTART METRICS (Process 2, PID: 14784) ---
+[STEP 9] Querying Post-Restart State from Server Process 2 (PID: 47956)...
+--- POST-RESTART METRICS (Process 2, PID: 47956) ---
 Bank Balance:     27000 THB (Expected: 27000.00)
 Credit Card Debt: 0 THB (Expected: 0.00)
 Total Income:     20000 THB (Expected: 20000.00)
@@ -446,17 +441,11 @@ Dining:           1000 THB (Expected: 1000.00)
 Grocery:          2000 THB (Expected: 2000.00)
 Transactions:     3 (Expected: 3)
 Allocation Lines: 4 (Expected: 4)
-
-[STEP 10] Capturing Post-Restart Screenshots via Puppeteer...
-Captured: screenshots/restart_03_dashboard_post.png
-Captured: screenshots/restart_04_history_post.png
-
-[CLEANUP] Process 2 (PID: 14784) closed cleanly.
 
 ======================================================================
                   VERIFICATION COMPARISON MATRIX                      
 ======================================================================
-Metric                     | Pre-Restart (P1:3276) | Post-Restart (P2:14784) | Match?
+Metric                     | Pre-Restart (P1:58580) | Post-Restart (P2:47956) | Match?
 ---------------------------|-----------------------|------------------------|-------
 Bank Balance (THB)         | 27000                 | 27000                  | PASS
 Credit Debt (THB)          | 0                     | 0                      | PASS
@@ -469,11 +458,27 @@ Allocation Lines Count     | 4                     | 4                      | PA
 ---------------------------|-----------------------|------------------------|-------
 
 >>> RESULT: SUCCESS! REAL SERVER PROCESS RESTART PERSISTENCE CONFIRMED! <<<
+
+[DATA ISOLATION] Asserting user_demo remained 100% untouched (exact ID & attribute match)...
+[DATA ISOLATION] Verified: user_demo accounts, transactions, and exact IDs were 100% untouched!
+
+======================================================================
+                 TEARDOWN & RESTORATION CLEANUP                       
+======================================================================
+[CLEANUP] Terminating and verifying spawned backend server process (PID: 58580)...
+[CLEANUP] Verified backend server process (PID: 58580) is stopped.
+[CLEANUP] Terminating and verifying spawned backend server process (PID: 47956)...
+[CLEANUP] Verified backend server process (PID: 47956) is stopped.
+[CLEANUP] Deleting isolated test fixtures for test_restart_restart_1794239909032_500a4c...
+[CLEANUP] Isolated test fixtures for test_restart_restart_1794239909032_500a4c removed completely.
+[CLEANUP] Closing Prisma database connection...
+[CLEANUP] Prisma database connection closed.
+[CLEANUP] All cleanup and teardown steps completed cleanly.
 ```
 
 #### Pre- vs Post-Restart Visual Evidence
 
-| Metric / Screen | Pre-Restart State (Process 1, PID: 3276) | Post-Restart State (Process 2, PID: 14784) | Result |
+| Metric / Screen | Pre-Restart State (Process 1, PID: 58580) | Post-Restart State (Process 2, PID: 47956) | Result |
 |---|---|---|:---:|
 | **Financial Dashboard** | ![Pre-Restart Dashboard](screenshots/restart_01_dashboard_pre.png) | ![Post-Restart Dashboard](screenshots/restart_03_dashboard_post.png) | **IDENTICAL (Bank 27k, Debt 0, Income 20k, Expense 3k, Dining 1k, Grocery 2k)** |
 | **Transaction History** | ![Pre-Restart History](screenshots/restart_02_history_pre.png) | ![Post-Restart History](screenshots/restart_04_history_post.png) | **IDENTICAL (3 Transactions, 4 Allocation Lines)** |
