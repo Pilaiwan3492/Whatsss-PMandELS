@@ -1,0 +1,347 @@
+/* ==========================================================================
+   RepaymentForm.css — Premium Minimal Fintech Design Tokens & Scoped Styles
+   Component: RepaymentForm (Work Package 5 / Issue #6)
+   Design Language: Minimal, High-Contrast, Calm Navy/Indigo Accents (#1e3a8a)
+   Scope: Strictly isolated to .repayment-modal-container (No global :root leaks)
+   ========================================================================== */
+
+/* 1. Backdrop Overlay */
+.repayment-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1055;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+/* 2. Modal Window Container (Scoped Design Tokens) */
+.repayment-modal-container {
+  --repay-primary: #1e40af;
+  --repay-primary-hover: #1e3a8a;
+  --repay-primary-light: #eff6ff;
+  --repay-primary-border: #bfdbfe;
+  --repay-text-main: #0f172a;
+  --repay-text-muted: #475569;
+  --repay-text-subtle: #64748b;
+  --repay-border: #e2e8f0;
+  --repay-card-bg: #f8fafc;
+  --repay-card-hover: #f1f5f9;
+  --repay-warning-bg: #fffbeb;
+  --repay-warning-border: #fde68a;
+  --repay-warning-text: #92400e;
+  --repay-danger-bg: #fef2f2;
+  --repay-danger-border: #fecaca;
+  --repay-danger-text: #b91c1c;
+  --repay-success-bg: #ecfdf5;
+  --repay-success-border: #a7f3d0;
+  --repay-success-text: #065f46;
+
+  background-color: #ffffff;
+  width: 100%;
+  max-width: 680px;
+  max-height: 90vh;
+  border-radius: 14px;
+  border: 1px solid var(--repay-border);
+  box-shadow: 0 20px 40px -12px rgba(15, 23, 42, 0.18),
+              0 1px 3px 0 rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--repay-text-main);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  animation: repayModalFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes repayModalFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* 3. Header */
+.repayment-modal-header {
+  padding: 24px 28px;
+  border-bottom: 1px solid var(--repay-border);
+  background-color: #ffffff;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.repayment-modal-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--repay-text-main);
+  line-height: 1.25;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.repayment-modal-subtitle {
+  font-size: 13px;
+  color: var(--repay-text-muted);
+  margin: 4px 0 0 0;
+  line-height: 1.4;
+}
+
+.repayment-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--repay-text-subtle);
+  cursor: pointer;
+  padding: 4px;
+  margin: -4px -4px 0 0;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.repayment-close-btn:hover {
+  background-color: var(--repay-card-hover);
+  color: var(--repay-text-main);
+}
+
+.repayment-close-btn:focus-visible {
+  outline: 2px solid var(--repay-primary);
+  outline-offset: 2px;
+}
+
+/* 4. Body & Form */
+.repayment-modal-body {
+  padding: 24px 28px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Error Banner */
+.repayment-alert-error {
+  padding: 12px 16px;
+  background-color: var(--repay-danger-bg);
+  border: 1px solid var(--repay-danger-border);
+  border-radius: 8px;
+  color: var(--repay-danger-text);
+  font-size: 13.5px;
+  line-height: 1.45;
+  font-weight: 500;
+}
+
+/* Card Sections */
+.repayment-section {
+  background-color: var(--repay-card-bg);
+  border: 1px solid var(--repay-border);
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+
+.repayment-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--repay-text-subtle);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.repayment-account-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  margin-top: 6px;
+}
+
+.repayment-balance-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.repayment-balance-pill.cash {
+  background-color: var(--repay-success-bg);
+  color: var(--repay-success-text);
+  border: 1px solid var(--repay-success-border);
+}
+
+.repayment-balance-pill.debt {
+  background-color: var(--repay-danger-bg);
+  color: var(--repay-danger-text);
+  border: 1px solid var(--repay-danger-border);
+}
+
+/* Form Controls */
+.repayment-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.repayment-form-group:last-child {
+  margin-bottom: 0;
+}
+
+.repayment-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--repay-text-main);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.repayment-input,
+.repayment-select {
+  height: 40px;
+  padding: 8px 12px;
+  font-size: 14px;
+  border: 1px solid var(--repay-border);
+  border-radius: 8px;
+  background-color: #ffffff;
+  color: var(--repay-text-main);
+  transition: all 0.15s ease;
+  width: 100%;
+}
+
+.repayment-input:focus,
+.repayment-select:focus {
+  outline: none;
+  border-color: var(--repay-primary);
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.12);
+}
+
+.repayment-input.amount-input {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.repayment-input.has-error,
+.repayment-select.has-error {
+  border-color: var(--repay-danger-text);
+  background-color: #fffafb;
+}
+
+.repayment-quick-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--repay-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.repayment-quick-action-btn:hover {
+  color: var(--repay-primary-hover);
+}
+
+/* Post-repayment balance preview */
+.repayment-preview-card {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+  border: 1px solid var(--repay-primary-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.repayment-preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.repayment-preview-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--repay-text-subtle);
+  letter-spacing: 0.04em;
+}
+
+.repayment-preview-value {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* 5. Footer */
+.repayment-modal-footer {
+  padding: 18px 28px;
+  border-top: 1px solid var(--repay-border);
+  background-color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.repayment-btn-secondary {
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  background-color: #ffffff;
+  border: 1px solid var(--repay-border);
+  border-radius: 8px;
+  color: var(--repay-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.repayment-btn-secondary:hover {
+  background-color: var(--repay-card-hover);
+  color: var(--repay-text-main);
+}
+
+.repayment-btn-primary {
+  padding: 9px 20px;
+  font-size: 13.5px;
+  font-weight: 600;
+  background-color: var(--repay-primary);
+  border: 1px solid var(--repay-primary);
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.repayment-btn-primary:hover:not(:disabled) {
+  background-color: var(--repay-primary-hover);
+  border-color: var(--repay-primary-hover);
+}
+
+.repayment-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

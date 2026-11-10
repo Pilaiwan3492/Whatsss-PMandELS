@@ -1,0 +1,120 @@
+import { Prisma } from '@prisma/client';
+
+export class AccountLockError extends Error {
+  code: string;
+  constructor(message: string, code: string = 'ACCOUNT_LOCK_FAILED') {
+    super(message);
+    this.name = 'AccountLockError';
+    this.code = code;
+  }
+}
+
+/**
+ * Acquires pessimistic row-level write locks (SELECT ... FOR UPDATE) on accounts
+ * within an active transaction to guarantee strict serialization and prevent concurrent race conditions.
+ * Always locks accounts in sorted ID order to prevent database deadlocks.
+ */
+export async function acquireAccountRowLocks(
+  tx: Prisma.TransactionClient,
+  accountIds: string[],
+  userId: string
+): Promise<void> {
+  if (!accountIds || accountIds.length === 0) return;
+  const uniqueSortedIds = Array.from(new Set(accountIds))
+    .filter((id) => typeof id === 'string' && id.trim().length > 0)
+    .sort();
+  if (uniqueSortedIds.length === 0) return;
+
+  if (typeof (tx as any).$queryRaw === 'function') {
+    await (tx as any).$queryRaw`
+      SELECT id FROM "accounts"
+      WHERE id IN (${Prisma.join(uniqueSortedIds)})
+        AND user_id = ${userId}
+      ORDER BY id ASC
+      FOR UPDATE
+    `;
+  }
+}
+
+/**
+ * Service to atomically lock opening balance on accounts upon committing referencing transactions.
+ * In accordance with F-03, FR-05, and BR-01:
+ * - Accounts are permanently locked from opening balance modifications once referenced.
+ * - Validates input IDs before deduplication (rejects non-string, empty, or whitespace-only IDs).
+ * - Deduplicates validated account IDs without altering formatting.
+ * - Verifies every requested ID exists and belongs to the supplied user inside the transaction boundary.
+ * - If any ID is missing or belongs to another user, throws an error to abort the entire transaction.
+ * - Never silently ignores invalid IDs or locks a partial subset.
+ */
+export async function lockAccounts(
+  tx: Prisma.TransactionClient,
+  accountIds: string[],
+  userId: string
+): Promise<void> {
+  // If array is empty, return early without query per contract
+  if (!accountIds || accountIds.length === 0) {
+    return;
+  }
+
+  // Validate every input ID before deduplication: reject non-string, empty, or whitespace-only IDs
+  for (const id of accountIds) {
+    if (typeof id !== 'string' || id.trim().length === 0) {
+      throw new AccountLockError(
+        'Invalid account ID: account ID must be a non-empty string.',
+        'INVALID_ACCOUNT_ID'
+      );
+    }
+  }
+
+  // Deduplicate validated IDs without altering UUID structure
+  const uniqueIds = Array.from(new Set(accountIds));
+
+  // Find all matching accounts belonging to the user inside the transaction
+  const accounts = await tx.account.findMany({
+    where: {
+      id: { in: uniqueIds },
+      user_id: userId
+    },
+    select: {
+      id: true,
+      is_opening_locked: true
+    }
+  });
+
+  // Verify that every requested unique ID exists and belongs strictly to this user
+  if (accounts.length !== uniqueIds.length) {
+    const foundIds = new Set(accounts.map((a) => a.id));
+    const missingOrForeignIds = uniqueIds.filter((id) => !foundIds.has(id));
+    throw new AccountLockError(
+      `Cannot lock accounts: account(s) [${missingOrForeignIds.join(', ')}] not found or not owned by user.`,
+      'ACCOUNT_LOCK_FAILED'
+    );
+  }
+
+  // Filter only those accounts that are not already locked to avoid redundant database writes
+  const accountsToLock = accounts.filter((a) => !a.is_opening_locked).map((a) => a.id);
+  if (accountsToLock.length === 0) {
+    return;
+  }
+
+  const updateResult = await tx.account.updateMany({
+    where: {
+      id: { in: accountsToLock },
+      user_id: userId,
+      is_opening_locked: false
+    },
+    data: {
+      is_opening_locked: true,
+      updated_at: new Date()
+    }
+  });
+
+  // Verify that every account intended to be locked was updated.
+  // If count mismatches due to concurrency or state mutation, abort and roll back transaction.
+  if (updateResult.count !== accountsToLock.length) {
+    throw new AccountLockError(
+      `Concurrency conflict: expected to lock ${accountsToLock.length} account(s), but updated ${updateResult.count}. Aborting transaction.`,
+      'ACCOUNT_LOCK_CONCURRENCY_CONFLICT'
+    );
+  }
+}
