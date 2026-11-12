@@ -23,6 +23,7 @@ flowchart TD
         StaticServe["Static Asset Serving<br/>(express.static client/dist)"]
         SPAFallback["SPA Fallback Routing<br/>(GET * -> index.html)"]
         APIRouter["Express API Router<br/>(/api/*)"]
+        API404["API 404 Catch-All<br/>(JSON 404 for unknown /api/*)"]
         HealthProbes["Health & Readiness Probes<br/>(/api/health, /api/ready)"]
     end
     
@@ -37,6 +38,7 @@ flowchart TD
     StaticServe -->|"Route fallback"| SPAFallback
     ExpressServer -->|"/api/health & /api/ready"| HealthProbes
     ExpressServer -->|"/api/auth, /api/accounts, etc."| APIRouter
+    ExpressServer -->|"Unmatched /api/*"| API404
     APIRouter --> PrismaORM
     HealthProbes -->|"SELECT 1 probe"| PrismaORM
     PrismaORM -->|"TCP / Unix Socket Connection"| CloudSQL
@@ -72,16 +74,16 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 * In production, cookies are flagged with `secure: true` (HTTPS only) and `sameSite: 'lax'`.
 * User identity and active status are verified against PostgreSQL per request in `authGuard.ts`, allowing instant revocation by setting `is_active: false` without needing centralized session state storage (e.g. Redis).
 
-### Point 5: Dynamic Port & Host Interface Binding
-* The Express server does not bind to hardcoded ports or loopback addresses.
-* In `server/src/config/env.ts` and `server/src/index.ts`, the application binds to `process.env.HOST || '0.0.0.0'` and `process.env.PORT || 5000`, complying with Cloud Run container runtime requirements.
+### Point 5: Dynamic Port & Host Interface Binding & Environment Validation
+* The Express server binds to `process.env.HOST || '0.0.0.0'` and `process.env.PORT || 5000`.
+* In `server/src/config/env.ts`, strict startup validation guarantees that `PORT` is an integer between 1 and 65535, `CLIENT_URL` is a valid URL and required in production, and `DATABASE_URL` uses `postgresql://` or `postgres://` and is required in production. All error messages sanitize sensitive credentials.
 
 ### Point 6: Observability, Health & Readiness Probes
 * **Reverse Proxy Trust:** Configured `app.set('trust proxy', 1)` in `server/src/app.ts` so Express accurately detects client protocols, client IP addresses, and secure HTTPS headers passed from Google Front End (GFE).
-* **Liveness Probe (`GET /api/health`):** Returns HTTP 200 with `{ status: 'ok', timestamp: string, commitSha: string }`. Used by container orchestrators to verify container liveness.
+* **Liveness Probe (`GET /api/health`):** Returns HTTP 200 with `{ status: 'ok', timestamp: string, commitSha: string }`. Used by container orchestrators to verify container liveness without probing downstream databases.
 * **Readiness Probe (`GET /api/ready`):** Executes an active database connectivity query (`prisma.$queryRaw\`SELECT 1\``). Returns HTTP 200 `{ status: 'ready', database: 'connected', ... }` when healthy, or HTTP 503 `{ status: 'not_ready', database: 'disconnected', error: 'Database connection unavailable', ... }` if PostgreSQL is unreachable.
 * **Safe Observability & Credential Masking (CWE-532):** Any database exceptions are sanitized via `sanitizeLogMessage()` before writing to `console.error`. Connection strings (`postgresql://user:pass@host`), query parameters, and configured secrets are masked (`***`), preventing secret leakage to Google Cloud Logging. The client receives an opaque error payload.
-* **Single-Container Frontend Serving:** Static files from `client/dist` are served with caching headers, and non-`/api` requests fall back to `index.html`.
+* **API 404 vs SPA Routing Separation:** All unmatched `/api/*` routes are intercepted by a dedicated API 404 catch-all handler returning structured JSON 404 (`{"success": false, "error": {"code": "NOT_FOUND", ...}}`). Non-API routes serve static assets or fall back to `client/dist/index.html`.
 
 ---
 
@@ -89,11 +91,11 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 
 | Variable Name | Required | Default / Example Value | Description | Scope |
 |---|:---:|---|---|:---:|
-| `PORT` | Optional | `5000` | Port number on which the HTTP server listens. Cloud Run sets this automatically to `8080`. | Server |
+| `PORT` | Optional | `5000` | Port number on which the HTTP server listens. Cloud Run sets this automatically to `8080`. Validated to be an integer between 1 and 65535. | Server |
 | `HOST` | Optional | `0.0.0.0` | Host network interface to bind. Must remain `0.0.0.0` in container environments. | Server |
 | `NODE_ENV` | **Required** | `production` (in cloud) / `development` (local) | Execution environment mode. Controls security policies and seed behavior. | Server |
-| `CLIENT_URL` | **Required in Prod** | `https://<your-cloud-run-service-url>` (prod) / `http://localhost:5173` (dev) | Full public URL of the application. **Required in production for CSRF guard (C-04 / Issue #19):** `csrfGuard.ts` strictly validates incoming request `Origin` headers against `config.clientUrl` for all mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`). Even in single-container mode, browsers send `Origin: https://<cloud-run-url>`. Setting this variable correctly fulfills Requirement C-04 in Issue #19. | Server |
-| `DATABASE_URL` | **Required** | `postgresql://user:pass@host:5432/whatsss_db?schema=public` | PostgreSQL connection string used by Prisma ORM. | Server |
+| `CLIENT_URL` | **Required in Prod** | `https://<your-cloud-run-service-url>` (prod) / `http://localhost:5173` (dev) | Full public URL of the application. **Required in production for CSRF guard (C-04 / Issue #19):** `csrfGuard.ts` strictly validates incoming request `Origin` headers against `config.clientUrl` for all mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`). Even in single-container mode, browsers send `Origin: https://<cloud-run-url>`. Validated as a valid URL format upon startup. | Server |
+| `DATABASE_URL` | **Required in Prod** | `postgresql://user:pass@host:5432/whatsss_db?schema=public` | PostgreSQL connection string used by Prisma ORM. Validated to start with `postgresql://` or `postgres://` and parse cleanly without leaking credentials. | Server |
 | `JWT_SECRET` | **Required** | Strong random string (min 32 chars) | Cryptographic key used to sign and verify authentication JWTs. | Server |
 | `JWT_EXPIRES_IN` | Optional | `24h` | Token validity duration. | Server |
 | `APP_COMMIT_SHA` | Optional | `development` | Git commit SHA injected during CI/CD build, returned by `/api/health` and `/api/ready`. | Server |
@@ -232,3 +234,15 @@ Host: whatsss.example.com
 }
 ```
 *(Any underlying database connection errors, such as socket terminations or connection strings, are sanitized via `sanitizeLogMessage()` and logged securely to the server console/Cloud Logging to protect sensitive credentials).*
+
+### 5.3 Operational Distinction for Cloud Run Probe Configuration
+
+When configuring Cloud Run service probes, configure endpoints strictly according to their intended operational role:
+
+* **Liveness Probe $\rightarrow$ Configure `/api/health`:**
+  - Verifies that the Node.js/Express process is responsive and event loops are unblocked.
+  - Does **NOT** query PostgreSQL.
+  - **Critical Failure Mode Avoided:** If a database experiences transient connection limits or network blips, the liveness probe continues returning HTTP 200. If liveness were mistakenly tied to the database, Cloud Run would kill and restart healthy container instances in a destructive cascading loop ("restart storm"), exacerbating the outage.
+* **Startup / Readiness Probe $\rightarrow$ Configure `/api/ready`:**
+  - Verifies active database connectivity (`SELECT 1`) during container initialization.
+  - In Cloud Run, startup probes allow instances to warm up and establish database connection pools before receiving ingress traffic.

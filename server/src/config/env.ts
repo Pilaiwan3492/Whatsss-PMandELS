@@ -17,6 +17,58 @@ export interface AppConfig {
   appCommitSha: string;
 }
 
+export function validatePort(portStr: string | undefined): number {
+  if (!portStr || portStr.trim() === '') {
+    return 5000;
+  }
+  const parsedPort = Number(portStr);
+  if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+    throw new Error(`FATAL: PORT environment variable must be a valid integer between 1 and 65535. Received: "${portStr}"`);
+  }
+  return parsedPort;
+}
+
+export function validateClientUrl(clientUrl: string | undefined, isProduction: boolean): string {
+  if (!clientUrl || clientUrl.trim() === '') {
+    if (isProduction) {
+      throw new Error('FATAL: CLIENT_URL environment variable is required in production. Must be configured to the full public URL of the application.');
+    }
+    return 'http://localhost:5173';
+  }
+
+  try {
+    const parsed = new URL(clientUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error('Protocol must be http: or https:');
+    }
+  } catch {
+    throw new Error(`FATAL: CLIENT_URL is not a valid URL. Received: "${clientUrl}"`);
+  }
+
+  return clientUrl;
+}
+
+export function validateDatabaseUrl(databaseUrl: string | undefined, isProduction: boolean): string {
+  if (!databaseUrl || databaseUrl.trim() === '') {
+    if (isProduction) {
+      throw new Error('FATAL: DATABASE_URL environment variable is required in production.');
+    }
+    return '';
+  }
+
+  if (!databaseUrl.startsWith('postgresql://') && !databaseUrl.startsWith('postgres://')) {
+    throw new Error('FATAL: DATABASE_URL must start with "postgresql://" or "postgres://" protocol scheme.');
+  }
+
+  try {
+    new URL(databaseUrl);
+  } catch {
+    throw new Error('FATAL: DATABASE_URL is malformed and cannot be parsed as a valid connection URL.');
+  }
+
+  return databaseUrl;
+}
+
 export function validateJwtSecret(secret: string | undefined, nodeEnv: string): string {
   if (!secret || secret.trim() === '') {
     if (nodeEnv === 'test') {
@@ -36,14 +88,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const nodeEnv = env.NODE_ENV || 'development';
   const isProduction = nodeEnv === 'production';
   const isTest = nodeEnv === 'test';
+
+  const port = validatePort(env.PORT);
+  const clientUrl = validateClientUrl(env.CLIENT_URL, isProduction);
+  const databaseUrl = validateDatabaseUrl(env.DATABASE_URL, isProduction);
   const jwtSecret = validateJwtSecret(env.JWT_SECRET, nodeEnv);
 
   return {
-    port: parseInt(env.PORT || '5000', 10),
+    port,
     host: env.HOST || '0.0.0.0',
-    clientUrl: env.CLIENT_URL || 'http://localhost:5173',
+    clientUrl,
     nodeEnv,
-    databaseUrl: env.DATABASE_URL || '',
+    databaseUrl,
     jwtSecret,
     jwtExpiresIn: env.JWT_EXPIRES_IN || '24h',
     isProduction,

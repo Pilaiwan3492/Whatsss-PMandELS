@@ -97,7 +97,18 @@ app.use('/api/accounts', accountRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api', financialRoutes);
 
-// 8. Single-container frontend serving with SPA fallback for non-/api routes
+// 8. API 404 Catch-All Handler (Ensures unmatched /api routes return structured JSON 404, never index.html)
+app.all('/api/*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: {
+      code: 'NOT_FOUND',
+      message: `API endpoint not found: ${req.method} ${req.originalUrl}`
+    }
+  });
+});
+
+// 9. Single-container frontend serving with SPA fallback for non-/api routes
 const candidateDistPaths = [
   typeof __dirname !== 'undefined' ? path.resolve(__dirname, '../../client/dist') : '',
   path.resolve(process.cwd(), '../client/dist'),
@@ -108,13 +119,10 @@ const clientDistPath = candidateDistPaths[0];
 
 if (clientDistPath) {
   app.use(express.static(clientDistPath));
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) {
-      return next();
-    }
+  app.get('*', (req, res) => {
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 }
 
-// 9. Global Error Handler
+// 10. Global Error Handler
 app.use(errorHandler);
