@@ -133,4 +133,154 @@ describe('HTTP Integration Test: Health Endpoints, CSRF Exemption & API 404 Rout
       }
     });
   });
+
+  describe('CSRF Guard Integration: Mutating & Safe HTTP Methods across Origins', () => {
+    it('rejects POST request missing both Origin and Referer with HTTP 403', async () => {
+      const res = await request(app)
+        .post('/api/test-mutation')
+        .set('Content-Type', 'application/json')
+        .send({ payload: 'test' });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({
+        success: false,
+        error: {
+          code: 'CSRF_ORIGIN_REJECTED',
+          message: 'Cross-site request origin rejected'
+        }
+      });
+    });
+
+    it('rejects POST request from untrusted cross-origin website with HTTP 403', async () => {
+      const res = await request(app)
+        .post('/api/test-mutation')
+        .set('Origin', 'https://evil.example')
+        .set('Content-Type', 'application/json')
+        .send({ payload: 'malicious' });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({
+        success: false,
+        error: {
+          code: 'CSRF_ORIGIN_REJECTED',
+          message: 'Cross-site request origin rejected'
+        }
+      });
+    });
+
+    it('rejects POST request with null Origin with HTTP 403', async () => {
+      const res = await request(app)
+        .post('/api/test-mutation')
+        .set('Origin', 'null')
+        .set('Content-Type', 'application/json')
+        .send({ payload: 'sandbox' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error?.code).toBe('CSRF_ORIGIN_REJECTED');
+    });
+
+    it('rejects POST request with untrusted Referer when Origin is omitted with HTTP 403', async () => {
+      const res = await request(app)
+        .post('/api/test-mutation')
+        .set('Referer', 'https://malicious-tracker.com/phishing')
+        .set('Content-Type', 'application/json')
+        .send({ payload: 'referer-spoof' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error?.code).toBe('CSRF_ORIGIN_REJECTED');
+    });
+
+    it('rejects POST request with malformed Referer URL with HTTP 403', async () => {
+      const res = await request(app)
+        .post('/api/test-mutation')
+        .set('Referer', 'not-a-valid-url-format')
+        .set('Content-Type', 'application/json')
+        .send({ payload: 'malformed-referer' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error?.code).toBe('CSRF_ORIGIN_REJECTED');
+    });
+
+    it('allows POST request with trusted Origin matching CLIENT_URL to pass CSRF guard', async () => {
+      const res = await request(app)
+        .post('/api/test-mutation')
+        .set('Origin', config.clientUrl)
+        .set('Content-Type', 'application/json')
+        .send({ payload: 'trusted' });
+
+      // Must PASS CSRF guard (status is NOT 403) and proceed to next handler (e.g. 404 NOT_FOUND)
+      expect(res.status).toBe(404);
+      expect(res.body.error?.code).toBe('NOT_FOUND');
+    });
+
+    it('allows POST request with trusted Referer matching CLIENT_URL when Origin is omitted', async () => {
+      const res = await request(app)
+        .post('/api/test-mutation')
+        .set('Referer', `${config.clientUrl}/app/transactions`)
+        .set('Content-Type', 'application/json')
+        .send({ payload: 'trusted-referer' });
+
+      // Must PASS CSRF guard and proceed to next handler
+      expect(res.status).toBe(404);
+      expect(res.body.error?.code).toBe('NOT_FOUND');
+    });
+
+    it('allows safe GET requests without any Origin or Referer header', async () => {
+      const res = await request(app).get('/api/health');
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('ok');
+    });
+
+    it('rejects PUT request from untrusted origin with HTTP 403', async () => {
+      const res = await request(app)
+        .put('/api/accounts/123')
+        .set('Origin', 'https://attacker.site')
+        .set('Content-Type', 'application/json')
+        .send({ name: 'Hacked Account' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error?.code).toBe('CSRF_ORIGIN_REJECTED');
+    });
+
+    it('rejects PATCH request from untrusted origin with HTTP 403', async () => {
+      const res = await request(app)
+        .patch('/api/accounts/123')
+        .set('Origin', 'https://attacker.site')
+        .set('Content-Type', 'application/json')
+        .send({ name: 'Hacked Account' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error?.code).toBe('CSRF_ORIGIN_REJECTED');
+    });
+
+    it('rejects DELETE request from untrusted origin with HTTP 403', async () => {
+      const res = await request(app)
+        .delete('/api/accounts/123')
+        .set('Origin', 'https://attacker.site');
+
+      expect(res.status).toBe(403);
+      expect(res.body.error?.code).toBe('CSRF_ORIGIN_REJECTED');
+    });
+
+    it('rejects mutating PUT/PATCH/DELETE requests missing Origin and Referer with HTTP 403', async () => {
+      const putRes = await request(app)
+        .put('/api/accounts/123')
+        .set('Content-Type', 'application/json')
+        .send({ name: 'Test' });
+      expect(putRes.status).toBe(403);
+      expect(putRes.body.error?.code).toBe('CSRF_ORIGIN_REJECTED');
+
+      const patchRes = await request(app)
+        .patch('/api/accounts/123')
+        .set('Content-Type', 'application/json')
+        .send({ name: 'Test' });
+      expect(patchRes.status).toBe(403);
+      expect(patchRes.body.error?.code).toBe('CSRF_ORIGIN_REJECTED');
+
+      const deleteRes = await request(app).delete('/api/accounts/123');
+      expect(deleteRes.status).toBe(403);
+      expect(deleteRes.body.error?.code).toBe('CSRF_ORIGIN_REJECTED');
+    });
+  });
 });

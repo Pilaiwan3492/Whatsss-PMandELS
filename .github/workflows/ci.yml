@@ -5,10 +5,13 @@ on:
     branches:
       - 'feat/**'
       - sprint-1
+      - staging-lab5
       - main
   pull_request:
     branches:
+      - 'feat/**'
       - sprint-1
+      - staging-lab5
       - main
 
 jobs:
@@ -102,3 +105,52 @@ jobs:
       - name: Build Client
         working-directory: client
         run: npm run build
+
+  docker:
+    name: Docker Container Build & Probe
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Multi-stage Docker Image
+        run: docker build -t whatsss:ci .
+
+      - name: Test Container Startup & Health Probes
+        run: |
+          docker run -d --name whatsss-ci-container \
+            -e NODE_ENV=production \
+            -e PORT=8080 \
+            -e HOST=0.0.0.0 \
+            -e JWT_SECRET="ci_test_super_secret_jwt_key_at_least_32_chars" \
+            -e CLIENT_URL="http://localhost:8080" \
+            -e DATABASE_URL="postgresql://test:test@127.0.0.1:5432/test" \
+            -p 8080:8080 \
+            whatsss:ci
+          sleep 4
+          curl -f http://localhost:8080/api/health || (docker logs whatsss-ci-container && exit 1)
+          curl -f http://localhost:8080/ || (docker logs whatsss-ci-container && exit 1)
+          docker rm -f whatsss-ci-container
+
+  security-scan:
+    name: Secret & Credential Leak Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Scan Repository for Sensitive Credential Files
+        run: |
+          echo "Verifying no forbidden environment or credential files are checked in..."
+          FORBIDDEN_FILES=$(find . -maxdepth 3 \( -name ".env" -o -name ".env.production" -o -name "*.pem" -o -name "*.key" -o -name "*service-account*.json" \) ! -name ".env.example" ! -path "*/node_modules/*")
+          if [ -n "$FORBIDDEN_FILES" ]; then
+            echo "CRITICAL: Forbidden credential files detected:"
+            echo "$FORBIDDEN_FILES"
+            exit 1
+          fi
+          echo "Secret scan clean: No forbidden credential files found in repository."

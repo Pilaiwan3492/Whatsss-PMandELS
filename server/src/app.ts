@@ -38,10 +38,18 @@ export function sanitizeLogMessage(message: string): string {
   let sanitized = message
     // Redact user:password in URI connection strings (e.g. postgresql://user:pass@host)
     .replace(/:\/\/([^@\s]+)@/g, '://***:***@')
-    // Redact query parameter credentials (e.g. ?password=xyz, &secret=xyz)
-    .replace(/([?&](?:password|pwd|secret|key|token)=)[^&\s]+/gi, '$1***')
+    // Redact query parameter credentials (e.g. ?password=xyz, &secret=xyz, &token=xyz, &access_token=xyz, &refresh_token=xyz)
+    .replace(/([?&](?:password|pwd|secret|key|token|access_token|refresh_token)=)[^&\s]+/gi, '$1***')
     // Redact key-value credentials in prose/logs (e.g. password=xyz, password: xyz)
-    .replace(/(password(?:_hash)?\s*[:=]\s*)[^\s;&,]+/gi, '$1***');
+    .replace(/(password(?:_hash)?\s*[:=]\s*)[^\s;&,]+/gi, '$1***')
+    // Redact tokens and secret keys in prose/logs (e.g. access_token=xyz, refreshToken: xyz)
+    .replace(/((?:access_token|refreshToken|refresh_token|api_key|secret_key)\s*[:=]\s*)[^\s;&,]+/gi, '$1***')
+    // Redact Authorization Bearer headers/tokens (e.g. Bearer eyJhbGciOi...)
+    .replace(/(Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi, '$1[REDACTED_TOKEN]')
+    // Redact Authorization headers
+    .replace(/((?:authorization)\s*[:=]\s*(?:Bearer\s+)?)[^\s;&,]+/gi, '$1[REDACTED_AUTH]')
+    // Redact Cookie headers
+    .replace(/((?:cookie)\s*[:=]\s*)[^\r\n;&]+/gi, '$1[REDACTED_COOKIE]');
 
   // Explicitly redact known configured secrets from environment if present
   if (config.jwtSecret && config.jwtSecret.length >= 10) {
@@ -67,7 +75,21 @@ export async function healthHandler(req: Request, res: Response): Promise<void> 
 
 export async function readyHandler(req: Request, res: Response): Promise<void> {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    // Database probe with a 3-second timeout to prevent connection hangs
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error('Database probe query timed out after 3000ms')), 3000);
+    });
+
+    try {
+      await Promise.race([
+        prisma.$queryRaw`SELECT 1`,
+        timeoutPromise
+      ]);
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+
     res.status(200).json({
       status: 'ready',
       database: 'connected',

@@ -97,6 +97,41 @@ describe('Unit Test: Cloud-Ready Health, Readiness Probes & Safe Logging (Point 
     expect(sanitized).toContain('postgresql://***:***@pg-cluster.gcp:5432/whatsss_db?ssl=true&password=***');
   });
 
+  it('sanitizeLogMessage redacts Bearer tokens, access tokens, refresh tokens, auth headers and cookies', () => {
+    const raw = 'Auth debug: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.secretToken123 with access_token=tok_abc123 and refreshToken: ref_xyz987 and Cookie: session_token=secret_cookie_val; path=/';
+    const sanitized = sanitizeLogMessage(raw);
+
+    expect(sanitized).not.toContain('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.secretToken123');
+    expect(sanitized).not.toContain('tok_abc123');
+    expect(sanitized).not.toContain('ref_xyz987');
+    expect(sanitized).not.toContain('secret_cookie_val');
+    expect(sanitized).toContain('Bearer [REDACTED_TOKEN]');
+    expect(sanitized).toContain('access_token=***');
+    expect(sanitized).toContain('refreshToken: ***');
+    expect(sanitized).toContain('[REDACTED_COOKIE]');
+  });
+
+  it('GET /api/ready handles database timeout gracefully and returns 503', async () => {
+    vi.useFakeTimers();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Mock queryRaw that hangs indefinitely
+    vi.spyOn(prisma, '$queryRaw').mockImplementation(() => new Promise(() => {}));
+
+    const readyPromise = readyHandler(mockReq, mockRes);
+    // Advance timers past 3000ms timeout
+    vi.advanceTimersByTime(3500);
+    await readyPromise;
+
+    expect(mockRes.status).toHaveBeenCalledWith(503);
+    expect(responseStatus).toBe(503);
+    expect(responseData.status).toBe('not_ready');
+    expect(responseData.error).toBe('Database connection unavailable');
+    expect(errorSpy).toHaveBeenCalled();
+    const logged = errorSpy.mock.calls[0][0];
+    expect(logged).toContain('Database probe query timed out');
+    vi.useRealTimers();
+  });
+
   it('verifies that /api/health and /api/ready routes are registered in Express router stack', () => {
     const routes = app._router.stack
       .filter((layer: any) => layer.route)
