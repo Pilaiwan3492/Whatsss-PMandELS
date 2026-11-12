@@ -79,7 +79,8 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 ### Point 6: Observability, Health & Readiness Probes
 * **Reverse Proxy Trust:** Configured `app.set('trust proxy', 1)` in `server/src/app.ts` so Express accurately detects client protocols, client IP addresses, and secure HTTPS headers passed from Google Front End (GFE).
 * **Liveness Probe (`GET /api/health`):** Returns HTTP 200 with `{ status: 'ok', timestamp: string, commitSha: string }`. Used by container orchestrators to verify container liveness.
-* **Readiness Probe (`GET /api/ready`):** Executes an active database connectivity query (`prisma.$queryRaw\`SELECT 1\``). Returns HTTP 200 `{ status: 'ready', database: 'connected', ... }` when healthy, or HTTP 503 `{ status: 'not_ready', database: 'disconnected', error: 'Database connection unavailable', ... }` if PostgreSQL is unreachable. Detailed database exceptions are logged internally via server error logs to prevent internal information leakage.
+* **Readiness Probe (`GET /api/ready`):** Executes an active database connectivity query (`prisma.$queryRaw\`SELECT 1\``). Returns HTTP 200 `{ status: 'ready', database: 'connected', ... }` when healthy, or HTTP 503 `{ status: 'not_ready', database: 'disconnected', error: 'Database connection unavailable', ... }` if PostgreSQL is unreachable.
+* **Safe Observability & Credential Masking (CWE-532):** Any database exceptions are sanitized via `sanitizeLogMessage()` before writing to `console.error`. Connection strings (`postgresql://user:pass@host`), query parameters, and configured secrets are masked (`***`), preventing secret leakage to Google Cloud Logging. The client receives an opaque error payload.
 * **Single-Container Frontend Serving:** Static files from `client/dist` are served with caching headers, and non-`/api` requests fall back to `index.html`.
 
 ---
@@ -156,7 +157,6 @@ npx prisma migrate deploy
 
 # 4. Optional: Provision production accounts securely via environment variables
 # Note: Seed execution uses tsx as configured in server/package.json ("prisma:seed": "tsx prisma/seed.ts").
-# The container migration/seed runtime in Issue #17 must provide tsx or execute via npm run prisma:seed.
 SEED_ADMIN_PASSWORD="StrongProductionPassword2026!" \
 SEED_DEMO_DATA="true" \
 SEED_DEMO_PASSWORD="StrongDemoPassword2026!" \
@@ -167,6 +167,19 @@ npm run prisma:seed
 # 5. Start production server (serves API and client/dist static bundle)
 NODE_ENV="production" npm start
 ```
+
+### 4.3 Migration & Seeding Container Runtime Architecture (Issue #17 Preparedness)
+
+To guarantee that containerized production runs (Cloud Run Jobs or container entrypoints) can execute migrations and seeding without runtime package download failures:
+
+1. **Production Dependencies Configuration:**
+   - In `server/package.json`, both `prisma` (CLI) and `tsx` (TypeScript executor) are classified under `dependencies` (not `devDependencies`).
+   - Consequently, running `npm ci --omit=dev` or `npm install --production` during Docker builds preserves `prisma` and `tsx` in `node_modules`, enabling offline migration deployment (`npx prisma migrate deploy`) and seeding (`npm run prisma:seed`).
+   - Core runtime modules `@prisma/client` and `bcrypt` are likewise packaged in `dependencies`.
+
+2. **Container Multi-Stage Structure:**
+   - In Issue #17, the production runner stage must include `server/node_modules`, `server/dist`, `server/prisma`, and `client/dist`.
+   - Migration and seed commands must be executed within the `server/` directory where `package.json` and `prisma/schema.prisma` reside.
 
 ---
 
@@ -213,4 +226,4 @@ Host: whatsss.example.com
   "commitSha": "f84e7b1680b5c5096ec045b8f9e8d47f5c5a9d1d"
 }
 ```
-*(Detailed database query error messages are logged securely to the server console/logs rather than exposed in client-facing HTTP payloads).*
+*(Any underlying database connection errors, such as socket terminations or connection strings, are sanitized via `sanitizeLogMessage()` and logged securely to the server console/Cloud Logging to protect sensitive credentials).*

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { healthHandler, readyHandler, app } from '../../src/app.js';
+import { healthHandler, readyHandler, sanitizeLogMessage, app } from '../../src/app.js';
 import { prisma } from '../../src/prisma.js';
 import { config } from '../../src/config/env.js';
 
-describe('Unit Test: Cloud-Ready Health and Readiness Probes (Point 6)', () => {
+describe('Unit Test: Cloud-Ready Health, Readiness Probes & Safe Logging (Point 6)', () => {
   let mockReq: any;
   let mockRes: any;
   let responseData: any;
@@ -62,7 +62,10 @@ describe('Unit Test: Cloud-Ready Health and Readiness Probes (Point 6)', () => {
 
   it('GET /api/ready returns 503 when database connectivity check fails without leaking internal error details', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const queryRawSpy = vi.spyOn(prisma, '$queryRaw').mockRejectedValue(new Error('Connection terminated unexpectedly'));
+    const sensitiveDbError = new Error(
+      "Can't reach database server at postgresql://postgres:SuperSecretPassword123!@db-prod.internal:5432/whatsss_prod"
+    );
+    const queryRawSpy = vi.spyOn(prisma, '$queryRaw').mockRejectedValue(sensitiveDbError);
 
     await readyHandler(mockReq, mockRes);
 
@@ -76,7 +79,22 @@ describe('Unit Test: Cloud-Ready Health and Readiness Probes (Point 6)', () => {
       timestamp: expect.any(String),
       commitSha: config.appCommitSha
     });
-    expect(errorSpy).toHaveBeenCalledWith('Readiness probe database query failed:', expect.any(Error));
+
+    // Verify server-side logging sanitizes sensitive credentials
+    expect(errorSpy).toHaveBeenCalled();
+    const loggedErrorString = errorSpy.mock.calls[0][0];
+    expect(loggedErrorString).not.toContain('SuperSecretPassword123!');
+    expect(loggedErrorString).toContain('postgresql://***:***@db-prod.internal:5432/whatsss_prod');
+  });
+
+  it('sanitizeLogMessage redacts credentials in database URLs, query params, and passwords', () => {
+    const rawUrl = 'Error at postgresql://whatsss_admin:TopSecretPass2026!@pg-cluster.gcp:5432/whatsss_db?ssl=true&password=pass123';
+    const sanitized = sanitizeLogMessage(rawUrl);
+
+    expect(sanitized).not.toContain('TopSecretPass2026!');
+    expect(sanitized).not.toContain('whatsss_admin');
+    expect(sanitized).not.toContain('pass123');
+    expect(sanitized).toContain('postgresql://***:***@pg-cluster.gcp:5432/whatsss_db?ssl=true&password=***');
   });
 
   it('verifies that /api/health and /api/ready routes are registered in Express router stack', () => {

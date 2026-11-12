@@ -34,6 +34,29 @@ app.use(express.json());
 app.use(cookieParser());
 
 // 6. Cloud-Ready Health & Readiness Probes (Point 6)
+export function sanitizeLogMessage(message: string): string {
+  let sanitized = message
+    // Redact user:password in URI connection strings (e.g. postgresql://user:pass@host)
+    .replace(/:\/\/([^@\s]+)@/g, '://***:***@')
+    // Redact query parameter credentials (e.g. ?password=xyz, &secret=xyz)
+    .replace(/([?&](?:password|pwd|secret|key|token)=)[^&\s]+/gi, '$1***')
+    // Redact key-value credentials in prose/logs (e.g. password=xyz, password: xyz)
+    .replace(/(password(?:_hash)?\s*[:=]\s*)[^\s;&,]+/gi, '$1***');
+
+  // Explicitly redact known configured secrets from environment if present
+  if (config.jwtSecret && config.jwtSecret.length >= 10) {
+    sanitized = sanitized.replaceAll(config.jwtSecret, '[REDACTED_SECRET]');
+  }
+  if (process.env.SEED_ADMIN_PASSWORD && process.env.SEED_ADMIN_PASSWORD.length >= 8) {
+    sanitized = sanitized.replaceAll(process.env.SEED_ADMIN_PASSWORD, '[REDACTED_PASSWORD]');
+  }
+  if (process.env.SEED_DEMO_PASSWORD && process.env.SEED_DEMO_PASSWORD.length >= 8) {
+    sanitized = sanitized.replaceAll(process.env.SEED_DEMO_PASSWORD, '[REDACTED_PASSWORD]');
+  }
+
+  return sanitized;
+}
+
 export async function healthHandler(req: Request, res: Response): Promise<void> {
   res.status(200).json({
     status: 'ok',
@@ -52,7 +75,9 @@ export async function readyHandler(req: Request, res: Response): Promise<void> {
       commitSha: config.appCommitSha
     });
   } catch (error) {
-    console.error('Readiness probe database query failed:', error);
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const errorName = error instanceof Error ? error.name : 'DatabaseError';
+    console.error(`Readiness probe database query failed [${errorName}]: ${sanitizeLogMessage(rawMessage)}`);
     res.status(503).json({
       status: 'not_ready',
       database: 'disconnected',
