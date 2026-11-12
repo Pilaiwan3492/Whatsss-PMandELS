@@ -25,6 +25,9 @@ describe('Unit Test: Production Seed Admin Provisioning & Conflict Handling (TAS
         create: vi.fn(),
         update: vi.fn(),
         upsert: vi.fn()
+      },
+      account: {
+        upsert: vi.fn()
       }
     };
 
@@ -162,5 +165,67 @@ describe('Unit Test: Production Seed Admin Provisioning & Conflict Handling (TAS
     ].join(' ');
 
     expect(allLogs).not.toContain(PROD_PASSWORD);
+  });
+
+  it('Case 9: Provisions user_demo and standard accounts in production when SEED_DEMO_DATA is true and SEED_DEMO_PASSWORD is valid', async () => {
+    process.env.SEED_DEMO_DATA = 'true';
+    process.env.SEED_DEMO_PASSWORD = 'SecureDemoPassword2026!';
+    process.env.SEED_DEMO_EMAIL = 'user_demo@whatsss.local';
+
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'admin-id', role: 'ADMIN' });
+    mockPrisma.user.findUnique.mockResolvedValue(null); // user_demo does not exist yet
+    mockPrisma.user.create.mockResolvedValue({ id: 'demo-user-id', username: 'user_demo' });
+    mockPrisma.account.upsert.mockResolvedValue({ id: 'acc-id' });
+
+    await seed(mockPrisma);
+
+    expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
+    const demoCreateCall = mockPrisma.user.create.mock.calls[0][0].data;
+    expect(demoCreateCall.username).toBe('user_demo');
+    expect(demoCreateCall.email).toBe('user_demo@whatsss.local');
+    expect(demoCreateCall.role).toBe('USER');
+    expect(demoCreateCall.is_active).toBe(true);
+    expect(demoCreateCall.password_hash).toMatch(BCRYPT_REGEX);
+
+    expect(mockPrisma.account.upsert).toHaveBeenCalledTimes(5);
+    const standardNames = ['Checking Bank', 'Visa Credit Card', 'Salary', 'Dining', 'Grocery'];
+    const upsertedAccountNames = mockPrisma.account.upsert.mock.calls.map(
+      (call: any) => call[0].create.name
+    );
+    expect(upsertedAccountNames).toEqual(expect.arrayContaining(standardNames));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Production demo user (user_demo) provisioned securely'));
+  });
+
+  it('Case 10: Skips user_demo seeding when SEED_DEMO_DATA is true but SEED_DEMO_PASSWORD is missing or shorter than 12 chars', async () => {
+    process.env.SEED_DEMO_DATA = 'true';
+    process.env.SEED_DEMO_PASSWORD = 'Short1!'; // < 12 chars
+
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'admin-id', role: 'ADMIN' });
+
+    await seed(mockPrisma);
+
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    expect(mockPrisma.account.upsert).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('SEED_DEMO_PASSWORD is missing or shorter than 12 characters'));
+  });
+
+  it('Case 11: Preserves existing user_demo credentials while idempotently ensuring standard accounts exist', async () => {
+    process.env.SEED_DEMO_DATA = 'true';
+    process.env.SEED_DEMO_PASSWORD = 'SecureDemoPassword2026!';
+
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'admin-id', role: 'ADMIN' });
+    mockPrisma.user.findUnique.mockResolvedValue({
+      id: 'existing-demo-user-id',
+      username: 'user_demo',
+      role: 'USER',
+      password_hash: '$2b$10$ExistingDemoHashValueHere12345678901234567890123456'
+    });
+    mockPrisma.account.upsert.mockResolvedValue({ id: 'acc-id' });
+
+    await seed(mockPrisma);
+
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    expect(mockPrisma.account.upsert).toHaveBeenCalledTimes(5);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Production demo user (user_demo) already exists'));
   });
 });

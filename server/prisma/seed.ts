@@ -11,52 +11,118 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
     const prodAdminPassword = process.env.SEED_ADMIN_PASSWORD;
     const prodAdminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@whatsss.local';
 
-    // Case 4: No SEED_ADMIN_PASSWORD or password < 12 chars
+    // 1. Provision or verify production administrator
     if (!prodAdminPassword || prodAdminPassword.length < 12) {
       console.warn(
         'Production environment detected: Demo accounts are strictly disabled. ' +
         'To provision an initial administrator, configure SEED_ADMIN_PASSWORD (min 12 chars). Skipping seeding.'
       );
-      return;
-    }
-
-    // Case 2: Check if an administrator account already exists (role === 'ADMIN')
-    const existingAdmin = await client.user.findFirst({
-      where: { role: 'ADMIN' }
-    });
-
-    if (existingAdmin) {
-      console.log(
-        'Production administrator account already exists. Preserving existing credentials and role without mutation.'
-      );
-      return;
-    }
-
-    // Case 3: Check if username "admin" is already taken by a non-ADMIN account
-    const usernameConflict = await client.user.findUnique({
-      where: { username: 'admin' }
-    });
-
-    if (usernameConflict) {
-      throw new Error(
-        'FATAL: Username "admin" already exists with non-ADMIN role. ' +
-        'Cannot provision production administrator due to username conflict.'
-      );
-    }
-
-    // Case 1: No admin exists and username "admin" is available -> provision initial admin
-    const adminHash = await bcrypt.hash(prodAdminPassword, saltRounds);
-    await client.user.create({
-      data: {
-        username: 'admin',
-        email: prodAdminEmail,
-        password_hash: adminHash,
-        role: 'ADMIN',
-        is_active: true
+      if (process.env.SEED_DEMO_DATA !== 'true') {
+        return;
       }
-    });
+    } else {
+      // Case 2: Check if an administrator account already exists (role === 'ADMIN')
+      const existingAdmin = await client.user.findFirst({
+        where: { role: 'ADMIN' }
+      });
 
-    console.log('Production initial administrator account provisioned securely.');
+      if (existingAdmin) {
+        console.log(
+          'Production administrator account already exists. Preserving existing credentials and role without mutation.'
+        );
+      } else {
+        // Case 3: Check if username "admin" is already taken by a non-ADMIN account
+        const usernameConflict = await client.user.findUnique({
+          where: { username: 'admin' }
+        });
+
+        if (usernameConflict) {
+          throw new Error(
+            'FATAL: Username "admin" already exists with non-ADMIN role. ' +
+            'Cannot provision production administrator due to username conflict.'
+          );
+        }
+
+        // Case 1: No admin exists and username "admin" is available -> provision initial admin
+        const adminHash = await bcrypt.hash(prodAdminPassword, saltRounds);
+        await client.user.create({
+          data: {
+            username: 'admin',
+            email: prodAdminEmail,
+            password_hash: adminHash,
+            role: 'ADMIN',
+            is_active: true
+          }
+        });
+
+        console.log('Production initial administrator account provisioned securely.');
+      }
+    }
+
+    // 2. Demo user provisioning in production (only when explicitly enabled via SEED_DEMO_DATA=true)
+    if (process.env.SEED_DEMO_DATA === 'true') {
+      const demoPassword = process.env.SEED_DEMO_PASSWORD;
+      const demoEmail = process.env.SEED_DEMO_EMAIL || 'user_demo@whatsss.local';
+
+      if (!demoPassword || demoPassword.length < 12) {
+        console.warn(
+          'SEED_DEMO_DATA is true but SEED_DEMO_PASSWORD is missing or shorter than 12 characters. Skipping demo user seeding.'
+        );
+        return;
+      }
+
+      const existingDemoUser = await client.user.findUnique({
+        where: { username: 'user_demo' }
+      });
+
+      let demoUser = existingDemoUser;
+
+      if (!existingDemoUser) {
+        const demoHash = await bcrypt.hash(demoPassword, saltRounds);
+        demoUser = await client.user.create({
+          data: {
+            username: 'user_demo',
+            email: demoEmail,
+            password_hash: demoHash,
+            role: 'USER',
+            is_active: true
+          }
+        });
+        console.log('Production demo user (user_demo) provisioned securely.');
+      } else {
+        console.log('Production demo user (user_demo) already exists. Preserving existing credentials.');
+      }
+
+      if (demoUser) {
+        const standardAccounts = [
+          { name: 'Checking Bank', type: 'CASH' as const },
+          { name: 'Visa Credit Card', type: 'LOAN_TAKEN' as const },
+          { name: 'Salary', type: 'INCOME' as const },
+          { name: 'Dining', type: 'EXPENSE' as const },
+          { name: 'Grocery', type: 'EXPENSE' as const }
+        ];
+
+        for (const acc of standardAccounts) {
+          await client.account.upsert({
+            where: {
+              user_id_name: {
+                user_id: demoUser.id,
+                name: acc.name
+              }
+            },
+            update: {},
+            create: {
+              user_id: demoUser.id,
+              name: acc.name,
+              type: acc.type,
+              opening_balance: 0.00,
+              is_opening_locked: false
+            }
+          });
+        }
+      }
+    }
+
     return;
   }
 

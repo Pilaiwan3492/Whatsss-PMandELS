@@ -6,6 +6,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 export interface AppConfig {
   port: number;
+  host: string;
   clientUrl: string;
   nodeEnv: string;
   databaseUrl: string;
@@ -13,6 +14,7 @@ export interface AppConfig {
   jwtExpiresIn: string;
   isProduction: boolean;
   isTest: boolean;
+  appCommitSha: string;
 }
 
 export function validateJwtSecret(secret: string | undefined, nodeEnv: string): string {
@@ -38,13 +40,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     port: parseInt(env.PORT || '5000', 10),
+    host: env.HOST || '0.0.0.0',
     clientUrl: env.CLIENT_URL || 'http://localhost:5173',
     nodeEnv,
     databaseUrl: env.DATABASE_URL || '',
     jwtSecret,
     jwtExpiresIn: env.JWT_EXPIRES_IN || '24h',
     isProduction,
-    isTest
+    isTest,
+    appCommitSha: env.APP_COMMIT_SHA || 'development'
   };
 }
 

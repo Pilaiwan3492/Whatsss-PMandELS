@@ -58,4 +58,23 @@ describe('Unit Test: Environment Configuration & JWT Secret Security (Section 2.
       }
     }
   });
+
+  it('loads HOST and APP_COMMIT_SHA configuration with cloud-ready defaults', () => {
+    const validSecret = 'valid_cryptographic_secret_with_sufficient_length_2026';
+    const configDefault = loadConfig({
+      NODE_ENV: 'production',
+      JWT_SECRET: validSecret
+    });
+    expect(configDefault.host).toBe('0.0.0.0');
+    expect(configDefault.appCommitSha).toBe('development');
+
+    const configCustom = loadConfig({
+      NODE_ENV: 'production',
+      JWT_SECRET: validSecret,
+      HOST: '127.0.0.1',
+      APP_COMMIT_SHA: 'abc1234'
+    });
+    expect(configCustom.host).toBe('127.0.0.1');
+    expect(configCustom.appCommitSha).toBe('abc1234');
+  });
 });
