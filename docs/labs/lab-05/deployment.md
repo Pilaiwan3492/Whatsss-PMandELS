@@ -92,7 +92,7 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 | `PORT` | Optional | `5000` | Port number on which the HTTP server listens. Cloud Run sets this automatically to `8080`. | Server |
 | `HOST` | Optional | `0.0.0.0` | Host network interface to bind. Must remain `0.0.0.0` in container environments. | Server |
 | `NODE_ENV` | **Required** | `production` (in cloud) / `development` (local) | Execution environment mode. Controls security policies and seed behavior. | Server |
-| `CLIENT_URL` | **Required in Prod** | `https://<your-cloud-run-service-url>` (prod) / `http://localhost:5173` (dev) | Full public URL of the application. **Required in production for CSRF guard:** `csrfGuard.ts` strictly validates incoming request `Origin` headers against `config.clientUrl` for all mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`). Even in single-container mode, browsers send `Origin: https://<cloud-run-url>`. | Server |
+| `CLIENT_URL` | **Required in Prod** | `https://<your-cloud-run-service-url>` (prod) / `http://localhost:5173` (dev) | Full public URL of the application. **Required in production for CSRF guard (C-04 / Issue #19):** `csrfGuard.ts` strictly validates incoming request `Origin` headers against `config.clientUrl` for all mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`). Even in single-container mode, browsers send `Origin: https://<cloud-run-url>`. Setting this variable correctly fulfills Requirement C-04 in Issue #19. | Server |
 | `DATABASE_URL` | **Required** | `postgresql://user:pass@host:5432/whatsss_db?schema=public` | PostgreSQL connection string used by Prisma ORM. | Server |
 | `JWT_SECRET` | **Required** | Strong random string (min 32 chars) | Cryptographic key used to sign and verify authentication JWTs. | Server |
 | `JWT_EXPIRES_IN` | Optional | `24h` | Token validity duration. | Server |
@@ -177,8 +177,13 @@ To guarantee that containerized production runs (Cloud Run Jobs or container ent
    - Consequently, running `npm ci --omit=dev` or `npm install --production` during Docker builds preserves `prisma` and `tsx` in `node_modules`, enabling offline migration deployment (`npx prisma migrate deploy`) and seeding (`npm run prisma:seed`).
    - Core runtime modules `@prisma/client` and `bcrypt` are likewise packaged in `dependencies`.
 
-2. **Container Multi-Stage Structure:**
-   - In Issue #17, the production runner stage must include `server/node_modules`, `server/dist`, `server/prisma`, and `client/dist`.
+2. **Container Multi-Stage Structure (Issue #17 Checkpoint):**
+   - The production Docker image must explicitly retain the `server/prisma/` directory:
+     ```dockerfile
+     COPY --from=builder /app/server/prisma ./server/prisma
+     ```
+     This ensures that `schema.prisma`, `migrations/`, and `seed.ts` are present in the final image.
+   - During Issue #17 container verification, test that `npm run prisma:seed` and `npx prisma migrate deploy` execute successfully inside the built container without missing files or runtime module errors.
    - Migration and seed commands must be executed within the `server/` directory where `package.json` and `prisma/schema.prisma` reside.
 
 ---
