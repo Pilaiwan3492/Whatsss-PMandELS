@@ -1,0 +1,39 @@
+# Git & Documentation
+.git
+.github
+docs/
+*.md
+
+# Environment files and credentials (CWE-312, CWE-532 prevention)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+id_rsa
+service-account*.json
+credentials.json
+
+# Local dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Local build artifacts
+client/dist/
+server/dist/
+
+# Test outputs and caches
+coverage/
+.nyc_output/
+.vitest/
+
+# OS and editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+npm-debug.log*
