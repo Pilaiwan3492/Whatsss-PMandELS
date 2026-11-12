@@ -228,4 +228,21 @@ describe('Unit Test: Production Seed Admin Provisioning & Conflict Handling (TAS
     expect(mockPrisma.account.upsert).toHaveBeenCalledTimes(5);
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Production demo user (user_demo) already exists'));
   });
+
+  it('Case 12: Skips admin seeding but continues demo user seeding when SEED_ADMIN_PASSWORD is missing and SEED_DEMO_DATA is true', async () => {
+    delete process.env.SEED_ADMIN_PASSWORD;
+    process.env.SEED_DEMO_DATA = 'true';
+    process.env.SEED_DEMO_PASSWORD = 'SecureDemoPassword2026!';
+
+    mockPrisma.user.findUnique.mockResolvedValue(null);
+    mockPrisma.user.create.mockResolvedValue({ id: 'demo-user-id', username: 'user_demo' });
+    mockPrisma.account.upsert.mockResolvedValue({ id: 'acc-id' });
+
+    await seed(mockPrisma);
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Skipping administrator seeding'));
+    expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.user.create.mock.calls[0][0].data.username).toBe('user_demo');
+    expect(mockPrisma.account.upsert).toHaveBeenCalledTimes(5);
+  });
 });

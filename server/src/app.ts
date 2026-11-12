@@ -52,10 +52,11 @@ export async function readyHandler(req: Request, res: Response): Promise<void> {
       commitSha: config.appCommitSha
     });
   } catch (error) {
+    console.error('Readiness probe database query failed:', error);
     res.status(503).json({
       status: 'not_ready',
       database: 'disconnected',
-      error: error instanceof Error ? error.message : 'Database query failed',
+      error: 'Database connection unavailable',
       timestamp: new Date().toISOString(),
       commitSha: config.appCommitSha
     });

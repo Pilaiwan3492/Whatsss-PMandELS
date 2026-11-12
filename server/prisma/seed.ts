@@ -13,11 +13,16 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
 
     // 1. Provision or verify production administrator
     if (!prodAdminPassword || prodAdminPassword.length < 12) {
-      console.warn(
-        'Production environment detected: Demo accounts are strictly disabled. ' +
-        'To provision an initial administrator, configure SEED_ADMIN_PASSWORD (min 12 chars). Skipping seeding.'
-      );
-      if (process.env.SEED_DEMO_DATA !== 'true') {
+      if (process.env.SEED_DEMO_DATA === 'true') {
+        console.warn(
+          'Production environment: SEED_ADMIN_PASSWORD is missing or shorter than 12 characters. ' +
+          'To provision an initial administrator, configure SEED_ADMIN_PASSWORD (min 12 chars). Skipping administrator seeding.'
+        );
+      } else {
+        console.warn(
+          'Production environment detected: To provision an initial administrator, configure SEED_ADMIN_PASSWORD (min 12 chars). ' +
+          'Demo accounts are disabled by default (enable via SEED_DEMO_DATA=true). Skipping seeding.'
+        );
         return;
       }
     } else {

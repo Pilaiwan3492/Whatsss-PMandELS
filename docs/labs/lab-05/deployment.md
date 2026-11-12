@@ -19,7 +19,7 @@ flowchart TD
     
     subgraph CloudRunService ["Google Cloud Run Service (Single Container)"]
         direction TB
-        ExpressServer["Express.js Server (Node.js 20 LTS)<br/>HOST: 0.0.0.0 | PORT: dynamic"]
+        ExpressServer["Express.js Server (Node.js 24)<br/>HOST: 0.0.0.0 | PORT: dynamic"]
         StaticServe["Static Asset Serving<br/>(express.static client/dist)"]
         SPAFallback["SPA Fallback Routing<br/>(GET * -> index.html)"]
         APIRouter["Express API Router<br/>(/api/*)"]
@@ -44,7 +44,7 @@ flowchart TD
 
 ### 1.1 Technology Stack Summary
 * **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons. Built into static artifacts (`client/dist`).
-* **Backend:** Node.js 20 LTS, Express, TypeScript, Prisma ORM. Built into CommonJS JavaScript in `server/dist`.
+* **Backend:** Node.js 24, Express, TypeScript, Prisma ORM. Built into CommonJS JavaScript in `server/dist`.
 * **Database:** PostgreSQL 16 (relational schema enforcing ACID invariants, split allocation integrity, and account type rules).
 * **Serving Topology:** Single-container deployment where the Express backend serves both the REST API endpoints (`/api/*`) and compiled static frontend assets (`client/dist`), with SPA fallback routing to `index.html` for client-side navigation.
 
@@ -59,7 +59,7 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 * The application writes zero user-generated files to local container storage. Container filesystem is treated as strictly ephemeral and disposable.
 
 ### Point 2: Production-Safe Idempotent Database Seeding (`server/prisma/seed.ts`)
-* **Production Admin Seeding:** Initial administrator creation is gated behind `process.env.NODE_ENV === 'production'`. Requires `SEED_ADMIN_PASSWORD` with a minimum length of 12 characters. If omitted or too short, seeding skips with an explicit warning without crashing. Existing admins are preserved idempotently without mutating passwords or roles.
+* **Production Admin Seeding:** Initial administrator creation is gated behind `process.env.NODE_ENV === 'production'`. Requires `SEED_ADMIN_PASSWORD` with a minimum length of 12 characters. If omitted or too short, seeding skips administrator provisioning with an explicit warning without crashing. Existing admins are preserved idempotently without mutating passwords or roles.
 * **Production Evaluator / Demo User Seeding:** Because Whatsss does not expose a public user registration endpoint (`/register`) and administrative accounts are strictly forbidden from accessing financial transaction APIs under business rule `BR-10`, evaluators require a financial `USER` account. In production, demo user provisioning is enabled **only when explicitly requested** via `SEED_DEMO_DATA=true` and `SEED_DEMO_PASSWORD` (min 12 characters). It idempotently seeds `user_demo` with the 5 standard baseline financial accounts (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`).
 * **Zero Hardcoded Secrets:** No hardcoded passwords or secrets are executed in production mode.
 
@@ -79,7 +79,7 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 ### Point 6: Observability, Health & Readiness Probes
 * **Reverse Proxy Trust:** Configured `app.set('trust proxy', 1)` in `server/src/app.ts` so Express accurately detects client protocols, client IP addresses, and secure HTTPS headers passed from Google Front End (GFE).
 * **Liveness Probe (`GET /api/health`):** Returns HTTP 200 with `{ status: 'ok', timestamp: string, commitSha: string }`. Used by container orchestrators to verify container liveness.
-* **Readiness Probe (`GET /api/ready`):** Executes an active database connectivity query (`prisma.$queryRaw\`SELECT 1\``). Returns HTTP 200 `{ status: 'ready', database: 'connected', ... }` when healthy, or HTTP 503 `{ status: 'not_ready', database: 'disconnected', error: string, ... }` if PostgreSQL is unreachable.
+* **Readiness Probe (`GET /api/ready`):** Executes an active database connectivity query (`prisma.$queryRaw\`SELECT 1\``). Returns HTTP 200 `{ status: 'ready', database: 'connected', ... }` when healthy, or HTTP 503 `{ status: 'not_ready', database: 'disconnected', error: 'Database connection unavailable', ... }` if PostgreSQL is unreachable. Detailed database exceptions are logged internally via server error logs to prevent internal information leakage.
 * **Single-Container Frontend Serving:** Static files from `client/dist` are served with caching headers, and non-`/api` requests fall back to `index.html`.
 
 ---
@@ -91,7 +91,7 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 | `PORT` | Optional | `5000` | Port number on which the HTTP server listens. Cloud Run sets this automatically to `8080`. | Server |
 | `HOST` | Optional | `0.0.0.0` | Host network interface to bind. Must remain `0.0.0.0` in container environments. | Server |
 | `NODE_ENV` | **Required** | `production` (in cloud) / `development` (local) | Execution environment mode. Controls security policies and seed behavior. | Server |
-| `CLIENT_URL` | Optional | `http://localhost:5173` | Allowed CORS origin for split development setups. (Not required in single-container mode). | Server |
+| `CLIENT_URL` | **Required in Prod** | `https://<your-cloud-run-service-url>` (prod) / `http://localhost:5173` (dev) | Full public URL of the application. **Required in production for CSRF guard:** `csrfGuard.ts` strictly validates incoming request `Origin` headers against `config.clientUrl` for all mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`). Even in single-container mode, browsers send `Origin: https://<cloud-run-url>`. | Server |
 | `DATABASE_URL` | **Required** | `postgresql://user:pass@host:5432/whatsss_db?schema=public` | PostgreSQL connection string used by Prisma ORM. | Server |
 | `JWT_SECRET` | **Required** | Strong random string (min 32 chars) | Cryptographic key used to sign and verify authentication JWTs. | Server |
 | `JWT_EXPIRES_IN` | Optional | `24h` | Token validity duration. | Server |
@@ -107,39 +107,47 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 
 ## 4. Runbook: Build, Test, Run, Migrate & Seed
 
+> **Note on Directory Layout:** The repository does not use a single root `package.json` workspace. The frontend (`client/`) and backend (`server/`) maintain separate package dependencies and configurations. Commands below indicate the exact directory from which they must be executed.
+
 ### 4.1 Local Development Commands
 
 ```bash
-# 1. Install dependencies for all workspaces
-npm install
-cd client && npm install
-cd ../server && npm install
+# === From Repository Root ===
 
-# 2. Start PostgreSQL container
+# 1. Start PostgreSQL container
 docker compose up -d
 
-# 3. Apply Prisma database migrations
+# 2. Install client dependencies
+cd client
+npm install
+cd ..
+
+# 3. Install server dependencies & prepare database
 cd server
+npm install
 npx prisma migrate dev
+npm run prisma:seed # seeds user_demo, user_other, admin_demo
+cd ..
 
-# 4. Seed development database (seeds user_demo, user_other, admin_demo)
-npx prisma db seed
-
-# 5. Run automated test suites
-npm test                  # Backend unit & integration tests
+# 4. Run automated test suites
+cd server && npm test     # Backend unit & integration tests
 cd ../client && npm test  # Frontend component & state tests
+cd ..
 ```
 
 ### 4.2 Production Container & Build Commands
 
 ```bash
+# === From Repository Root ===
+
 # 1. Build frontend static bundle
 cd client
 npm run build
+cd ..
 # Output generated in client/dist
 
 # 2. Build backend TypeScript
-cd ../server
+cd server
 npm run build
 # Output generated in server/dist
 
@@ -147,11 +155,14 @@ npm run build
 npx prisma migrate deploy
 
 # 4. Optional: Provision production accounts securely via environment variables
+# Note: Seed execution uses tsx as configured in server/package.json ("prisma:seed": "tsx prisma/seed.ts").
+# The container migration/seed runtime in Issue #17 must provide tsx or execute via npm run prisma:seed.
 SEED_ADMIN_PASSWORD="StrongProductionPassword2026!" \
 SEED_DEMO_DATA="true" \
 SEED_DEMO_PASSWORD="StrongDemoPassword2026!" \
 NODE_ENV="production" \
-node dist/prisma/seed.js
+npm run prisma:seed
+# Alternatively: npx tsx prisma/seed.ts
 
 # 5. Start production server (serves API and client/dist static bundle)
 NODE_ENV="production" npm start
@@ -197,8 +208,9 @@ Host: whatsss.example.com
 {
   "status": "not_ready",
   "database": "disconnected",
-  "error": "Connection terminated unexpectedly",
+  "error": "Database connection unavailable",
   "timestamp": "2026-11-13T00:30:00.000Z",
   "commitSha": "f84e7b1680b5c5096ec045b8f9e8d47f5c5a9d1d"
 }
 ```
+*(Detailed database query error messages are logged securely to the server console/logs rather than exposed in client-facing HTTP payloads).*

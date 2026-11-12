@@ -60,7 +60,8 @@ describe('Unit Test: Cloud-Ready Health and Readiness Probes (Point 6)', () => {
     });
   });
 
-  it('GET /api/ready returns 503 when database connectivity check fails', async () => {
+  it('GET /api/ready returns 503 when database connectivity check fails without leaking internal error details', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const queryRawSpy = vi.spyOn(prisma, '$queryRaw').mockRejectedValue(new Error('Connection terminated unexpectedly'));
 
     await readyHandler(mockReq, mockRes);
@@ -71,10 +72,11 @@ describe('Unit Test: Cloud-Ready Health and Readiness Probes (Point 6)', () => {
     expect(responseData).toEqual({
       status: 'not_ready',
       database: 'disconnected',
-      error: 'Connection terminated unexpectedly',
+      error: 'Database connection unavailable',
       timestamp: expect.any(String),
       commitSha: config.appCommitSha
     });
+    expect(errorSpy).toHaveBeenCalledWith('Readiness probe database query failed:', expect.any(Error));
   });
 
   it('verifies that /api/health and /api/ready routes are registered in Express router stack', () => {
