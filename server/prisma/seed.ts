@@ -276,6 +276,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   }
 
   // 3. Seed or verify admin_demo (ADMIN)
+  let adminDemo: any = null;
   if (client.user?.findUnique) {
     const existingAdminDemo = await client.user.findUnique({
       where: { username: 'admin_demo' }
@@ -290,7 +291,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
           `FATAL: Email "admin_demo@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision admin_demo.`
         );
       }
-      await client.user.create({
+      adminDemo = await client.user.create({
         data: {
           username: 'admin_demo',
           email: 'admin_demo@whatsss.local',
@@ -299,9 +300,11 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
           is_active: true
         }
       });
+    } else {
+      adminDemo = existingAdminDemo;
     }
   } else if (client.user?.upsert) {
-    await client.user.upsert({
+    adminDemo = await client.user.upsert({
       where: { username: 'admin_demo' },
       update: { password_hash: devHash, role: 'ADMIN', is_active: true },
       create: {
