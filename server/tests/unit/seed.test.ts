@@ -448,27 +448,19 @@ describe('Unit Test: User Demo Provisioning, Conflict Handling & Role Protection
     expect(mockPrisma.account.upsert).not.toHaveBeenCalled();
   });
 
-  it('10. Development Seed -> ไม่สร้างบัญชีการเงินให้ ADMIN (BR-10 Compliance)', async () => {
-    process.env.NODE_ENV = 'development';
+  it('10. Production Seed -> ไม่สร้างบัญชีการเงินให้ ADMIN (BR-10 Compliance)', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.SEED_ADMIN_PASSWORD = 'SecureAdminPassword2026!';
+    delete process.env.SEED_DEMO_DATA; // Demo data disabled
 
-    mockPrisma.user.findUnique.mockImplementation(async ({ where }: any) => {
-      if (where.username === 'user_demo') return { id: 'dev-demo-id', username: 'user_demo', role: 'USER' };
-      if (where.username === 'user_other') return { id: 'dev-other-id', username: 'user_other', role: 'USER' };
-      if (where.username === 'admin_demo') return { id: 'dev-admin-id', username: 'admin_demo', role: 'ADMIN' };
-      return null;
-    });
-    mockPrisma.account.upsert.mockResolvedValue({ id: 'acc-id' });
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+    mockPrisma.user.findUnique.mockResolvedValue(null);
+    mockPrisma.user.create.mockResolvedValue({ id: 'new-admin-id', username: 'admin', role: 'ADMIN' });
 
     await seed(mockPrisma);
 
-    // Standard accounts must be upserted for user_demo (5) and user_other (5) = 10 calls total
-    // NEVER for admin_demo (0 calls for dev-admin-id)!
-    expect(mockPrisma.account.upsert).toHaveBeenCalledTimes(10);
-    const targetedUserIds = mockPrisma.account.upsert.mock.calls.map(
-      (call: any) => call[0].where.user_id_name.user_id
-    );
-    expect(targetedUserIds).toContain('dev-demo-id');
-    expect(targetedUserIds).toContain('dev-other-id');
-    expect(targetedUserIds).not.toContain('dev-admin-id');
+    // Initial administrator is created, but ZERO financial accounts must be created for ADMIN
+    expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.account.upsert).not.toHaveBeenCalled();
   });
 });

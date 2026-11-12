@@ -314,14 +314,31 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
     });
   }
 
-  // 4. Seed standard financial accounts ONLY for USER role accounts (userDemo, userOther)
-  // NEVER seed financial accounts for ADMIN accounts under BR-10!
-  const usersForAccounts = [userDemo, userOther].filter(
-    (u): u is typeof userDemo => Boolean(u && u.role === 'USER')
-  );
-
-  for (const user of usersForAccounts) {
-    await seedStandardAccountsForUser(client as any, user);
+  // 4. Seed standard financial accounts for demo users (userDemo, userOther, adminDemo)
+  // In development/test mode, admin_demo possesses baseline accounts in the database to verify that
+  // financial API endpoints strictly reject admin requests with HTTP 403 Forbidden under BR-10.
+  // In production mode, administrators are never granted financial accounts.
+  for (const user of [userDemo, userOther, adminDemo]) {
+    if (user) {
+      for (const acc of STANDARD_ACCOUNTS) {
+        await client.account.upsert({
+          where: {
+            user_id_name: {
+              user_id: user.id,
+              name: acc.name
+            }
+          },
+          update: {},
+          create: {
+            user_id: user.id,
+            name: acc.name,
+            type: acc.type,
+            opening_balance: 0.00,
+            is_opening_locked: false
+          }
+        });
+      }
+    }
   }
 
   console.log('Development seeding completed successfully.');
