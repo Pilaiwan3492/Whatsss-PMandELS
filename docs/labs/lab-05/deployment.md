@@ -240,17 +240,18 @@ Host: whatsss.example.com
 ```
 *(Any underlying database connection errors, such as socket terminations or connection strings, are sanitized via `sanitizeLogMessage()` and logged securely to the server console/Cloud Logging to protect sensitive credentials).*
 
-### 5.3 Operational Distinction for Cloud Run Probe Configuration
+### 5.3 Operational Distinction for Cloud Run Probe Configuration vs Docker Compose
 
-When configuring Cloud Run service probes, configure endpoints strictly according to their intended operational role:
+When configuring service probes, operational semantics differ between local orchestration and cloud deployment:
 
-* **Liveness Probe $\rightarrow$ Configure `/api/health`:**
-  - Verifies that the Node.js/Express process is responsive and event loops are unblocked.
-  - Does **NOT** query PostgreSQL.
-  - **Critical Failure Mode Avoided:** If a database experiences transient connection limits or network blips, the liveness probe continues returning HTTP 200. If liveness were mistakenly tied to the database, Cloud Run would kill and restart healthy container instances in a destructive cascading loop ("restart storm"), exacerbating the outage.
-* **Startup / Readiness Probe $\rightarrow$ Configure `/api/ready`:**
-  - Verifies active database connectivity (`SELECT 1`) during container initialization.
-  - In Cloud Run, startup probes allow instances to warm up and establish database connection pools before receiving ingress traffic.
+* **Local Docker Compose Combined Healthcheck (`docker-compose.yml`):**
+  - Uses `curl -f http://localhost:8080/api/health && curl -f http://localhost:8080/api/ready`.
+  - In local development, Docker Compose needs to know when the single-container stack is fully ready to receive developer queries (both Express is running and PostgreSQL is ready).
+  - A combined probe ensures dependent tools and developers do not send requests before the database connection pool warms up.
+
+* **Google Cloud Run Decoupled Probes (Production Architecture):**
+  - **Liveness Probe $\rightarrow$ Configure `/api/health`:** Verifies that the Node.js process and Express event loop are alive. Does **NOT** query PostgreSQL. **Critical Failure Mode Avoided:** If Cloud SQL undergoes transient maintenance, connection limit spikes, or failover, the liveness probe remains HTTP 200. If liveness were tied to the database, Cloud Run would kill and restart healthy container instances in a destructive cascading loop ("restart storm"), exacerbating the outage.
+  - **Startup / Readiness Probe $\rightarrow$ Configure `/api/ready`:** Verifies active database connectivity (`SELECT 1`). Allows Cloud Run instances to complete initialization before GFE routes public ingress traffic.
 
 ---
 
@@ -424,7 +425,10 @@ curl -i http://localhost:8080/api/ready
 
 ## 8. Check C-03: Clean-Clone Build & Run Verification Report
 
-**Requirement:** The project must build and run cleanly from a fresh `git clone` using only environment variables copied from `.env.example`, with no committed secrets. Data must persist across container teardowns (`docker compose down` then `docker compose up -d`).
+**Requirement:** The project must build and run cleanly from a fresh `git clone` using only environment variables copied from `.env.example` (with zero committed secrets). Data must persist across container teardowns (`docker compose down` then `docker compose up -d`).
+
+> [!IMPORTANT]
+> **Template Clarification:** `.env.example` is an environment template containing configuration keys and safe placeholder strings (`replace_with_*`). It is intentionally **not** a runnable configuration as-is. In accordance with security controls (CWE-1188), the application strictly detects and rejects template placeholders upon startup and database seed execution. Operators and CI runners must generate real cryptographic secrets (`openssl rand -hex 32`) and set passwords before launching services.
 
 ### 8.1 Verification Procedure & Execution Log
 
@@ -435,11 +439,11 @@ git clone -b feat/docker-clean-clone-c03 <repository-url> clean-clone-dir
 cd clean-clone-dir
 cp .env.example .env
 ```
-Populated local testing secrets in `.env`:
-* `SEED_ADMIN_PASSWORD="AdminSecurePassword123!"`
-* `SEED_DEMO_DATA="true"`
-* `SEED_DEMO_PASSWORD="DemoSecurePassword123!"`
-* `JWT_SECRET="this_is_a_clean_clone_jwt_secret_with_more_than_32_characters"`
+Populated valid local testing secrets in `.env` (substituting template placeholders):
+* `SEED_ADMIN_PASSWORD` (min 12 chars, e.g. generated secure password)
+* `SEED_DEMO_DATA="true"` (explicitly enabled for test evaluation)
+* `SEED_DEMO_PASSWORD` (min 12 chars, e.g. generated secure password)
+* `JWT_SECRET` (min 32 chars, generated via `openssl rand -hex 32`)
 
 #### Step 2: Build & Start Full-Stack Services
 ```bash
@@ -555,15 +559,28 @@ curl -i http://localhost:8080/api/ready
 
 ### 8.2 Automated Clean-Clone CI Pipeline Verification (`.github/workflows/ci.yml`)
 
-To provide continuously verifiable, traceable proof that the application adheres to Check **C-03** on every code revision, the GitHub Actions CI pipeline includes a dedicated automation job: `c03-clean-clone-verification`:
+To provide continuously verifiable, traceable proof that the application adheres to Check **C-03** on every code revision, the GitHub Actions CI pipeline executes an automated end-to-end job: `c03-clean-clone-verification`:
 
-1. **Clean Workspace Isolation:** Clones/copies the workspace into a fresh, isolated directory (`../clean-clone-test`), completely free from cached dependencies or build remnants.
-2. **Template Interpolation Verification:** Copies `.env.example` to `.env` and generates dynamic, cryptographically secure secrets (`openssl rand -hex 32` for `JWT_SECRET`, secure passwords for admin/demo).
-3. **Single-Command Startup:** Executes `docker compose up -d --build` and polls until all containers report `healthy`.
-4. **Health & Readiness Inspection:** Probes both `GET /api/health` and `GET /api/ready`, asserting HTTP 200 OK responses.
-5. **Real Transaction Creation:** Authenticates via `POST /api/auth/login`, retrieves account UUIDs, and creates a live income transaction (`POST /api/transactions/income`).
-6. **Container Teardown & Restart:** Executes `docker compose down` (preserving `whatsss_pgdata`), re-starts via `docker compose up -d`, and confirms that the transaction and updated balances persist intact.
-7. **Traceability:** Every GitHub Actions workflow run links directly to the git commit SHA, providing immutable audit evidence for reviewers and evaluators.
+1. **Authentic Clean Git Clone:** Clones the repository afresh from the current workspace into an isolated runner directory (`../clean-clone-test`) and checks out the exact PR commit SHA (`git checkout "${{ github.sha }}"`), ensuring no untracked files or cached build artifacts leak into the test.
+2. **Template Secret Interpolation:** Copies `.env.example` to `.env` and generates dynamic, ephemeral random credentials (`openssl rand -hex 32` for `JWT_SECRET`, unique passwords for `SEED_ADMIN_PASSWORD` and `SEED_DEMO_PASSWORD`), strictly validating that the application runs with real secrets and rejects placeholders.
+3. **Single-Command Stack Startup:** Executes `docker compose -p whatsss_c03_ci up -d --build`. Polling logic enforces a strict timeout: if the app container fails to report `healthy` within 30 cycles (60s), CI dumps container logs and immediately exits with failure (`exit 1`).
+4. **Health (Liveness) Verification:** Confirms `GET /api/health` returns HTTP 200 OK with `{"status":"ok"}`.
+5. **Readiness Probe State Discrimination (DB Healthy vs Outage vs Recovery):**
+   - Asserts `GET /api/ready` returns **HTTP 200 OK** (`database: connected`).
+   - Simulates database outage by stopping the PostgreSQL container (`docker compose -p whatsss_c03_ci stop postgres`).
+   - Asserts `GET /api/ready` returns **HTTP 503 Service Unavailable** (`database: disconnected`).
+   - Asserts `GET /api/health` still returns **HTTP 200 OK**, confirming process liveness is not tied to database availability.
+   - Restarts PostgreSQL (`docker compose -p whatsss_c03_ci start postgres`) and confirms `GET /api/ready` recovers to **HTTP 200 OK**.
+   - A shell `trap` guarantees that PostgreSQL is revived even if any intermediate assertion fails.
+6. **Robust End-to-End API Transaction Processing:**
+   - Authenticates as `user_demo` via `POST /api/auth/login` and captures the session cookie.
+   - Queries `GET /api/accounts` and uses `jq` to parse the exact UUIDs for `Checking Bank` and `Salary`.
+   - Records an income transaction of 25,000.00 THB (`POST /api/transactions/income`), receiving HTTP 201 Created.
+7. **Volume Persistence Verification Across Teardown:**
+   - Executes `docker compose -p whatsss_c03_ci down` (retaining volume `whatsss_c03_ci_whatsss_pgdata`).
+   - Re-launches the stack via `docker compose -p whatsss_c03_ci up -d`, with health timeout validation.
+   - Re-authenticates and calls `GET /api/transactions` to confirm that the recorded transaction and updated balance persisted intact across container destruction.
+8. **Scoped Project Cleanup:** Teardown is scoped strictly to project `-p whatsss_c03_ci` (`docker compose -p whatsss_c03_ci down -v`), ensuring that test volume removal is strictly isolated to CI and never impacts developer or production data.
 
 ---
 

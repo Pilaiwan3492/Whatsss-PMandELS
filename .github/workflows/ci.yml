@@ -164,48 +164,109 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Prepare Clean Clone Environment in Isolated Workspace
+      - name: Perform Clean Git Clone into Isolated Workspace
         run: |
-          mkdir -p ../clean-clone-test
-          cp -r . ../clean-clone-test/
+          echo "Cloning clean repository from current workspace into isolated directory..."
+          git clone "$GITHUB_WORKSPACE" ../clean-clone-test
           cd ../clean-clone-test
+          git checkout "${{ github.sha }}"
+          echo "Clean clone verified at commit: $(git rev-parse HEAD)"
 
-          # Copy .env strictly from .env.example
+      - name: Prepare .env with Dynamic Testing Secrets
+        working-directory: ../clean-clone-test
+        run: |
           cp .env.example .env
 
-          # Configure dynamic secure testing secrets (replacing template placeholders)
-          RANDOM_JWT=$(openssl rand -hex 32)
+          # Generate dynamic random cryptographic secrets for isolated test execution
+          CI_ADMIN_PWD="Admin_$(openssl rand -hex 12)!"
+          CI_DEMO_PWD="Demo_$(openssl rand -hex 12)!"
+          RANDOM_JWT="$(openssl rand -hex 32)"
+
           sed -i "s|replace_with_a_long_random_secret_at_least_32_characters_for_production|${RANDOM_JWT}|g" .env
-          sed -i "s|replace_with_secure_admin_password_min_12_chars|CiAdminPassword2026!|g" .env
+          sed -i "s|replace_with_secure_admin_password_min_12_chars|${CI_ADMIN_PWD}|g" .env
           sed -i "s|SEED_DEMO_DATA=false|SEED_DEMO_DATA=true|g" .env
-          sed -i "s|replace_with_secure_demo_password_min_12_chars|CiDemoPassword2026!|g" .env
+          sed -i "s|replace_with_secure_demo_password_min_12_chars|${CI_DEMO_PWD}|g" .env
+
+          # Save demo user credentials for downstream authentication step
+          echo "CI_DEMO_PWD=${CI_DEMO_PWD}" >> $GITHUB_ENV
 
       - name: Start Full Stack with Docker Compose (C-03)
         working-directory: ../clean-clone-test
         run: |
-          docker compose up -d --build
+          docker compose -p whatsss_c03_ci up -d --build
 
-          echo "Waiting for app container health..."
+          healthy=false
           for i in {1..30}; do
-            HEALTH_STATUS=$(docker inspect --format='{{json .State.Health.Status}}' whatsss_app 2>/dev/null || echo "starting")
-            if [ "$HEALTH_STATUS" = "\"healthy\"" ]; then
-              echo "whatsss_app is healthy!"
+            HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' whatsss_app 2>/dev/null || echo "starting")
+            if [ "$HEALTH_STATUS" = "healthy" ]; then
+              healthy=true
               break
             fi
-            echo "Waiting for healthcheck ($i/30)... current: $HEALTH_STATUS"
+            echo "Waiting for healthcheck ($i/30): $HEALTH_STATUS"
             sleep 2
           done
 
-          docker compose ps
+          if [ "$healthy" != "true" ]; then
+            echo "::error::Application failed to become healthy within timeout"
+            docker compose -p whatsss_c03_ci ps
+            docker compose -p whatsss_c03_ci logs --no-color --tail=200
+            exit 1
+          fi
+
+          echo "Application is healthy!"
+          docker compose -p whatsss_c03_ci ps
           docker logs whatsss_migrate
 
-      - name: Probe Health and Readiness Endpoints
+      - name: Probe Health (Liveness) Endpoint
         run: |
           echo "Probing /api/health (Liveness)..."
-          curl -f -s -i http://localhost:8080/api/health | grep "HTTP/1.1 200 OK"
+          HEALTH_RES=$(curl -f -s -i http://localhost:8080/api/health)
+          echo "$HEALTH_RES"
+          echo "$HEALTH_RES" | grep "HTTP/1.1 200 OK"
+          echo "$HEALTH_RES" | grep '"status":"ok"'
 
-          echo "Probing /api/ready (Readiness)..."
-          curl -f -s -i http://localhost:8080/api/ready | grep "HTTP/1.1 200 OK"
+      - name: Verify Readiness Probe State Discrimination (DB Healthy vs Outage vs Recovery)
+        working-directory: ../clean-clone-test
+        run: |
+          echo "1. Asserting /api/ready returns 200 OK when database is connected..."
+          READY_200=$(curl -s -i http://localhost:8080/api/ready)
+          echo "$READY_200" | grep "HTTP/1.1 200 OK"
+          echo "$READY_200" | grep '"database":"connected"'
+
+          # Trap ensures postgres container is restarted if subsequent assertions fail
+          trap 'docker compose -p whatsss_c03_ci start postgres || true' EXIT
+
+          echo "2. Stopping PostgreSQL container to simulate database outage..."
+          docker compose -p whatsss_c03_ci stop postgres
+
+          echo "3. Asserting /api/ready returns 503 Service Unavailable during outage..."
+          READY_503=$(curl -s -i http://localhost:8080/api/ready)
+          echo "$READY_503"
+          echo "$READY_503" | grep "HTTP/1.1 503"
+          echo "$READY_503" | grep '"database":"disconnected"'
+
+          echo "4. Asserting /api/health still returns 200 OK (liveness probe independence)..."
+          LIVENESS_200=$(curl -s -i http://localhost:8080/api/health)
+          echo "$LIVENESS_200" | grep "HTTP/1.1 200 OK"
+
+          echo "5. Restarting PostgreSQL container to simulate recovery..."
+          docker compose -p whatsss_c03_ci start postgres
+
+          echo "Waiting for postgres recovery..."
+          for i in {1..20}; do
+            PG_STATUS=$(docker inspect --format='{{.State.Health.Status}}' whatsss_postgres 2>/dev/null || echo "starting")
+            if [ "$PG_STATUS" = "healthy" ]; then
+              echo "Postgres is healthy again!"
+              break
+            fi
+            sleep 1
+          done
+
+          echo "6. Asserting /api/ready returns 200 OK after database recovery..."
+          READY_RECOVERED=$(curl -s -i http://localhost:8080/api/ready)
+          echo "$READY_RECOVERED" | grep "HTTP/1.1 200 OK"
+          echo "$READY_RECOVERED" | grep '"database":"connected"'
+          echo "Readiness probe state discrimination verified successfully!"
 
       - name: End-to-End API Authentication & Transaction Creation
         run: |
@@ -213,17 +274,18 @@ jobs:
           LOGIN_RES=$(curl -s -i -c cookie.txt -X POST http://localhost:8080/api/auth/login \
             -H "Content-Type: application/json" \
             -H "Origin: http://localhost:8080" \
-            -d '{"username":"user_demo","password":"CiDemoPassword2026!"}')
+            -d "{\"username\":\"user_demo\",\"password\":\"${CI_DEMO_PWD}\"}")
           echo "$LOGIN_RES" | grep "HTTP/1.1 200 OK"
 
-          echo "Fetching baseline accounts..."
+          echo "Fetching baseline accounts and parsing UUIDs with jq..."
           ACCOUNTS_RES=$(curl -s -b cookie.txt http://localhost:8080/api/accounts)
           echo "$ACCOUNTS_RES"
-          CHECKING_ID=$(echo "$ACCOUNTS_RES" | grep -o '"id":"[^"]*","user_id":"[^"]*","name":"Checking Bank"' | head -1 | cut -d'"' -f4)
-          SALARY_ID=$(echo "$ACCOUNTS_RES" | grep -o '"id":"[^"]*","user_id":"[^"]*","name":"Salary"' | head -1 | cut -d'"' -f4)
+          CHECKING_ID=$(echo "$ACCOUNTS_RES" | jq -er '.data.accounts[] | select(.name == "Checking Bank") | .id')
+          SALARY_ID=$(echo "$ACCOUNTS_RES" | jq -er '.data.accounts[] | select(.name == "Salary") | .id')
 
+          echo "Resolved Account IDs -> Checking Bank: $CHECKING_ID | Salary: $SALARY_ID"
           if [ -z "$CHECKING_ID" ] || [ -z "$SALARY_ID" ]; then
-            echo "FATAL: Failed to resolve Checking Bank or Salary account IDs!"
+            echo "FATAL: Failed to resolve account IDs via jq!"
             exit 1
           fi
 
@@ -238,20 +300,30 @@ jobs:
         working-directory: ../clean-clone-test
         run: |
           echo "Executing docker compose down (preserving volume)..."
-          docker compose down
+          docker compose -p whatsss_c03_ci down
 
           echo "Re-launching stack with existing PostgreSQL volume..."
-          docker compose up -d
+          docker compose -p whatsss_c03_ci up -d
 
-          echo "Waiting for app container health after restart..."
+          healthy=false
           for i in {1..30}; do
-            HEALTH_STATUS=$(docker inspect --format='{{json .State.Health.Status}}' whatsss_app 2>/dev/null || echo "starting")
-            if [ "$HEALTH_STATUS" = "\"healthy\"" ]; then
-              echo "whatsss_app is healthy after restart!"
+            HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' whatsss_app 2>/dev/null || echo "starting")
+            if [ "$HEALTH_STATUS" = "healthy" ]; then
+              healthy=true
               break
             fi
+            echo "Waiting for healthcheck ($i/30): $HEALTH_STATUS"
             sleep 2
           done
+
+          if [ "$healthy" != "true" ]; then
+            echo "::error::Application failed to become healthy after restart"
+            docker compose -p whatsss_c03_ci ps
+            docker compose -p whatsss_c03_ci logs --no-color --tail=200
+            exit 1
+          fi
+
+          echo "whatsss_app is healthy after restart!"
 
       - name: Verify Transaction Persisted Across Teardown
         run: |
@@ -259,7 +331,7 @@ jobs:
           curl -s -i -c cookie_post.txt -X POST http://localhost:8080/api/auth/login \
             -H "Content-Type: application/json" \
             -H "Origin: http://localhost:8080" \
-            -d '{"username":"user_demo","password":"CiDemoPassword2026!"}' | grep "HTTP/1.1 200 OK"
+            -d "{\"username\":\"user_demo\",\"password\":\"${CI_DEMO_PWD}\"}" | grep "HTTP/1.1 200 OK"
 
           echo "Fetching transactions..."
           TX_LIST=$(curl -s -b cookie_post.txt http://localhost:8080/api/transactions)
@@ -271,4 +343,4 @@ jobs:
         if: always()
         working-directory: ../clean-clone-test
         run: |
-          docker compose down -v || true
+          docker compose -p whatsss_c03_ci down -v || true
