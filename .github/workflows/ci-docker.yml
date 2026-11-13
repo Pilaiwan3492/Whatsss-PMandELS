@@ -128,18 +128,53 @@ jobs:
             --build-arg APP_COMMIT_SHA="${{ github.sha }}" \
             -t whatsss:pr-${{ github.sha }} .
 
-      - name: Verify Container Startup & Liveness Probe
+      - name: Verify Container Startup, Liveness & Database Readiness Probes
         run: |
-          docker run -d --name whatsss-pr-test \
+          CONTAINER_NAME="whatsss-pr-test"
+
+          # Guarantee container cleanup on script exit, success, or failure
+          cleanup() {
+            echo "Cleaning up container $CONTAINER_NAME..."
+            docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "Starting production Docker container with database connectivity..."
+          docker run -d --name "$CONTAINER_NAME" \
+            --network host \
             -e NODE_ENV=production \
             -e PORT=8080 \
             -e HOST=0.0.0.0 \
             -e JWT_SECRET="ci_test_super_secret_jwt_key_at_least_32_chars" \
             -e CLIENT_URL="http://localhost:8080" \
-            -e DATABASE_URL="postgresql://test:test@127.0.0.1:5432/test" \
-            -p 8080:8080 \
+            -e DATABASE_URL="${{ env.DATABASE_URL }}" \
             whatsss:pr-${{ github.sha }}
-          sleep 4
-          curl -f http://localhost:8080/api/health || (docker logs whatsss-pr-test && exit 1)
-          curl -f http://localhost:8080/ || (docker logs whatsss-pr-test && exit 1)
-          docker rm -f whatsss-pr-test
+
+          echo "Waiting for container and database readiness probe (/api/ready)..."
+          is_ready=false
+          for i in {1..30}; do
+            READY_RESPONSE=$(curl -s http://127.0.0.1:8080/api/ready || echo "unreachable")
+            if echo "$READY_RESPONSE" | grep -q '"status":"ready"'; then
+              is_ready=true
+              echo "Container database probe PASSED on attempt $i ($READY_RESPONSE)"
+              break
+            fi
+            echo "Waiting for container readiness ($i/30): $READY_RESPONSE"
+            sleep 1
+          done
+
+          if [ "$is_ready" != "true" ]; then
+            echo "::error::Container failed readiness check (/api/ready)"
+            echo "--- Container Logs ---"
+            docker logs "$CONTAINER_NAME"
+            exit 1
+          fi
+
+          echo "Testing Liveness Probe (/api/health)..."
+          curl -f http://127.0.0.1:8080/api/health
+
+          echo "Testing Database Readiness Probe (/api/ready)..."
+          curl -f http://127.0.0.1:8080/api/ready
+
+          echo "Testing SPA Static Asset Serving (/)..."
+          curl -f http://127.0.0.1:8080/

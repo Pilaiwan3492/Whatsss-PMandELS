@@ -19,7 +19,7 @@ flowchart TD
     
     subgraph CloudRunService ["Google Cloud Run Service (Single Container)"]
         direction TB
-        ExpressServer["Express.js Server (Node.js 24)<br/>HOST: 0.0.0.0 | PORT: dynamic"]
+        ExpressServer["Express.js Server (Node.js 20 LTS)<br/>HOST: 0.0.0.0 | PORT: dynamic"]
         StaticServe["Static Asset Serving<br/>(express.static client/dist)"]
         SPAFallback["SPA Fallback Routing<br/>(GET * -> index.html)"]
         APIRouter["Express API Router<br/>(/api/*)"]
@@ -45,8 +45,8 @@ flowchart TD
 ```
 
 ### 1.1 Technology Stack Summary
-* **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons. Built into static artifacts (`client/dist`).
-* **Backend:** Node.js 24, Express, TypeScript, Prisma ORM. Built into CommonJS JavaScript in `server/dist`.
+* **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons. Built into static artifacts (`client/dist`). Engine standard: Node.js 20.
+* **Backend:** Node.js 20 (Active LTS), Express, TypeScript, Prisma ORM 5.x. Built into CommonJS JavaScript in `server/dist`. Standardized across `.nvmrc`, `server/package.json` engines (`>=20.0.0`), `Dockerfile` (`node:20-alpine`), and GitHub Actions CI runner (`node-version: 20`).
 * **Database:** PostgreSQL 16 (relational schema enforcing ACID invariants, split allocation integrity, and account type rules).
 * **Serving Topology:** Single-container deployment where the Express backend serves both the REST API endpoints (`/api/*`) and compiled static frontend assets (`client/dist`), with SPA fallback routing to `index.html` for client-side navigation.
 
@@ -732,7 +732,7 @@ flowchart TD
 | 9 | **Secret Management Isolation** (Zero secrets in Image or Git) | **COMPLETED** | Enforced by `.dockerignore`, `.gitignore`, CI credential scan, and Secret Manager documentation |
 | 10 | **Readiness Probe State Discrimination** (200 on DB ready, 503 on DB disconnect) | **COMPLETED** | Verified locally: disconnected DB $\rightarrow$ HTTP 503 (`Database connection unavailable`); live DB $\rightarrow$ HTTP 200 (`database: connected`) |
 | 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci.yml` triggers on pushes; executes full test matrix and C-03 clean-clone verification |
-| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | `.github/workflows/ci-docker.yml` triggers on PRs to `staging-lab5` and `main`; executes consolidated `test-and-docker` job (backend, frontend, Docker build and liveness probe) |
+| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | `.github/workflows/ci-docker.yml` triggers on PRs to `staging-lab5` and `main`; executes consolidated `test-and-docker` job (backend, frontend, Docker multi-stage build, container startup, liveness probe `/api/health`, and live database readiness probe `/api/ready` with automated EXIT trap cleanup) |
 | 13 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md` updated with exact verified commands, configuration runbooks, and diagrams |
 | 14 | **Traceable Verification Evidence & Commit SHA** | **COMPLETED** | Commit history, command outputs, and test logs recorded for peer review |
 | 15 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Fresh clone from branch with `.env.example` only; started via `docker compose up -d --build`; health probes 200 OK; transaction created; data persisted across `docker compose down` and restart |
