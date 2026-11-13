@@ -369,13 +369,13 @@ docker compose up -d
 
 # 2. Run Prisma migration inside container against PostgreSQL
 docker run --rm --network whatsss-pmandels_default \
-  -e DATABASE_URL="postgresql://postgres:postgres@whatsss_postgres:5432/whatsss_db?schema=public" \
+  -e DATABASE_URL="postgresql://postgres:postgres@postgres:5432/whatsss_db?schema=public" \
   whatsss:test npx prisma migrate deploy
 # Output: 3 migrations found. No pending migrations to apply. Database schema is up to date!
 
 # 3. Run Prisma seed inside container
 docker run --rm --network whatsss-pmandels_default \
-  -e DATABASE_URL="postgresql://postgres:postgres@whatsss_postgres:5432/whatsss_db?schema=public" \
+  -e DATABASE_URL="postgresql://postgres:postgres@postgres:5432/whatsss_db?schema=public" \
   -e SEED_ADMIN_PASSWORD="AdminSecurePassword123!" \
   -e SEED_DEMO_DATA="true" \
   -e SEED_DEMO_PASSWORD="DemoSecurePassword123!" \
@@ -389,7 +389,7 @@ docker run -d --name whatsss-live-instance --network whatsss-pmandels_default \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET="test_only_cryptographically_secure_jwt_secret_32_chars" \
   -e CLIENT_URL="http://localhost:8080" \
-  -e DATABASE_URL="postgresql://postgres:postgres@whatsss_postgres:5432/whatsss_db?schema=public" \
+  -e DATABASE_URL="postgresql://postgres:postgres@postgres:5432/whatsss_db?schema=public" \
   -p 8080:8080 \
   whatsss:test
 
@@ -400,7 +400,7 @@ curl -i http://localhost:8080/api/ready
 
 ### 7.4 Single-Command Local Full-Stack Deployment (`docker compose`)
 
-`docker-compose.yml` orchestrates the complete stack locally in a single command, running PostgreSQL, applying schema migrations, running idempotent seed, and serving the full-stack container:
+`docker-compose.yml` orchestrates the complete stack locally in a single command, running PostgreSQL, applying schema migrations, running idempotent seed, and serving the full-stack container. Dynamic container naming is managed automatically by Compose without static `container_name` to prevent collisions across multiple workspaces or developer projects.
 
 ```bash
 # 1. Initialize environment file from template
@@ -411,13 +411,39 @@ JWT_SECRET=$(openssl rand -hex 32)
 ADMIN_PASSWORD=$(openssl rand -hex 16)
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
 
-# 3. Edit .env and replace template placeholders with the generated values:
-# - JWT_SECRET: Replace placeholder with $JWT_SECRET
-# - SEED_ADMIN_PASSWORD: Replace placeholder with $ADMIN_PASSWORD
-# - POSTGRES_PASSWORD: Replace placeholder with $POSTGRES_PASSWORD
-# - DATABASE_URL: Update password in connection string to match $POSTGRES_PASSWORD
-#
-# NOTE ON DEMO USER:
+# 3. Write configured secrets to .env (ensuring matching database credentials)
+# NOTE: POSTGRES_USER=postgres is for local development/testing only.
+# In GCP Cloud SQL or production, configure dedicated application database users.
+cat <<EOF > .env
+# Server Network & Host Configuration
+PORT=8080
+HOST=0.0.0.0
+CLIENT_URL=http://localhost:8080
+NODE_ENV=production
+
+# Local PostgreSQL Configuration (Local only; do not use in Cloud SQL)
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_DB=whatsss_db
+POSTGRES_PORT=5432
+
+# Database Connection String (Credentials synchronized with POSTGRES_USER & POSTGRES_PASSWORD)
+DATABASE_URL="postgresql://postgres:${POSTGRES_PASSWORD}@localhost:5432/whatsss_db?schema=public"
+
+# Authentication & JWT Security
+JWT_SECRET=${JWT_SECRET}
+JWT_EXPIRES_IN=24h
+APP_COMMIT_SHA=development
+
+# Initial Seed Configuration
+SEED_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+SEED_ADMIN_EMAIL=admin@whatsss.local
+SEED_DEMO_DATA=false
+SEED_DEMO_PASSWORD=
+SEED_DEMO_EMAIL=user_demo@whatsss.local
+EOF
+
+# Note on Demo User:
 # SEED_DEMO_DATA is false by default. If you need a pre-seeded demo user (user_demo)
 # for evaluation, set SEED_DEMO_DATA=true and assign a secure SEED_DEMO_PASSWORD (min 12 chars).
 
@@ -430,14 +456,36 @@ docker compose up -d --build
 # 6. Verify all services are healthy and running
 docker compose ps
 # Expected output:
-# whatsss_app        whatsss:local   Up (healthy)   0.0.0.0:8080->8080/tcp
-# whatsss_migrate    whatsss:local   Exited (0)     (migrations & seed completed)
-# whatsss_postgres   postgres:16     Up (healthy)   0.0.0.0:5432->5432/tcp
+# NAME                       IMAGE           STATUS         PORTS
+# <project>-app-1            whatsss:local   Up (healthy)   0.0.0.0:8080->8080/tcp
+# <project>-migrate-1        whatsss:local   Exited (0)     (migrations & seed completed)
+# <project>-postgres-1       postgres:16     Up (healthy)   0.0.0.0:5432->5432/tcp
 
-# 7. Probe application health & readiness
+# 7. View logs using compose service names
+docker compose logs migrate
+docker compose logs app
+
+# 8. Probe application health (liveness) & readiness
 curl -i http://localhost:8080/api/health
 curl -i http://localhost:8080/api/ready
 ```
+
+#### Required Configuration Reference Table
+
+| Key | Purpose | Required Format / Value | Scope |
+|---|---|---|---|
+| `POSTGRES_USER` | Local DB username | `postgres` | Local / Sandbox only |
+| `POSTGRES_PASSWORD` | Local DB password | Unique random string (e.g. 16+ hex chars) | Local / Sandbox only |
+| `POSTGRES_DB` | Database schema name | `whatsss_db` | Local / Sandbox only |
+| `DATABASE_URL` | Local DB connection URI | `postgresql://postgres:<matching-password>@localhost:5432/whatsss_db?schema=public` | Local host / runner |
+| `JWT_SECRET` | Token signing secret | Unique cryptographically random key (min 32 chars) | All environments |
+| `SEED_ADMIN_PASSWORD` | Initial admin password | Unique secure password (min 12 chars) | All environments |
+| `SEED_DEMO_DATA` | Flag for demo account | `false` (default) or `true` | Testing only |
+| `SEED_DEMO_PASSWORD` | Password for `user_demo` | Required only when `SEED_DEMO_DATA=true` (min 12 chars) | Testing only |
+
+> [!WARNING]
+> **PostgreSQL Password with Existing Docker Volumes:**
+> If an existing PostgreSQL data volume (`whatsss_pgdata`) has already been initialized, changing `POSTGRES_PASSWORD` in `.env` alone will **not** alter the database password stored inside the volume. In that case, you must update the password directly in PostgreSQL (`ALTER USER postgres WITH PASSWORD '...';`) or retain the existing password in `.env`. Do **not** arbitrarily run `docker compose down -v` on persistent environments, as that will destroy stored business data.
 
 ---
 
@@ -475,14 +523,14 @@ docker compose up -d --build
 ```
 **Sanitized Execution Output:**
 ```text
-✔ Network whatsss-clean-clone-c03_default      Created
-✔ Volume whatsss-clean-clone-c03_whatsss_pgdata Created
-✔ Container whatsss_postgres                   Started (healthy)
-✔ Container whatsss_migrate                    Started (healthy -> Exited 0)
-✔ Container whatsss_app                        Started (healthy)
+✔ Network clean-clone-dir_default              Created
+✔ Volume clean-clone-dir_whatsss_pgdata        Created
+✔ Container clean-clone-dir-postgres-1         Started (healthy)
+✔ Container clean-clone-dir-migrate-1          Started (healthy -> Exited 0)
+✔ Container clean-clone-dir-app-1              Started (healthy)
 ```
 
-**Migration & Seed Log (`docker logs whatsss_migrate`):**
+**Migration & Seed Log (`docker compose logs migrate`):**
 ```text
 Prisma schema loaded from prisma/schema.prisma
 Datasource "db": PostgreSQL database "whatsss_db", schema "public" at "postgres:5432"
@@ -547,9 +595,9 @@ curl -i http://localhost:8080/api/ready
    ```bash
    docker compose down
    # Output:
-   # Container whatsss_app Stopped & Removed
-   # Container whatsss_migrate Stopped & Removed
-   # Container whatsss_postgres Stopped & Removed
+   # Container clean-clone-dir-app-1 Stopped & Removed
+   # Container clean-clone-dir-migrate-1 Stopped & Removed
+   # Container clean-clone-dir-postgres-1 Stopped & Removed
    # Network removed (Volume whatsss_pgdata preserved)
    ```
 
@@ -557,9 +605,9 @@ curl -i http://localhost:8080/api/ready
    ```bash
    docker compose up -d
    # Output:
-   # Container whatsss_postgres Started (healthy)
-   # Container whatsss_migrate Started -> Idempotent seed preserved -> Exited 0
-   # Container whatsss_app Started (healthy)
+   # Container clean-clone-dir-postgres-1 Started (healthy)
+   # Container clean-clone-dir-migrate-1 Started -> Idempotent seed preserved -> Exited 0
+   # Container clean-clone-dir-app-1 Started (healthy)
    ```
 
 3. **Verify Data Persistence:**
@@ -657,8 +705,8 @@ flowchart LR
 
 * **Branch Protection:** All five jobs must report Success before any PR targeting `staging-lab5` can be reviewed and approved.
 * **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted.
-* **Supply-Chain Security:** All third-party GitHub Actions are pinned to full, immutable 40-character commit SHAs (`actions/checkout`, `actions/setup-node`, `docker/setup-buildx-action`) with version comments to prevent supply-chain attacks.
-* **Secret Detection & Prevention:** The `security-scan` job scans for forbidden files (`.env`, `.pem`, `.key`, service accounts) and inspects tracked source files for hardcoded private keys or live API tokens. Repositories should additionally enforce GitHub Secret Scanning and Push Protection.
+* **Supply-Chain Security:** All third-party GitHub Actions are pinned to full, immutable 40-character commit SHAs (`actions/checkout`, `actions/setup-node`, `docker/setup-buildx-action`, `gitleaks/gitleaks-action`) with version comments to prevent supply-chain attacks.
+* **Secret Detection & Prevention:** The `security-scan` job scans for forbidden credential files (`.env`, `.pem`, `.key`, service accounts) and executes Gitleaks (`gitleaks/gitleaks-action`) across full Git history and the working tree using `.gitleaks.toml` with targeted allowlists for explicit unit test fixtures and documentation template placeholders (no broad directory exclusions). Repositories should additionally enforce GitHub Secret Scanning and Push Protection.
 
 ---
 
