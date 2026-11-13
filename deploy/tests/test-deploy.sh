@@ -7,8 +7,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${DEPLOY_DIR}/.." && pwd)"
 DEPLOY_SCRIPT="${DEPLOY_DIR}/deploy.sh"
 MOCKS_DIR="${SCRIPT_DIR}/mocks"
+
+cd "${REPO_ROOT}"
+export APP_COMMIT_SHA="${APP_COMMIT_SHA:-0123456789abcdef0123456789abcdef01234567}"
 
 chmod +x "${DEPLOY_SCRIPT}" "${DEPLOY_DIR}/release.sh" "${MOCKS_DIR}/gcloud" "${MOCKS_DIR}/docker" "${MOCKS_DIR}/curl"
 
@@ -19,6 +23,7 @@ cleanup() {
   fi
 }
 trap cleanup EXIT INT TERM
+trap 'echo "ERROR ON LINE $LINENO: command was $BASH_COMMAND" >&2' ERR
 
 # Ensure python3 is available in PATH (on Windows Git Bash where python3 may be in ~/.local/bin)
 if ! python3 -c "import urllib.parse" >/dev/null 2>&1; then
@@ -118,13 +123,15 @@ for i in "${!RAW_PASSWORDS[@]}"; do
   enc_pwd="${EXPECTED_ENCODED[$i]}"
   new_test_env "test3_encode_${i}"
 
-  output="$(
+  if ! output="$(
     GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
     DB_USER="whatsss@app" \
     WHATSSS_DB_PASSWORD="${raw_pwd}" \
     WHATSSS_JWT_SECRET="JwtSecret_ForEncodingTest_1234567890" \
     bash "${DEPLOY_SCRIPT}" 2>&1
-  )"
+  )"; then
+    fail_test "deploy.sh failed during URL encoding test for '${raw_pwd}': ${output}"
+  fi
 
   stored_url="$(cat "${MOCK_STATE_DIR}/secret_val_whatsss-database-url")"
   expected_url="postgresql://whatsss%40app:${enc_pwd}@localhost:5432/whatsss_db?host=/cloudsql/cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql&schema=public"
@@ -143,9 +150,13 @@ pass_test "Database URL encoding verified for NormalPass123, Pass@123, Pass#123,
 # Test 4 & 5: First Deploy Creates Secrets; Second Deploy Preserves Credentials
 # ------------------------------------------------------------------------------
 new_test_env "test4_idempotent_secrets"
-GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
-WHATSSS_DB_PASSWORD="InitialDB@Pass#1" \
-bash "${DEPLOY_SCRIPT}" >/dev/null 2>&1
+if ! output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  WHATSSS_DB_PASSWORD="InitialDB@Pass#1" \
+  bash "${DEPLOY_SCRIPT}" 2>&1
+)"; then
+  fail_test "First deploy failed in test 4: ${output}"
+fi
 
 initial_sql_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
 initial_secret_url="$(cat "${MOCK_STATE_DIR}/secret_val_whatsss-database-url")"
@@ -157,10 +168,14 @@ fi
 
 # Run second deploy with ROTATE_DB_PASSWORD=0 and a different WHATSSS_DB_PASSWORD
 : > "${MOCK_LOG_FILE}"
-GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
-ROTATE_DB_PASSWORD=0 \
-WHATSSS_DB_PASSWORD="UnintendedNewPass#2" \
-bash "${DEPLOY_SCRIPT}" >/dev/null 2>&1
+if ! output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  ROTATE_DB_PASSWORD=0 \
+  WHATSSS_DB_PASSWORD="UnintendedNewPass#2" \
+  bash "${DEPLOY_SCRIPT}" 2>&1
+)"; then
+  fail_test "Second deploy failed in test 4: ${output}"
+fi
 
 second_sql_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
 second_secret_url="$(cat "${MOCK_STATE_DIR}/secret_val_whatsss-database-url")"
@@ -175,44 +190,40 @@ fi
 pass_test "Idempotent redeploy (ROTATE_DB_PASSWORD=0) preserves synchronized DB password and Secret Manager version"
 
 # ------------------------------------------------------------------------------
-# Test 6: Explicit Secret Rotation (ROTATE_DB_PASSWORD=1) Synchronizes DB & Secret
+# Test 6: Setting ROTATE_DB_PASSWORD=1 Fails Fast Before Modifying GCP Resources
 # ------------------------------------------------------------------------------
-: > "${MOCK_LOG_FILE}"
-GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
-ROTATE_DB_PASSWORD=1 \
-WHATSSS_DB_PASSWORD="Rotated@Pass/2026:99%" \
-bash "${DEPLOY_SCRIPT}" >/dev/null 2>&1
-
-rotated_sql_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
-rotated_secret_url="$(cat "${MOCK_STATE_DIR}/secret_val_whatsss-database-url")"
-rotated_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
-expected_rotated_url="postgresql://whatsss_app:Rotated%40Pass%2F2026%3A99%25@localhost:5432/whatsss_db?host=/cloudsql/cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql&schema=public"
-
-if [[ "${rotated_sql_pwd}" != "Rotated@Pass/2026:99%" || "${rotated_secret_url}" != "${expected_rotated_url}" || "${rotated_ver}" != "2" ]]; then
-  fail_test "Rotation (ROTATE_DB_PASSWORD=1) failed to synchronize Cloud SQL password and Secret Manager version 2"
-fi
-pass_test "Explicit credential rotation (ROTATE_DB_PASSWORD=1) updates Cloud SQL and Secret Manager in sync (version 2)"
-
-# ------------------------------------------------------------------------------
-# Test 7: Secret Update Failure During Rotation Aborts Before Cloud Run Deploy
-# ------------------------------------------------------------------------------
-: > "${MOCK_LOG_FILE}"
-if output="$(
+new_test_env "test6_rotation_disabled"
+output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
   ROTATE_DB_PASSWORD=1 \
-  MOCK_FAIL_SECRET_UPDATE=1 \
-  WHATSSS_DB_PASSWORD="FailedRotationPass123" \
+  bash "${DEPLOY_SCRIPT}" 2>&1 || true
+)"
+if [[ "${output}" != *"ERROR: Automatic in-place DB password rotation is disabled."* || "${output}" != *"Use the documented maintenance rotation procedure."* ]]; then
+  fail_test "Expected automatic rotation disabled error message, got: ${output}"
+fi
+if [[ -s "${MOCK_LOG_FILE}" ]]; then
+  fail_test "ROTATE_DB_PASSWORD=1 must abort before executing any GCP commands (found: $(cat "${MOCK_LOG_FILE}"))"
+fi
+pass_test "Setting ROTATE_DB_PASSWORD=1 fails closed before modifying GCP resources"
+
+# ------------------------------------------------------------------------------
+# Test 7: Secret Creation Failure During Initial Provision Aborts Deployment
+# ------------------------------------------------------------------------------
+new_test_env "test7_initial_secret_create_fail"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  MOCK_FAIL_SECRET_CREATE=1 \
   bash "${DEPLOY_SCRIPT}" 2>&1
 )"; then
-  fail_test "Expected deploy.sh to fail when Secret Manager version update fails"
+  fail_test "Expected deploy.sh to fail when secret creation fails"
 fi
-if [[ "${output}" != *"ERROR: Failed to add new secret version"* ]]; then
-  fail_test "Expected secret version update failure error message, got: ${output}"
+if [[ "${output}" != *"ERROR: Failed to create secret"* ]]; then
+  fail_test "Expected secret create failure error message, got: ${output}"
 fi
 if grep -q "run deploy" "${MOCK_LOG_FILE}" || grep -q "run jobs execute" "${MOCK_LOG_FILE}"; then
-  fail_test "deploy.sh must not execute migration job or deploy Cloud Run when secret update fails"
+  fail_test "deploy.sh must not execute migration job or deploy Cloud Run when secret create fails"
 fi
-pass_test "Secret update failure aborts deployment before migration job or Cloud Run rollout"
+pass_test "Secret creation failure aborts deployment before migration job or Cloud Run rollout"
 
 # ------------------------------------------------------------------------------
 # Test 8: Project IAM Binding Failure Fails Fast
@@ -255,7 +266,7 @@ pass_test "Secret Accessor IAM binding failure fails fast and stops deployment"
 # ------------------------------------------------------------------------------
 # Test 10: R-07 Least-Privilege Verification Rejects Excessive Project Roles
 # ------------------------------------------------------------------------------
-new_test_env "test10_least_privilege_violation"
+new_test_env "test10_least_privilege_violation_editor"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
   MOCK_FORBIDDEN_SA_ROLE="roles/editor" \
@@ -266,12 +277,72 @@ fi
 if [[ "${output}" != *"Least-privilege violation (R-07)"* ]]; then
   fail_test "Expected R-07 least-privilege violation message, got: ${output}"
 fi
-pass_test "Runtime SA least-privilege verification rejects Owner/Editor/project-wide Secret Accessor roles"
+
+new_test_env "test10_least_privilege_violation_storage"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  MOCK_FORBIDDEN_SA_ROLE="roles/storage.admin" \
+  bash "${DEPLOY_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected deploy.sh to reject Runtime SA holding roles/storage.admin"
+fi
+if [[ "${output}" != *"Least-privilege violation (R-07)"* ]]; then
+  fail_test "Expected R-07 least-privilege violation message, got: ${output}"
+fi
+pass_test "Runtime SA least-privilege verification rejects Owner/Editor/Storage.Admin/project-wide Secret Accessor roles"
 
 # ------------------------------------------------------------------------------
-# Test 11: Active gcloud Project Mismatch Guard
+# Test 11: R-07 Least-Privilege Verification Rejects Unauthorized Secret Roles
 # ------------------------------------------------------------------------------
-new_test_env "test11_project_mismatch"
+new_test_env "test11_secret_excessive_role"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  MOCK_FORBIDDEN_SECRET_SA_ROLE="roles/secretmanager.admin" \
+  bash "${DEPLOY_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected deploy.sh to reject Runtime SA holding roles/secretmanager.admin on secret"
+fi
+if [[ "${output}" != *"Least-privilege violation (R-07)"* ]]; then
+  fail_test "Expected secret least-privilege violation message, got: ${output}"
+fi
+pass_test "Secret IAM verification rejects unauthorized roles on Secret Manager secrets"
+
+# ------------------------------------------------------------------------------
+# Test 12: Unable to Read Project IAM Policy Fails Closed Immediately
+# ------------------------------------------------------------------------------
+new_test_env "test12_project_iam_read_fail"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  MOCK_FAIL_PROJECT_GET_IAM=1 \
+  bash "${DEPLOY_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected deploy.sh to fail when reading project IAM policy fails"
+fi
+if [[ "${output}" != *"ERROR: Unable to read project IAM policy."* ]]; then
+  fail_test "Expected project IAM read failure error message, got: ${output}"
+fi
+pass_test "Unable to read Project IAM policy fails closed immediately"
+
+# ------------------------------------------------------------------------------
+# Test 13: Unable to Read Secret IAM Policy Fails Closed Immediately
+# ------------------------------------------------------------------------------
+new_test_env "test13_secret_iam_read_fail"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  MOCK_FAIL_SECRET_GET_IAM=1 \
+  bash "${DEPLOY_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected deploy.sh to fail when reading secret IAM policy fails"
+fi
+if [[ "${output}" != *"ERROR: Unable to read IAM policy for secret"* ]]; then
+  fail_test "Expected secret IAM read failure error message, got: ${output}"
+fi
+pass_test "Unable to read Secret IAM policy fails closed immediately"
+
+# ------------------------------------------------------------------------------
+# Test 14: Active gcloud Project Mismatch Guard
+# ------------------------------------------------------------------------------
+new_test_env "test14_project_mismatch"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
   MOCK_ACTIVE_PROJECT="some-other-gcp-project" \
@@ -283,6 +354,54 @@ if [[ "${output}" != *"Active gcloud project ('some-other-gcp-project') differs 
   fail_test "Expected project mismatch error message, got: ${output}"
 fi
 pass_test "Active gcloud project mismatch guard prevents accidental cross-project deployment"
+
+# ------------------------------------------------------------------------------
+# Test 15: Manual Maintenance Rotation Procedure Simulation with Safe Rollback
+# ------------------------------------------------------------------------------
+new_test_env "test15_manual_rotation_rollback"
+# Initialize baseline deployment
+GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+WHATSSS_DB_PASSWORD="OriginalDBPassword123" \
+bash "${DEPLOY_SCRIPT}" >/dev/null 2>&1
+
+original_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
+original_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
+
+# Execute simulated manual maintenance rotation:
+# Step 1: Add new secret version 2 before touching DB
+NEW_ROTATED_PWD="NewRotatedPassword456!"
+NEW_URL="postgresql://whatsss_app:${NEW_ROTATED_PWD}@localhost:5432/whatsss_db?host=/cloudsql/cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql&schema=public"
+printf '%s' "${NEW_URL}" > "${MOCK_STATE_DIR}/tmp_new_secret.txt"
+gcloud secrets versions add whatsss-database-url --data-file="${MOCK_STATE_DIR}/tmp_new_secret.txt" >/dev/null
+new_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
+
+# Step 2: Update Cloud SQL password
+gcloud sql users set-password whatsss_app --instance=whatsss-sql --password="${NEW_ROTATED_PWD}" --project=cpe334-whatsss-pmandels >/dev/null
+
+# Step 3: Trigger release.sh with new secret version (simulating release failure)
+export MOCK_FAIL_RUN_DEPLOY=1
+if GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
+  IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781" \
+  SECRET_DB_URL_VERSION="${new_ver}" \
+  bash "${DEPLOY_DIR}/release.sh" >/dev/null 2>&1; then
+  fail_test "Expected release.sh to fail under simulated release failure"
+fi
+
+# Step 4: Perform Rollback — restore original Cloud SQL password & redeploy previous secret version
+gcloud sql users set-password whatsss_app --instance=whatsss-sql --password="${original_pwd}" --project=cpe334-whatsss-pmandels >/dev/null
+export MOCK_FAIL_RUN_DEPLOY=0
+GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+APP_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
+IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781" \
+SECRET_DB_URL_VERSION="${original_ver}" \
+bash "${DEPLOY_DIR}/release.sh" >/dev/null 2>&1
+
+rolled_back_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
+if [[ "${rolled_back_pwd}" != "${original_pwd}" ]]; then
+  fail_test "Rollback failed to restore original Cloud SQL password"
+fi
+pass_test "Manual maintenance rotation procedure with safe rollback restores original credentials and operational service"
 
 echo "=============================================================================="
 echo " ALL ${PASS_COUNT} DEPLOY SCRIPT TESTS PASSED!"

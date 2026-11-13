@@ -7,8 +7,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${DEPLOY_DIR}/.." && pwd)"
 RELEASE_SCRIPT="${DEPLOY_DIR}/release.sh"
 MOCKS_DIR="${SCRIPT_DIR}/mocks"
+
+cd "${REPO_ROOT}"
 
 chmod +x "${RELEASE_SCRIPT}" "${MOCKS_DIR}/gcloud" "${MOCKS_DIR}/docker" "${MOCKS_DIR}/curl"
 
@@ -45,11 +48,14 @@ echo "==========================================================================
 echo " Running Automated Test Suite: deploy/tests/test-release.sh"
 echo "=============================================================================="
 
+VALID_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567"
+VALID_IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781"
+
 # ------------------------------------------------------------------------------
 # Test 1: Missing GCP_PROJECT_ID fails fast
 # ------------------------------------------------------------------------------
 new_test_env "rel1_missing_project"
-if output="$(GCP_PROJECT_ID="" PROJECT_ID="" bash "${RELEASE_SCRIPT}" 2>&1)"; then
+if output="$(GCP_PROJECT_ID="" PROJECT_ID="" APP_COMMIT_SHA="${VALID_COMMIT_SHA}" IMAGE_REF="${VALID_IMAGE_REF}" bash "${RELEASE_SCRIPT}" 2>&1)"; then
   fail_test "Expected release.sh to fail when GCP_PROJECT_ID is missing"
 fi
 if [[ "${output}" != *"ERROR: GCP_PROJECT_ID is required"* ]]; then
@@ -61,13 +67,73 @@ fi
 pass_test "Missing GCP_PROJECT_ID fails fast with zero GCP calls"
 
 # ------------------------------------------------------------------------------
-# Test 2: DRY_RUN=1 executes zero real gcloud/curl commands
+# Test 2: Missing or Invalid APP_COMMIT_SHA Fails Fast (Full 40-char SHA Required)
 # ------------------------------------------------------------------------------
-new_test_env "rel2_dry_run"
+new_test_env "rel2_missing_sha"
+if output="$(GCP_PROJECT_ID="cpe334-whatsss-pmandels" APP_COMMIT_SHA="" IMAGE_REF="${VALID_IMAGE_REF}" bash "${RELEASE_SCRIPT}" 2>&1)"; then
+  fail_test "Expected release.sh to fail when APP_COMMIT_SHA is missing"
+fi
+if [[ "${output}" != *"ERROR: APP_COMMIT_SHA is required."* ]]; then
+  fail_test "Expected APP_COMMIT_SHA required error, got: ${output}"
+fi
+
+new_test_env "rel2_invalid_sha"
+if output="$(GCP_PROJECT_ID="cpe334-whatsss-pmandels" APP_COMMIT_SHA="short_or_production_tag" IMAGE_REF="${VALID_IMAGE_REF}" bash "${RELEASE_SCRIPT}" 2>&1)"; then
+  fail_test "Expected release.sh to fail when APP_COMMIT_SHA is not 40-character hex"
+fi
+if [[ "${output}" != *"ERROR: APP_COMMIT_SHA must be a full 40-character Git SHA."* ]]; then
+  fail_test "Expected 40-character Git SHA error, got: ${output}"
+fi
+pass_test "Missing or non-40-char APP_COMMIT_SHA fails fast and prevents unverified releases"
+
+# ------------------------------------------------------------------------------
+# Test 3: Missing or Tag-Based IMAGE_REF Fails Fast (Immutable Digest Required)
+# ------------------------------------------------------------------------------
+new_test_env "rel3_missing_image"
+if output="$(GCP_PROJECT_ID="cpe334-whatsss-pmandels" APP_COMMIT_SHA="${VALID_COMMIT_SHA}" IMAGE_REF="" bash "${RELEASE_SCRIPT}" 2>&1)"; then
+  fail_test "Expected release.sh to fail when IMAGE_REF is missing"
+fi
+if [[ "${output}" != *"ERROR: IMAGE_REF is required."* ]]; then
+  fail_test "Expected IMAGE_REF required error, got: ${output}"
+fi
+
+new_test_env "rel3_tag_image"
+if output="$(GCP_PROJECT_ID="cpe334-whatsss-pmandels" APP_COMMIT_SHA="${VALID_COMMIT_SHA}" IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss:latest" bash "${RELEASE_SCRIPT}" 2>&1)"; then
+  fail_test "Expected release.sh to fail when IMAGE_REF is an image tag instead of immutable digest"
+fi
+if [[ "${output}" != *"ERROR: IMAGE_REF must use an immutable sha256 digest."* ]]; then
+  fail_test "Expected immutable sha256 digest error, got: ${output}"
+fi
+pass_test "Missing or tag-based IMAGE_REF fails fast and enforces immutable sha256 digest"
+
+# ------------------------------------------------------------------------------
+# Test 4: Secret Version Missing or Disabled Fails Fast
+# ------------------------------------------------------------------------------
+new_test_env "rel4_secret_disabled"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  MOCK_SECRET_VERSION_DISABLED=1 \
+  SECRET_DB_URL_VERSION="2" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail when secret version is not ENABLED"
+fi
+if [[ "${output}" != *"is missing or not ENABLED"* ]]; then
+  fail_test "Expected secret version ENABLED check error, got: ${output}"
+fi
+pass_test "Disabled or missing Secret Manager version aborts release before job execution"
+
+# ------------------------------------------------------------------------------
+# Test 5: DRY_RUN=1 executes zero real gcloud/curl commands
+# ------------------------------------------------------------------------------
+new_test_env "rel5_dry_run"
 output="$(
   DRY_RUN=1 \
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
-  IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"
 if [[ -s "${MOCK_LOG_FILE}" ]]; then
@@ -79,12 +145,13 @@ fi
 pass_test "DRY_RUN=1 performs zero GCP mutations and prints expected release rollout commands"
 
 # ------------------------------------------------------------------------------
-# Test 3: First-Time Release (No Existing Service) Uses Safe Bootstrap & Real URL
+# Test 6: First-Time Release (No Existing Service) Uses Safe Bootstrap & Real URL
 # ------------------------------------------------------------------------------
-new_test_env "rel3_first_deploy"
+new_test_env "rel6_first_deploy"
 output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
-  IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"
 initial_client_url="$(cat "${MOCK_STATE_DIR}/svc_initial_client_url_whatsss")"
@@ -105,12 +172,13 @@ fi
 pass_test "First-time release uses safe bootstrap placeholder, synchronizes real Cloud Run HTTPS URL, and verifies probes"
 
 # ------------------------------------------------------------------------------
-# Test 4: Subsequent Release (Existing Service) Uses Existing Real HTTPS URL
+# Test 7: Subsequent Release (Existing Service) Uses Existing Real HTTPS URL
 # ------------------------------------------------------------------------------
 : > "${MOCK_LOG_FILE}"
 output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
-  IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"
 subsequent_initial_url="$(cat "${MOCK_STATE_DIR}/svc_initial_client_url_whatsss")"
@@ -123,11 +191,13 @@ fi
 pass_test "Subsequent release preserves existing real Cloud Run HTTPS URL and verifies post-update state"
 
 # ------------------------------------------------------------------------------
-# Test 5: Migration Job Failure Aborts Before Deploying Cloud Run Service
+# Test 8: Migration Job Failure Aborts Before Deploying Cloud Run Service
 # ------------------------------------------------------------------------------
-new_test_env "rel5_migrate_fail"
+new_test_env "rel8_migrate_fail"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   MOCK_FAIL_MIGRATE_EXECUTE=1 \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"; then
@@ -142,11 +212,13 @@ fi
 pass_test "Migration job failure immediately aborts release without deploying Cloud Run service"
 
 # ------------------------------------------------------------------------------
-# Test 6: Migration Job Execution Reporting succeededCount=0 Aborts Release
+# Test 9: Migration Job Execution Reporting succeededCount=0 Aborts Release
 # ------------------------------------------------------------------------------
-new_test_env "rel6_migrate_zero_succeeded"
+new_test_env "rel9_migrate_zero_succeeded"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   MOCK_MIGRATE_SUCCEEDED_COUNT=0 \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"; then
@@ -161,11 +233,13 @@ fi
 pass_test "Migration execution status verification rejects succeededCount=0 before service rollout"
 
 # ------------------------------------------------------------------------------
-# Test 7: Empty Cloud Run Service URL Aborts Release
+# Test 10: Empty Cloud Run Service URL Aborts Release
 # ------------------------------------------------------------------------------
-new_test_env "rel7_empty_url"
+new_test_env "rel10_empty_url"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   MOCK_SERVICE_URL="" \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"; then
@@ -177,11 +251,13 @@ fi
 pass_test "Empty Cloud Run Service URL aborts release and prevents false success report"
 
 # ------------------------------------------------------------------------------
-# Test 8: Non-HTTPS Cloud Run Service URL Aborts Release
+# Test 11: Non-HTTPS Cloud Run Service URL Aborts Release
 # ------------------------------------------------------------------------------
-new_test_env "rel8_non_https_url"
+new_test_env "rel11_non_https_url"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   MOCK_SERVICE_URL="http://whatsss-insecure.asia-southeast1.run.app" \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"; then
@@ -193,11 +269,13 @@ fi
 pass_test "Non-HTTPS Cloud Run Service URL is rejected"
 
 # ------------------------------------------------------------------------------
-# Test 9: CLIENT_URL Update Failure Aborts Release
+# Test 12: CLIENT_URL Update Failure Aborts Release
 # ------------------------------------------------------------------------------
-new_test_env "rel9_update_fail"
+new_test_env "rel12_update_fail"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   MOCK_FAIL_SERVICE_UPDATE=1 \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"; then
@@ -209,11 +287,13 @@ fi
 pass_test "CLIENT_URL update failure aborts release before completion"
 
 # ------------------------------------------------------------------------------
-# Test 10: Post-Update CLIENT_URL Verification Detects Stale Value
+# Test 13: Post-Update CLIENT_URL Verification Detects Stale Value
 # ------------------------------------------------------------------------------
-new_test_env "rel10_stale_client_url"
+new_test_env "rel13_stale_client_url"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   MOCK_STALE_CLIENT_URL=1 \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"; then
@@ -225,11 +305,13 @@ fi
 pass_test "Post-update CLIENT_URL verification catches mismatched environment configuration"
 
 # ------------------------------------------------------------------------------
-# Test 11: Runtime Service Account Verification on Job and Service
+# Test 14: Runtime Service Account Verification on Job and Service
 # ------------------------------------------------------------------------------
-new_test_env "rel11_job_sa_mismatch"
+new_test_env "rel14_job_sa_mismatch"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   MOCK_JOB_SA="1086708130644-compute@developer.gserviceaccount.com" \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"; then
@@ -239,9 +321,11 @@ if [[ "${output}" != *"ERROR: Migration job service account mismatch"* ]]; then
   fail_test "Expected migration job SA mismatch error, got: ${output}"
 fi
 
-new_test_env "rel11_service_sa_mismatch"
+new_test_env "rel14_service_sa_mismatch"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
   MOCK_SERVICE_SA="1086708130644-compute@developer.gserviceaccount.com" \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"; then

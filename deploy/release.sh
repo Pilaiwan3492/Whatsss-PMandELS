@@ -54,8 +54,24 @@ MIGRATE_JOB_NAME="${MIGRATE_JOB_NAME:-whatsss-migrate}"
 CLOUD_RUN_SERVICE="${CLOUD_RUN_SERVICE:-whatsss}"
 SEED_DEMO_DATA="${SEED_DEMO_DATA:-true}"
 
-COMMIT_SHA="${APP_COMMIT_SHA:-$(git rev-parse HEAD 2>/dev/null || echo 'production')}"
-IMAGE_REF="${IMAGE_REF:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${APP_NAME}:${COMMIT_SHA}}"
+if [[ -z "${APP_COMMIT_SHA:-}" ]]; then
+  echo "ERROR: APP_COMMIT_SHA is required." >&2
+  exit 1
+fi
+if [[ ! "${APP_COMMIT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: APP_COMMIT_SHA must be a full 40-character Git SHA." >&2
+  exit 1
+fi
+COMMIT_SHA="${APP_COMMIT_SHA}"
+
+if [[ -z "${IMAGE_REF:-}" ]]; then
+  echo "ERROR: IMAGE_REF is required." >&2
+  exit 1
+fi
+if [[ ! "${IMAGE_REF}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+  echo "ERROR: IMAGE_REF must use an immutable sha256 digest." >&2
+  exit 1
+fi
 
 run_cmd() {
   if [[ "${DRY_RUN}" == "1" ]]; then
@@ -70,28 +86,44 @@ resolve_secret_version() {
   local secret_name="$1"
   local explicit_version="${2:-}"
 
-  if [[ -n "${explicit_version}" ]]; then
-    echo "${explicit_version}"
-    return 0
-  fi
-
   if [[ "${DRY_RUN}" == "1" ]]; then
-    echo "1"
+    echo "${explicit_version:-1}"
     return 0
   fi
 
-  local version_name
-  version_name="$(gcloud secrets versions list "${secret_name}" \
-    --project="${PROJECT_ID}" \
-    --filter="state=ENABLED" \
-    --limit=1 \
-    --format="value(name)" 2>/dev/null || true)"
+  local ver="${explicit_version:-}"
+  if [[ -z "${ver}" ]]; then
+    local version_name
+    version_name="$(gcloud secrets versions list "${secret_name}" \
+      --project="${PROJECT_ID}" \
+      --filter="state=ENABLED" \
+      --limit=1 \
+      --format="value(name)" 2>/dev/null || true)"
 
-  if [[ -z "${version_name}" ]]; then
-    echo "ERROR: Secret ${secret_name} has no ENABLED version in Secret Manager." >&2
+    if [[ -z "${version_name}" ]]; then
+      echo "ERROR: Secret ${secret_name} has no ENABLED version in Secret Manager." >&2
+      exit 1
+    fi
+    ver="${version_name##*/}"
+  fi
+
+  if [[ ! "${ver}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Secret ${secret_name} version must be a numeric version, got '${ver}'." >&2
     exit 1
   fi
-  echo "${version_name##*/}"
+
+  local ver_state
+  ver_state="$(gcloud secrets versions describe "${ver}" \
+    --secret="${secret_name}" \
+    --project="${PROJECT_ID}" \
+    --format="value(state)" 2>/dev/null || true)"
+
+  if [[ "${ver_state}" != "ENABLED" ]]; then
+    echo "ERROR: Secret ${secret_name} version ${ver} is missing or not ENABLED (state: '${ver_state}')." >&2
+    exit 1
+  fi
+
+  echo "${ver}"
 }
 
 DB_URL_VER="$(resolve_secret_version "${SECRET_DB_URL}" "${SECRET_DB_URL_VERSION:-}")"

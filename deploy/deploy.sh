@@ -30,6 +30,11 @@ trap cleanup EXIT INT TERM
 
 DRY_RUN="${DRY_RUN:-0}"
 ROTATE_DB_PASSWORD="${ROTATE_DB_PASSWORD:-0}"
+if [[ "${ROTATE_DB_PASSWORD}" == "1" ]]; then
+  echo "ERROR: Automatic in-place DB password rotation is disabled." >&2
+  echo "Use the documented maintenance rotation procedure." >&2
+  exit 1
+fi
 ROTATE_APP_SECRETS="${ROTATE_APP_SECRETS:-0}"
 FORCE_IAM_BINDING="${FORCE_IAM_BINDING:-0}"
 
@@ -97,6 +102,16 @@ if [[ "${DRY_RUN}" != "1" ]]; then
 fi
 
 # ------------------------------------------------------------------------------
+# Pre-Flight Security & Rotation Guard (P0)
+# ------------------------------------------------------------------------------
+ROTATE_DB_PASSWORD="${ROTATE_DB_PASSWORD:-0}"
+if [[ "${ROTATE_DB_PASSWORD}" == "1" ]]; then
+  echo "ERROR: Automatic in-place DB password rotation is disabled." >&2
+  echo "Use the documented maintenance rotation procedure." >&2
+  exit 1
+fi
+
+# ------------------------------------------------------------------------------
 # Resource Naming Contract (All renamed for 'whatsss' per Issue #19)
 # ------------------------------------------------------------------------------
 APP_NAME="${APP_NAME:-whatsss}"
@@ -119,7 +134,18 @@ SECRET_DEMO_PWD="${SECRET_DEMO_PWD:-whatsss-demo-password}"
 MIGRATE_JOB_NAME="${MIGRATE_JOB_NAME:-whatsss-migrate}"
 CLOUD_RUN_SERVICE="${CLOUD_RUN_SERVICE:-whatsss}"
 
-COMMIT_SHA="${APP_COMMIT_SHA:-$(git rev-parse HEAD 2>/dev/null || echo 'initial')}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+COMMIT_SHA="${APP_COMMIT_SHA:-$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)}"
+if [[ "${DRY_RUN}" == "1" && -z "${COMMIT_SHA}" ]]; then
+  COMMIT_SHA="0123456789abcdef0123456789abcdef01234567"
+fi
+if [[ -z "${COMMIT_SHA}" || ! "${COMMIT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: APP_COMMIT_SHA must be a full 40-character Git SHA." >&2
+  exit 1
+fi
+
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${APP_NAME}:${COMMIT_SHA}"
 CLOUDSQL_CONNECTION_NAME="${PROJECT_ID}:${REGION}:${SQL_INSTANCE}"
 
@@ -135,41 +161,171 @@ run_cmd() {
 has_project_role_binding() {
   local member="$1"
   local role="$2"
-  local policy_out
-  policy_out="$(gcloud projects get-iam-policy "${PROJECT_ID}" \
-    --flatten="bindings[].members" \
-    --filter="bindings.role=${role} AND bindings.members=${member}" \
-    --format="value(bindings.role)" 2>/dev/null || true)"
-  [[ "${policy_out}" == *"${role}"* ]]
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    return 0
+  fi
+  local policy_json
+  if ! policy_json="$(gcloud projects get-iam-policy "${PROJECT_ID}" --format=json 2>/dev/null)"; then
+    echo "ERROR: Unable to read project IAM policy." >&2
+    exit 1
+  fi
+  python3 -c '
+import sys, json
+role = sys.argv[1]
+member = sys.argv[2]
+raw = sys.argv[3]
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(1)
+bindings = data.get("bindings", [])
+for b in bindings:
+    if b.get("role") == role and member in b.get("members", []):
+        sys.exit(0)
+sys.exit(1)
+' "${role}" "${member}" "${policy_json}"
 }
 
 has_secret_role_binding() {
   local secret_name="$1"
   local member="$2"
   local role="$3"
-  local policy_out
-  policy_out="$(gcloud secrets get-iam-policy "${secret_name}" \
-    --project="${PROJECT_ID}" \
-    --flatten="bindings[].members" \
-    --filter="bindings.role=${role} AND bindings.members=${member}" \
-    --format="value(bindings.role)" 2>/dev/null || true)"
-  [[ "${policy_out}" == *"${role}"* ]]
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    return 0
+  fi
+  local secret_policy_json
+  if ! secret_policy_json="$(gcloud secrets get-iam-policy "${secret_name}" --project="${PROJECT_ID}" --format=json 2>/dev/null)"; then
+    echo "ERROR: Unable to read IAM policy for secret ${secret_name}." >&2
+    exit 1
+  fi
+  python3 -c '
+import sys, json
+role = sys.argv[1]
+member = sys.argv[2]
+raw = sys.argv[3]
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(1)
+bindings = data.get("bindings", [])
+for b in bindings:
+    if b.get("role") == role and member in b.get("members", []):
+        sys.exit(0)
+sys.exit(1)
+' "${role}" "${member}" "${secret_policy_json}"
 }
 
 verify_runtime_sa_project_iam() {
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    return 0
+  fi
   local member="serviceAccount:${RUNTIME_SA_EMAIL}"
-  if ! has_project_role_binding "${member}" "roles/cloudsql.client"; then
+  local policy_json
+  if ! policy_json="$(gcloud projects get-iam-policy "${PROJECT_ID}" --format=json 2>/dev/null)"; then
+    echo "ERROR: Unable to read project IAM policy." >&2
+    exit 1
+  fi
+
+  local sa_roles
+  sa_roles="$(python3 -c '
+import sys, json
+member = sys.argv[1]
+raw = sys.argv[2]
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(2)
+roles = [b.get("role") for b in data.get("bindings", []) if member in b.get("members", [])]
+for r in sorted(roles):
+    print(r)
+' "${member}" "${policy_json}")" || {
+    echo "ERROR: Failed to parse project IAM policy JSON." >&2
+    exit 1
+  }
+
+  if [[ -z "${sa_roles}" ]]; then
+    echo "ERROR: Verification failed — ${RUNTIME_SA_EMAIL} has no project-level roles on project ${PROJECT_ID}." >&2
+    exit 1
+  fi
+
+  local has_cloudsql_client=0
+  local unauthorized_roles=()
+  while IFS= read -r role; do
+    role="${role//$'\r'/}"
+    [[ -z "${role}" ]] && continue
+    if [[ "${role}" == "roles/cloudsql.client" ]]; then
+      has_cloudsql_client=1
+    else
+      unauthorized_roles+=("${role}")
+    fi
+  done <<< "${sa_roles}"
+
+  if [[ "${has_cloudsql_client}" -ne 1 ]]; then
     echo "ERROR: Verification failed — ${RUNTIME_SA_EMAIL} does not hold roles/cloudsql.client on project ${PROJECT_ID}." >&2
     exit 1
   fi
 
-  local forbidden_role
-  for forbidden_role in "roles/owner" "roles/editor" "roles/secretmanager.secretAccessor"; do
-    if has_project_role_binding "${member}" "${forbidden_role}"; then
-      echo "ERROR: Least-privilege violation (R-07) — ${RUNTIME_SA_EMAIL} must NOT hold project-level ${forbidden_role}." >&2
-      exit 1
+  if [[ "${#unauthorized_roles[@]}" -gt 0 ]]; then
+    echo "ERROR: Least-privilege violation (R-07) — ${RUNTIME_SA_EMAIL} holds unauthorized project-level role(s): ${unauthorized_roles[*]}." >&2
+    exit 1
+  fi
+}
+
+verify_runtime_sa_secret_iam() {
+  local secret_name="$1"
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    return 0
+  fi
+  local member="serviceAccount:${RUNTIME_SA_EMAIL}"
+  local secret_policy_json
+  if ! secret_policy_json="$(gcloud secrets get-iam-policy "${secret_name}" --project="${PROJECT_ID}" --format=json 2>/dev/null)"; then
+    echo "ERROR: Unable to read IAM policy for secret ${secret_name}." >&2
+    exit 1
+  fi
+
+  local sec_roles
+  sec_roles="$(python3 -c '
+import sys, json
+member = sys.argv[1]
+raw = sys.argv[2]
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(2)
+roles = [b.get("role") for b in data.get("bindings", []) if member in b.get("members", [])]
+for r in sorted(roles):
+    print(r)
+' "${member}" "${secret_policy_json}")" || {
+    echo "ERROR: Failed to parse secret IAM policy JSON for ${secret_name}." >&2
+    exit 1
+  }
+
+  if [[ -z "${sec_roles}" ]]; then
+    echo "ERROR: Verification failed — ${RUNTIME_SA_EMAIL} has no IAM roles on secret ${secret_name}." >&2
+    exit 1
+  fi
+
+  local has_accessor=0
+  local unauthorized_sec_roles=()
+  while IFS= read -r role; do
+    role="${role//$'\r'/}"
+    [[ -z "${role}" ]] && continue
+    if [[ "${role}" == "roles/secretmanager.secretAccessor" ]]; then
+      has_accessor=1
+    else
+      unauthorized_sec_roles+=("${role}")
     fi
-  done
+  done <<< "${sec_roles}"
+
+  if [[ "${has_accessor}" -ne 1 ]]; then
+    echo "ERROR: Verification failed — ${RUNTIME_SA_EMAIL} does not hold roles/secretmanager.secretAccessor on secret ${secret_name}." >&2
+    exit 1
+  fi
+
+  if [[ "${#unauthorized_sec_roles[@]}" -gt 0 ]]; then
+    echo "ERROR: Least-privilege violation (R-07) — ${RUNTIME_SA_EMAIL} holds unauthorized role(s) on secret ${secret_name}: ${unauthorized_sec_roles[*]}." >&2
+    exit 1
+  fi
 }
 
 ensure_secret_exists_with_value() {
@@ -385,33 +541,7 @@ else
     DB_SECRET_EXISTS=1
   fi
 
-  if [[ "${ROTATE_DB_PASSWORD}" == "1" ]]; then
-    echo "Rotating database password and synchronizing ${SECRET_DB_URL} (ROTATE_DB_PASSWORD=1)..."
-    DB_PASSWORD="${WHATSSS_DB_PASSWORD:-$(openssl rand -hex 16)}"
-    if [[ "${USER_EXISTS}" == "1" ]]; then
-      if ! gcloud sql users set-password "${DB_USER}" \
-        --instance="${SQL_INSTANCE}" \
-        --password="${DB_PASSWORD}" \
-        --project="${PROJECT_ID}" >/dev/null; then
-        echo "ERROR: Failed to update Cloud SQL password for ${DB_USER} during rotation." >&2
-        exit 1
-      fi
-    else
-      if ! gcloud sql users create "${DB_USER}" \
-        --instance="${SQL_INSTANCE}" \
-        --password="${DB_PASSWORD}" \
-        --project="${PROJECT_ID}" >/dev/null; then
-        echo "ERROR: Failed to create Cloud SQL user ${DB_USER} during rotation." >&2
-        exit 1
-      fi
-    fi
-
-    DB_USER_ENCODED="$(url_encode "${DB_USER}")"
-    DB_PASSWORD_ENCODED="$(url_encode "${DB_PASSWORD}")"
-    DATABASE_URL_VALUE="postgresql://${DB_USER_ENCODED}:${DB_PASSWORD_ENCODED}@localhost:5432/${DB_NAME}?host=/cloudsql/${CLOUDSQL_CONNECTION_NAME}&schema=public"
-    ensure_secret_exists_with_value "${SECRET_DB_URL}" "${DATABASE_URL_VALUE}" "1"
-    unset DB_PASSWORD DB_PASSWORD_ENCODED DATABASE_URL_VALUE
-  elif [[ "${USER_EXISTS}" == "1" && "${DB_SECRET_EXISTS}" == "1" ]]; then
+  if [[ "${USER_EXISTS}" == "1" && "${DB_SECRET_EXISTS}" == "1" ]]; then
     echo "Database user ${DB_USER} and secret ${SECRET_DB_URL} already exist; preserving synchronized credentials."
   else
     echo "Provisioning initial database user ${DB_USER} and synchronizing ${SECRET_DB_URL}..."
@@ -437,7 +567,7 @@ else
     DB_USER_ENCODED="$(url_encode "${DB_USER}")"
     DB_PASSWORD_ENCODED="$(url_encode "${DB_PASSWORD}")"
     DATABASE_URL_VALUE="postgresql://${DB_USER_ENCODED}:${DB_PASSWORD_ENCODED}@localhost:5432/${DB_NAME}?host=/cloudsql/${CLOUDSQL_CONNECTION_NAME}&schema=public"
-    ensure_secret_exists_with_value "${SECRET_DB_URL}" "${DATABASE_URL_VALUE}" "1"
+    ensure_secret_exists_with_value "${SECRET_DB_URL}" "${DATABASE_URL_VALUE}" "0"
     unset DB_PASSWORD DB_PASSWORD_ENCODED DATABASE_URL_VALUE
   fi
 
@@ -445,9 +575,9 @@ else
   ADMIN_PWD_VALUE="${WHATSSS_ADMIN_PASSWORD:-Admin_$(openssl rand -hex 12)!}"
   DEMO_PWD_VALUE="${WHATSSS_DEMO_PASSWORD:-Demo_$(openssl rand -hex 12)!}"
 
-  ensure_secret_exists_with_value "${SECRET_JWT}" "${JWT_SECRET_VALUE}" "${ROTATE_APP_SECRETS}"
-  ensure_secret_exists_with_value "${SECRET_ADMIN_PWD}" "${ADMIN_PWD_VALUE}" "${ROTATE_APP_SECRETS}"
-  ensure_secret_exists_with_value "${SECRET_DEMO_PWD}" "${DEMO_PWD_VALUE}" "${ROTATE_APP_SECRETS}"
+  ensure_secret_exists_with_value "${SECRET_JWT}" "${JWT_SECRET_VALUE}" "${ROTATE_APP_SECRETS:-0}"
+  ensure_secret_exists_with_value "${SECRET_ADMIN_PWD}" "${ADMIN_PWD_VALUE}" "${ROTATE_APP_SECRETS:-0}"
+  ensure_secret_exists_with_value "${SECRET_DEMO_PWD}" "${DEMO_PWD_VALUE}" "${ROTATE_APP_SECRETS:-0}"
   unset JWT_SECRET_VALUE ADMIN_PWD_VALUE DEMO_PWD_VALUE
 
   DB_URL_VERSION="$(verify_enabled_secret_version "${SECRET_DB_URL}")"
@@ -461,7 +591,7 @@ else
     "${SECRET_ADMIN_PWD}" \
     "${SECRET_DEMO_PWD}"; do
 
-    if [[ "${FORCE_IAM_BINDING}" == "1" ]] || ! has_secret_role_binding "${sec}" "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/secretmanager.secretAccessor"; then
+    if [[ "${FORCE_IAM_BINDING:-0}" == "1" ]] || ! has_secret_role_binding "${sec}" "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/secretmanager.secretAccessor"; then
       if ! gcloud secrets add-iam-policy-binding "${sec}" \
         --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
         --role="roles/secretmanager.secretAccessor" \
@@ -473,10 +603,7 @@ else
       echo "Secret Accessor binding already present on ${sec} for ${RUNTIME_SA_EMAIL}."
     fi
 
-    if ! has_secret_role_binding "${sec}" "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/secretmanager.secretAccessor"; then
-      echo "ERROR: Verification failed — ${RUNTIME_SA_EMAIL} does not hold roles/secretmanager.secretAccessor on ${sec}." >&2
-      exit 1
-    fi
+    verify_runtime_sa_secret_iam "${sec}"
   done
 fi
 
@@ -492,10 +619,10 @@ run_cmd docker build \
 run_cmd docker push "${IMAGE_URI}"
 
 if [[ "${DRY_RUN}" == "1" ]]; then
-  IMAGE_DIGEST="${IMAGE_URI}"
+  IMAGE_DIGEST="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${APP_NAME}@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781"
 else
   IMAGE_DIGEST="$(gcloud artifacts docker images describe "${IMAGE_URI}" --format='value(image_summary.fully_qualified_digest)')"
-  if [[ -z "${IMAGE_DIGEST}" ]]; then
+  if [[ -z "${IMAGE_DIGEST}" || ! "${IMAGE_DIGEST}" =~ @sha256:[0-9a-f]{64}$ ]]; then
     echo "ERROR: Failed to resolve pushed Docker image digest for ${IMAGE_URI}." >&2
     exit 1
   fi
