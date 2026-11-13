@@ -732,4 +732,147 @@ describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Id
     expect(mockPrisma.transaction.update).not.toHaveBeenCalled();
     expect(mockPrisma.transaction.updateMany).not.toHaveBeenCalled();
   });
+
+  it('enforces intentional Production Transaction Boundary: Admin provisioning commits independently while user_demo + 5 standard accounts roll back atomically on failure', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.SEED_ADMIN_PASSWORD = 'SecureAdminPassword2026!';
+    process.env.SEED_ADMIN_EMAIL = 'admin@whatsss.local';
+    process.env.SEED_DEMO_DATA = 'true';
+    process.env.SEED_DEMO_PASSWORD = 'SecureDemoPassword2026!';
+    process.env.SEED_DEMO_EMAIL = 'user_demo@whatsss.local';
+
+    const committedUsers = new Map<string, any>();
+    const committedAccounts = new Map<string, any>();
+
+    const prodTxClient: any = {
+      user: {
+        findFirst: vi.fn().mockImplementation(async ({ where }: any) => {
+          for (const u of committedUsers.values()) {
+            if (where?.role && u.role === where.role) return u;
+          }
+          return null;
+        }),
+        findUnique: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where?.username) return committedUsers.get(where.username) || null;
+          if (where?.email) {
+            for (const u of committedUsers.values()) {
+              if (u.email === where.email) return u;
+            }
+          }
+          return null;
+        }),
+        create: vi.fn().mockImplementation(async ({ data }: any) => {
+          const record = { id: `id-${data.username}`, ...data };
+          committedUsers.set(data.username, record);
+          return record;
+        })
+      },
+      $transaction: vi.fn().mockImplementation(async (callback: any) => {
+        const stagedUsers = new Map(committedUsers);
+        const stagedAccounts = new Map(committedAccounts);
+        const tx = {
+          user: {
+            findUnique: vi.fn().mockImplementation(async ({ where }: any) => {
+              if (where?.username) return stagedUsers.get(where.username) || null;
+              if (where?.email) {
+                for (const u of stagedUsers.values()) {
+                  if (u.email === where.email) return u;
+                }
+              }
+              return null;
+            }),
+            create: vi.fn().mockImplementation(async ({ data }: any) => {
+              const record = { id: `id-${data.username}`, ...data };
+              stagedUsers.set(data.username, record);
+              return record;
+            })
+          },
+          account: {
+            upsert: vi.fn().mockImplementation(async ({ where, create }: any) => {
+              if (create.name === 'Visa Credit Card') {
+                throw new Error('Simulated production demo account upsert failure on 2nd account');
+              }
+              const key = `${where.user_id_name.user_id}:${where.user_id_name.name}`;
+              stagedAccounts.set(key, { id: `acc-${key}`, ...create });
+              return stagedAccounts.get(key);
+            })
+          }
+        };
+        const res = await callback(tx);
+        committedUsers.clear();
+        for (const [k, v] of stagedUsers.entries()) committedUsers.set(k, v);
+        committedAccounts.clear();
+        for (const [k, v] of stagedAccounts.entries()) committedAccounts.set(k, v);
+        return res;
+      })
+    };
+
+    await expect(seed(prodTxClient)).rejects.toThrow(
+      /Simulated production demo account upsert failure on 2nd account/
+    );
+
+    // Phase 1 (Admin) succeeded in its own transaction boundary and remains committed with 0 financial accounts
+    expect(committedUsers.has('admin')).toBe(true);
+    expect(committedUsers.get('admin').role).toBe('ADMIN');
+    // Phase 2 (user_demo + 5 accounts) rolled back atomically: neither user_demo nor Checking Bank was committed
+    expect(committedUsers.has('user_demo')).toBe(false);
+    expect(committedAccounts.size).toBe(0);
+  });
+
+  it('enforces unified Development/Test Transaction Boundary: rolls back all demo users and accounts atomically if any user or account creation fails', async () => {
+    process.env.NODE_ENV = 'test';
+
+    const committedUsers = new Map<string, any>();
+    const committedAccounts = new Map<string, any>();
+
+    const devTxClient: any = {
+      $transaction: vi.fn().mockImplementation(async (callback: any) => {
+        const stagedUsers = new Map(committedUsers);
+        const stagedAccounts = new Map(committedAccounts);
+        const tx = {
+          user: {
+            findUnique: vi.fn().mockImplementation(async ({ where }: any) => {
+              if (where?.username) return stagedUsers.get(where.username) || null;
+              if (where?.email) {
+                for (const u of stagedUsers.values()) {
+                  if (u.email === where.email) return u;
+                }
+              }
+              return null;
+            }),
+            create: vi.fn().mockImplementation(async ({ data }: any) => {
+              const record = { id: `id-${data.username}`, ...data };
+              stagedUsers.set(data.username, record);
+              return record;
+            })
+          },
+          account: {
+            upsert: vi.fn().mockImplementation(async ({ where, create }: any) => {
+              // Fail on the very last account of the 2nd user (user_other's Grocery account)
+              if (where.user_id_name.user_id === 'id-user_other' && create.name === 'Grocery') {
+                throw new Error('Simulated dev seed failure on user_other 5th account');
+              }
+              const key = `${where.user_id_name.user_id}:${where.user_id_name.name}`;
+              stagedAccounts.set(key, { id: `acc-${key}`, ...create });
+              return stagedAccounts.get(key);
+            })
+          }
+        };
+        const res = await callback(tx);
+        committedUsers.clear();
+        for (const [k, v] of stagedUsers.entries()) committedUsers.set(k, v);
+        committedAccounts.clear();
+        for (const [k, v] of stagedAccounts.entries()) committedAccounts.set(k, v);
+        return res;
+      })
+    };
+
+    await expect(seed(devTxClient)).rejects.toThrow(
+      /Simulated dev seed failure on user_other 5th account/
+    );
+
+    expect(devTxClient.$transaction).toHaveBeenCalledTimes(1);
+    expect(committedUsers.size).toBe(0);
+    expect(committedAccounts.size).toBe(0);
+  });
 });

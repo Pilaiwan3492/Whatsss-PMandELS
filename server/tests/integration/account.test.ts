@@ -625,6 +625,53 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       const current = mockAccounts.find((a) => a.id === 'acc-other-checking')!;
       expect(current.opening_balance).toEqual(initialUserBOpening);
     });
+
+    it('rejects cross-tenant PUT and DELETE attempts on accounts and transactions with 404 NOT_FOUND and zero state mutation', async () => {
+      const initialUserBOpening = mockAccounts.find((a) => a.id === 'acc-other-checking')!.opening_balance;
+      const initialAccountCount = mockAccounts.length;
+
+      // 1. User A attempts PUT /api/accounts/:id on User B's account -> 404 NOT_FOUND
+      const putAccRes = await request(app)
+        .put('/api/accounts/acc-other-checking')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ name: 'Hijacked Account', opening_balance: 99999.00 });
+      expect(putAccRes.status).toBe(404);
+      expect(putAccRes.body.success).toBe(false);
+      expect(putAccRes.body.error.code).toBe('NOT_FOUND');
+
+      // 2. User A attempts DELETE /api/accounts/:id on User B's account -> 404 NOT_FOUND
+      const delAccRes = await request(app)
+        .delete('/api/accounts/acc-other-checking')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userACookie);
+      expect(delAccRes.status).toBe(404);
+      expect(delAccRes.body.success).toBe(false);
+      expect(delAccRes.body.error.code).toBe('NOT_FOUND');
+
+      // 3. User A attempts PUT/PATCH/DELETE on a foreign transaction ID -> 404 NOT_FOUND
+      const putTxnRes = await request(app)
+        .put('/api/transactions/txn-other-1')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ total_amount: 1.00 });
+      expect(putTxnRes.status).toBe(404);
+      expect(putTxnRes.body.error.code).toBe('NOT_FOUND');
+
+      const delTxnRes = await request(app)
+        .delete('/api/transactions/txn-other-1')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userACookie);
+      expect(delTxnRes.status).toBe(404);
+      expect(delTxnRes.body.error.code).toBe('NOT_FOUND');
+
+      // Verify User B's account balance and total account count are untouched
+      const afterUserB = mockAccounts.find((a) => a.id === 'acc-other-checking')!;
+      expect(afterUserB.opening_balance).toEqual(initialUserBOpening);
+      expect(mockAccounts).toHaveLength(initialAccountCount);
+    });
   });
 
   describe('Role-Based Access Control on Account Routes (BR-10, TEST-SEC-03)', () => {

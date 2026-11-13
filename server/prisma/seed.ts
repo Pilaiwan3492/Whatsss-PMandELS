@@ -174,6 +174,20 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   const isProduction = process.env.NODE_ENV === 'production';
   const saltRounds = 10;
 
+  /**
+   * TRANSACTION BOUNDARY DESIGN (P0-02 / P0-03):
+   * 1. Production Mode (`NODE_ENV=production`):
+   *    - Phase 1 (`provisionAdmin`): Runs as an independent, atomic operation (`user.create`) before demo user provisioning.
+   *      This separation is intentional: if optional demo data provisioning (`SEED_DEMO_DATA=true`) fails due to an email/role
+   *      conflict or account upsert error, the production administrator account remains safely provisioned (or preserved).
+   *    - Phase 2 (`user_demo` + 5 standard accounts): Executed inside a single atomic `runInTransaction(client, ...)` boundary.
+   *      If creating `user_demo` or upserting any of its 5 standard accounts fails, the entire demo provisioning phase rolls back
+   *      atomically without leaving a partial `user_demo` or partial financial accounts, while Phase 1 (`admin`) remains intact.
+   * 2. Development / Test Mode (`NODE_ENV !== 'production'`):
+   *    - All fixture users (`user_demo`, `user_other`, `admin_demo`) and the 10 standard financial accounts (5 for `user_demo`,
+   *      5 for `user_other`, 0 for `admin_demo` per BR-10) are provisioned inside a single unified `runInTransaction(client, ...)`
+   *      boundary so any failure rolls back the entire dev/test seed atomically.
+   */
   if (isProduction) {
     const prodAdminPassword = process.env.SEED_ADMIN_PASSWORD;
     const prodAdminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@whatsss.local';

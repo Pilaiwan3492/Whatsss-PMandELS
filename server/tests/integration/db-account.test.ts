@@ -660,6 +660,30 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       expect(patchForeignRes.body.success).toBe(false);
       expect(patchForeignRes.body.error.code).toBe('NOT_FOUND');
 
+      // 4b. User A attempts PUT and DELETE on User B account and transactions via real HTTP endpoints -> 404 NOT_FOUND
+      const putForeignAccRes = await request(app)
+        .put(`/api/accounts/${userBChecking!.id}`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookies)
+        .send({ name: 'Tampered', opening_balance: 5555.00 });
+      expect(putForeignAccRes.status).toBe(404);
+      expect(putForeignAccRes.body.error.code).toBe('NOT_FOUND');
+
+      const deleteForeignAccRes = await request(app)
+        .delete(`/api/accounts/${userBChecking!.id}`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userACookies);
+      expect(deleteForeignAccRes.status).toBe(404);
+      expect(deleteForeignAccRes.body.error.code).toBe('NOT_FOUND');
+
+      const deleteForeignTxnRes = await request(app)
+        .delete(`/api/transactions/${userBChecking!.id}`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userACookies);
+      expect(deleteForeignTxnRes.status).toBe(404);
+      expect(deleteForeignTxnRes.body.error.code).toBe('NOT_FOUND');
+
       // 5. Verify User B's row in PostgreSQL remains completely untouched
       const recheckedUserB = await prisma.account.findUnique({ where: { id: userBChecking!.id } });
       expect(Number(recheckedUserB!.opening_balance)).toBe(initialUserBBalance);
