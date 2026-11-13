@@ -1,0 +1,530 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# deploy/tests/mocks/gcloud — Stateful Mock for GCP CLI in Automated Unit Tests
+# ==============================================================================
+
+set -euo pipefail
+
+STATE_DIR="${MOCK_STATE_DIR:?MOCK_STATE_DIR must be set by test runner}"
+LOG_FILE="${MOCK_LOG_FILE:?MOCK_LOG_FILE must be set by test runner}"
+
+mkdir -p "${STATE_DIR}"
+
+# Record command invocation (redacting any --password=* value from test log file if needed,
+# while still recording the subcommand and flags)
+echo "gcloud $*" >> "${LOG_FILE}"
+
+subcmd="${1:-}"
+subcmd2="${2:-}"
+subcmd3="${3:-}"
+
+case "${subcmd} ${subcmd2} ${subcmd3}" in
+  "config get-value project")
+    echo "${MOCK_ACTIVE_PROJECT:-cpe334-whatsss-pmandels}"
+    exit 0
+    ;;
+
+  "services enable "*)
+    exit 0
+    ;;
+
+  "iam service-accounts describe")
+    sa_email="${4:-}"
+    if [[ -f "${STATE_DIR}/sa_${sa_email}" ]]; then
+      echo "email: ${sa_email}"
+      exit 0
+    fi
+    exit 1
+    ;;
+
+  "iam service-accounts create")
+    sa_name="${4:-}"
+    project_id="cpe334-whatsss-pmandels"
+    for arg in "$@"; do
+      case "${arg}" in
+        --project=*) project_id="${arg#--project=}" ;;
+      esac
+    done
+    touch "${STATE_DIR}/sa_${sa_name}@${project_id}.iam.gserviceaccount.com"
+    exit 0
+    ;;
+
+  "projects add-iam-policy-binding "*)
+    if [[ "${MOCK_FAIL_PROJECT_IAM:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.projects.add-iam-policy-binding) PERMISSION_DENIED" >&2
+      exit 1
+    fi
+    member=""
+    role=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --member=*) member="${arg#--member=}" ;;
+        --role=*) role="${arg#--role=}" ;;
+      esac
+    done
+    safe_key="$(echo "${role}__${member}" | tr '/:@.' '____')"
+    echo "${role}" > "${STATE_DIR}/proj_iam_${safe_key}"
+    echo "${member}" > "${STATE_DIR}/proj_iam_m_${safe_key}"
+    exit 0
+    ;;
+
+  "projects get-iam-policy "*)
+    if [[ "${MOCK_FAIL_PROJECT_GET_IAM:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.projects.get-iam-policy) PERMISSION_DENIED" >&2
+      exit 1
+    fi
+    format_arg=""
+    filter_arg=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --format=*) format_arg="${arg#--format=}" ;;
+        --filter=*) filter_arg="${arg#--filter=}" ;;
+      esac
+    done
+    if [[ "${format_arg}" == "json" ]]; then
+      echo "{"
+      echo '  "bindings": ['
+      first=1
+      if [[ -n "${MOCK_FORBIDDEN_SA_ROLE:-}" ]]; then
+        echo "    {\"role\": \"${MOCK_FORBIDDEN_SA_ROLE}\", \"members\": [\"serviceAccount:whatsss-runner@cpe334-whatsss-pmandels.iam.gserviceaccount.com\"]}"
+        first=0
+      fi
+      for f in "${STATE_DIR}"/proj_iam_*; do
+        if [[ -f "${f}" && "${f}" != *"_m_"* ]]; then
+          r="$(cat "${f}")"
+          m_file="${f/proj_iam_/proj_iam_m_}"
+          m="$(cat "${m_file}" 2>/dev/null || echo "serviceAccount:whatsss-runner@cpe334-whatsss-pmandels.iam.gserviceaccount.com")"
+          if [[ "${first}" -eq 0 ]]; then
+            echo "    ,"
+          fi
+          echo "    {\"role\": \"${r}\", \"members\": [\"${m}\"]}"
+          first=0
+        fi
+      done
+      echo "  ]"
+      echo "}"
+      exit 0
+    fi
+    role="$(echo "${filter_arg}" | sed -n 's/.*bindings\.role=\([^ ]*\).*/\1/p')"
+    member="$(echo "${filter_arg}" | sed -n 's/.*bindings\.members=\([^ ]*\).*/\1/p')"
+    if [[ -n "${MOCK_FORBIDDEN_SA_ROLE:-}" && "${role}" == "${MOCK_FORBIDDEN_SA_ROLE}" ]]; then
+      echo "${role}"
+      exit 0
+    fi
+    safe_key="$(echo "${role}__${member}" | tr '/:@.' '____')"
+    if [[ -f "${STATE_DIR}/proj_iam_${safe_key}" ]]; then
+      echo "${role}"
+    fi
+    exit 0
+    ;;
+
+  "artifacts repositories describe")
+    repo="${4:-}"
+    if [[ -f "${STATE_DIR}/ar_${repo}" ]]; then
+      echo "name: ${repo}"
+      exit 0
+    fi
+    exit 1
+    ;;
+
+  "artifacts repositories create")
+    repo="${4:-}"
+    touch "${STATE_DIR}/ar_${repo}"
+    exit 0
+    ;;
+
+  "artifacts docker images")
+    # gcloud artifacts docker images describe <IMAGE_URI>
+    image_uri="${5:-}"
+    repo_base="${image_uri%:*}"
+    echo "${repo_base}@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781"
+    exit 0
+    ;;
+
+  "sql instances describe")
+    inst="${4:-}"
+    if [[ -f "${STATE_DIR}/sql_inst_${inst}" ]]; then
+      echo "name: ${inst}"
+      exit 0
+    fi
+    exit 1
+    ;;
+
+  "sql instances create")
+    inst="${4:-}"
+    touch "${STATE_DIR}/sql_inst_${inst}"
+    exit 0
+    ;;
+
+  "sql instances patch")
+    inst="${4:-}"
+    touch "${STATE_DIR}/sql_patched_${inst}"
+    exit 0
+    ;;
+
+  "sql databases describe")
+    db="${4:-}"
+    if [[ -f "${STATE_DIR}/sql_db_${db}" ]]; then
+      echo "name: ${db}"
+      exit 0
+    fi
+    exit 1
+    ;;
+
+  "sql databases create")
+    db="${4:-}"
+    touch "${STATE_DIR}/sql_db_${db}"
+    exit 0
+    ;;
+
+  "sql users list")
+    if [[ -f "${STATE_DIR}/sql_users" ]]; then
+      cat "${STATE_DIR}/sql_users"
+    fi
+    exit 0
+    ;;
+
+  "sql users create")
+    user="${4:-}"
+    pwd_val=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --password=*) pwd_val="${arg#--password=}" ;;
+      esac
+    done
+    if ! grep -qx "${user}" "${STATE_DIR}/sql_users" 2>/dev/null; then
+      echo "${user}" >> "${STATE_DIR}/sql_users"
+    fi
+    printf '%s' "${pwd_val}" > "${STATE_DIR}/sql_user_pwd_${user}"
+    exit 0
+    ;;
+
+  "sql users set-password")
+    if [[ "${MOCK_FAIL_SQL_SET_PASSWORD:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.sql.users.set-password) FAILED" >&2
+      exit 1
+    fi
+    user="${4:-}"
+    pwd_val=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --password=*) pwd_val="${arg#--password=}" ;;
+      esac
+    done
+    if [[ "${MOCK_FAIL_ROLLBACK_SQL_SET_PASSWORD:-0}" == "1" && "${pwd_val}" == "${MOCK_ORIGINAL_PWD:-}" ]]; then
+      echo "ERROR: (gcloud.sql.users.set-password) ROLLBACK_RESTORE_FAILED" >&2
+      exit 1
+    fi
+    printf '%s' "${pwd_val}" > "${STATE_DIR}/sql_user_pwd_${user}"
+    exit 0
+    ;;
+
+  "secrets describe "*)
+    sec="${3:-}"
+    if [[ -f "${STATE_DIR}/secret_${sec}" ]]; then
+      echo "name: ${sec}"
+      exit 0
+    fi
+    exit 1
+    ;;
+
+  "secrets create "*)
+    if [[ "${MOCK_FAIL_SECRET_CREATE:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.secrets.create) FAILED" >&2
+      exit 1
+    fi
+    sec="${3:-}"
+    data_file=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --data-file=*) data_file="${arg#--data-file=}" ;;
+      esac
+    done
+    touch "${STATE_DIR}/secret_${sec}"
+    echo "1" > "${STATE_DIR}/secret_ver_${sec}"
+    if [[ "${data_file}" == "-" ]]; then
+      cat > "${STATE_DIR}/secret_val_${sec}"
+    elif [[ -n "${data_file}" && -f "${data_file}" ]]; then
+      cp "${data_file}" "${STATE_DIR}/secret_val_${sec}"
+    fi
+    exit 0
+    ;;
+
+  "secrets versions add")
+    if [[ "${MOCK_FAIL_SECRET_UPDATE:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.secrets.versions.add) FAILED" >&2
+      exit 1
+    fi
+    sec="${4:-}"
+    data_file=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --data-file=*) data_file="${arg#--data-file=}" ;;
+      esac
+    done
+    touch "${STATE_DIR}/secret_${sec}"
+    cur_ver="$(cat "${STATE_DIR}/secret_ver_${sec}" 2>/dev/null || echo '0')"
+    next_ver=$((cur_ver + 1))
+    echo "${next_ver}" > "${STATE_DIR}/secret_ver_${sec}"
+    if [[ "${data_file}" == "-" ]]; then
+      cat > "${STATE_DIR}/secret_val_${sec}"
+    elif [[ -n "${data_file}" && -f "${data_file}" ]]; then
+      cp "${data_file}" "${STATE_DIR}/secret_val_${sec}"
+    fi
+    exit 0
+    ;;
+
+  "secrets versions list")
+    sec="${4:-}"
+    if [[ "${MOCK_NO_ENABLED_SECRET_VERSION:-0}" == "1" ]]; then
+      exit 0
+    fi
+    ver="$(cat "${STATE_DIR}/secret_ver_${sec}" 2>/dev/null || echo '1')"
+    echo "projects/1086708130644/secrets/${sec}/versions/${ver}"
+    exit 0
+    ;;
+
+  "secrets versions access")
+    ver="${4:-}"
+    sec=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --secret=*) sec="${arg#--secret=}" ;;
+      esac
+    done
+    if [[ -f "${STATE_DIR}/secret_val_${sec}" ]]; then
+      cat "${STATE_DIR}/secret_val_${sec}"
+    else
+      echo "postgresql://whatsss_app:OriginalDBPassword123@localhost:5432/whatsss_db?host=/cloudsql/cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql&schema=public"
+    fi
+    exit 0
+    ;;
+
+  "secrets versions describe"*)
+    if [[ "${MOCK_SECRET_VERSION_DISABLED:-0}" == "1" ]]; then
+      echo "DISABLED"
+      exit 0
+    fi
+    if [[ "${MOCK_SECRET_VERSION_NOT_FOUND:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.secrets.versions.describe) NOT_FOUND" >&2
+      exit 1
+    fi
+    echo "ENABLED"
+    exit 0
+    ;;
+
+  "secrets add-iam-policy-binding "*)
+    sec="${3:-}"
+    if [[ "${MOCK_FAIL_SECRET_IAM:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.secrets.add-iam-policy-binding) PERMISSION_DENIED on ${sec}" >&2
+      exit 1
+    fi
+    if [[ -n "${MOCK_FAIL_SECRET_IAM_TARGET:-}" && "${sec}" == "${MOCK_FAIL_SECRET_IAM_TARGET}" ]]; then
+      echo "ERROR: (gcloud.secrets.add-iam-policy-binding) PERMISSION_DENIED on ${sec}" >&2
+      exit 1
+    fi
+    member=""
+    role=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --member=*) member="${arg#--member=}" ;;
+        --role=*) role="${arg#--role=}" ;;
+      esac
+    done
+    safe_key="$(echo "${sec}__${role}__${member}" | tr '/:@.' '____')"
+    echo "${role}" > "${STATE_DIR}/sec_iam_${safe_key}"
+    echo "${member}" > "${STATE_DIR}/sec_iam_m_${safe_key}"
+    exit 0
+    ;;
+
+  "secrets get-iam-policy "*)
+    if [[ "${MOCK_FAIL_SECRET_GET_IAM:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.secrets.get-iam-policy) PERMISSION_DENIED" >&2
+      exit 1
+    fi
+    sec="${3:-}"
+    format_arg=""
+    filter_arg=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --format=*) format_arg="${arg#--format=}" ;;
+        --filter=*) filter_arg="${arg#--filter=}" ;;
+      esac
+    done
+    if [[ "${format_arg}" == "json" ]]; then
+      echo "{"
+      echo '  "bindings": ['
+      first=1
+      if [[ -n "${MOCK_FORBIDDEN_SECRET_SA_ROLE:-}" ]]; then
+        echo "    {\"role\": \"${MOCK_FORBIDDEN_SECRET_SA_ROLE}\", \"members\": [\"serviceAccount:whatsss-runner@cpe334-whatsss-pmandels.iam.gserviceaccount.com\"]}"
+        first=0
+      fi
+      for f in "${STATE_DIR}"/sec_iam_"${sec}"__*; do
+        if [[ -f "${f}" && "${f}" != *"_m_"* ]]; then
+          r="$(cat "${f}")"
+          m_file="${f/sec_iam_/sec_iam_m_}"
+          m="$(cat "${m_file}" 2>/dev/null || echo "serviceAccount:whatsss-runner@cpe334-whatsss-pmandels.iam.gserviceaccount.com")"
+          if [[ "${first}" -eq 0 ]]; then
+            echo "    ,"
+          fi
+          echo "    {\"role\": \"${r}\", \"members\": [\"${m}\"]}"
+          first=0
+        fi
+      done
+      echo "  ]"
+      echo "}"
+      exit 0
+    fi
+    role="$(echo "${filter_arg}" | sed -n 's/.*bindings\.role=\([^ ]*\).*/\1/p')"
+    member="$(echo "${filter_arg}" | sed -n 's/.*bindings\.members=\([^ ]*\).*/\1/p')"
+    safe_key="$(echo "${sec}__${role}__${member}" | tr '/:@.' '____')"
+    if [[ -f "${STATE_DIR}/sec_iam_${safe_key}" ]]; then
+      echo "${role}"
+    fi
+    exit 0
+    ;;
+
+  "auth configure-docker "*)
+    exit 0
+    ;;
+
+  "run jobs deploy")
+    job_name="${4:-}"
+    sa_email=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --service-account=*) sa_email="${arg#--service-account=}" ;;
+      esac
+    done
+    touch "${STATE_DIR}/job_${job_name}"
+    echo "${MOCK_JOB_SA:-${sa_email}}" > "${STATE_DIR}/job_sa_${job_name}"
+    exit 0
+    ;;
+
+  "run jobs describe")
+    job_name="${4:-}"
+    cat "${STATE_DIR}/job_sa_${job_name}" 2>/dev/null || echo ""
+    exit 0
+    ;;
+
+  "run jobs execute")
+    if [[ "${MOCK_FAIL_MIGRATE_EXECUTE:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.run.jobs.execute) Job execution failed" >&2
+      exit 1
+    fi
+    job_name="${4:-}"
+    echo "${job_name}-exec01" > "${STATE_DIR}/job_last_exec_${job_name}"
+    exit 0
+    ;;
+
+  "run jobs executions")
+    action="${4:-}"
+    if [[ "${action}" == "list" ]]; then
+      echo "projects/cpe334-whatsss-pmandels/locations/asia-southeast1/jobs/whatsss-migrate/executions/${MOCK_EXECUTION_ID:-whatsss-migrate-exec01}"
+      exit 0
+    elif [[ "${action}" == "describe" ]]; then
+      echo "${MOCK_MIGRATE_SUCCEEDED_COUNT:-1}"
+      exit 0
+    fi
+    exit 0
+    ;;
+
+  "run deploy "*)
+    if [[ "${MOCK_FAIL_RUN_DEPLOY:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.run.deploy) Service deployment failed" >&2
+      exit 1
+    fi
+    if [[ "${MOCK_FAIL_DEPLOY_ONCE:-0}" == "1" ]]; then
+      if [[ ! -f "${STATE_DIR}/deploy_failed_once" ]]; then
+        touch "${STATE_DIR}/deploy_failed_once"
+        echo "ERROR: (gcloud.run.deploy) Service deployment failed once" >&2
+        exit 1
+      fi
+    fi
+    svc_name="${3:-}"
+    sa_email=""
+    client_url=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --service-account=*) sa_email="${arg#--service-account=}" ;;
+        --set-env-vars=*)
+          env_str="${arg#--set-env-vars=}"
+          client_url="$(echo "${env_str}" | sed -n 's/.*CLIENT_URL=\([^,]*\).*/\1/p')"
+          ;;
+      esac
+    done
+    touch "${STATE_DIR}/svc_${svc_name}"
+    echo "${MOCK_SERVICE_SA:-${sa_email}}" > "${STATE_DIR}/svc_sa_${svc_name}"
+    echo "${client_url}" > "${STATE_DIR}/svc_initial_client_url_${svc_name}"
+    echo "${client_url}" > "${STATE_DIR}/svc_client_url_${svc_name}"
+    if [[ ! -f "${STATE_DIR}/svc_url_${svc_name}" ]]; then
+      echo "${MOCK_SERVICE_URL-https://whatsss-sipqw4logq-as.a.run.app}" > "${STATE_DIR}/svc_url_${svc_name}"
+    fi
+    exit 0
+    ;;
+
+  "run services describe")
+    svc_name="${4:-}"
+    if [[ ! -f "${STATE_DIR}/svc_${svc_name}" ]]; then
+      exit 1
+    fi
+    format_arg=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --format=*) format_arg="${arg#--format=}" ;;
+      esac
+    done
+    case "${format_arg}" in
+      *status.url*)
+        if [[ -n "${MOCK_SERVICE_URL+x}" ]]; then
+          echo "${MOCK_SERVICE_URL}"
+        else
+          cat "${STATE_DIR}/svc_url_${svc_name}"
+        fi
+        ;;
+      *serviceAccountName*)
+        cat "${STATE_DIR}/svc_sa_${svc_name}"
+        ;;
+      *containers.env.value*)
+        cat "${STATE_DIR}/svc_client_url_${svc_name}"
+        ;;
+      *image*)
+        if [[ "${MOCK_FAIL_IMAGE_READ:-0}" == "1" ]]; then
+          exit 1
+        fi
+        echo "${MOCK_RUN_IMAGE:-asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781}"
+        ;;
+      *APP_COMMIT_SHA*)
+        if [[ "${MOCK_FAIL_COMMIT_READ:-0}" == "1" ]]; then
+          exit 1
+        fi
+        echo "${MOCK_RUN_COMMIT_SHA:-0123456789abcdef0123456789abcdef01234567}"
+        ;;
+    esac
+    exit 0
+    ;;
+
+  "run services update")
+    if [[ "${MOCK_FAIL_SERVICE_UPDATE:-0}" == "1" ]]; then
+      echo "ERROR: (gcloud.run.services.update) Failed to update service" >&2
+      exit 1
+    fi
+    svc_name="${4:-}"
+    for arg in "$@"; do
+      case "${arg}" in
+        --update-env-vars=*)
+          env_str="${arg#--update-env-vars=}"
+          client_url="${env_str#CLIENT_URL=}"
+          if [[ "${MOCK_STALE_CLIENT_URL:-0}" != "1" ]]; then
+            printf '%s' "${client_url}" > "${STATE_DIR}/svc_client_url_${svc_name}"
+          fi
+          ;;
+      esac
+    done
+    exit 0
+    ;;
+
+  *)
+    exit 0
+    ;;
+esac

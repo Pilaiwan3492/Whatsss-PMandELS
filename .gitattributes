@@ -1,0 +1,2 @@
+*.sh text eol=lf
+deploy/tests/mocks/* text eol=lf
