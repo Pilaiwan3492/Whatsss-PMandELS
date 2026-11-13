@@ -27,7 +27,7 @@ async function runInTransaction<T>(
  * Under BR-10, administrators and non-USER accounts must never possess or execute financial transactions.
  * Wraps account creation in an atomic database transaction when supported by the client.
  */
-export async function seedStandardAccountsForUser(
+export async function provisionDemoAccounts(
   client: PrismaClient,
   user: { id: string; role: string; username?: string }
 ): Promise<void> {
@@ -57,6 +57,106 @@ export async function seedStandardAccountsForUser(
       });
     }
   });
+}
+
+export const seedStandardAccountsForUser = provisionDemoAccounts;
+
+export async function validateSeedUsers(
+  tx: any,
+  specs: Array<{ username: string; email: string; expectedRole: 'USER' | 'ADMIN' }>
+): Promise<void> {
+  if (!tx.user?.findUnique) return;
+  for (const spec of specs) {
+    const existingByUsername = await tx.user.findUnique({
+      where: { username: spec.username }
+    });
+    if (existingByUsername && existingByUsername.role !== spec.expectedRole) {
+      if (spec.username === 'user_demo' && spec.expectedRole === 'USER') {
+        throw new Error(
+          `FATAL: User "user_demo" already exists with non-USER role "${existingByUsername.role}". Cannot provision financial demo accounts.`
+        );
+      }
+      throw new Error(
+        `FATAL: User "${spec.username}" already exists with non-${spec.expectedRole} role "${existingByUsername.role}".`
+      );
+    }
+
+    if (!existingByUsername) {
+      const emailConflict = await tx.user.findUnique({
+        where: { email: spec.email }
+      });
+      if (emailConflict && emailConflict.username !== spec.username) {
+        const suffix = spec.username === 'user_demo' ? 'demo user' : spec.username;
+        throw new Error(
+          `FATAL: Email "${spec.email}" is already in use by user "${emailConflict.username}". Cannot provision ${suffix}.`
+        );
+      }
+    }
+  }
+}
+
+export async function provisionAdmin(
+  client: any,
+  prodAdminPassword: string,
+  prodAdminEmail: string,
+  saltRounds: number = 10
+): Promise<void> {
+  // Case 2: Check if an administrator account already exists (role === 'ADMIN')
+  const existingAdmin = await client.user.findFirst({
+    where: { role: 'ADMIN' }
+  });
+
+  if (existingAdmin) {
+    console.log(
+      'Production administrator account already exists. Preserving existing credentials and role without mutation.'
+    );
+    return;
+  }
+
+  if (isPlaceholderPassword(prodAdminPassword)) {
+    throw new Error(
+      'FATAL: SEED_ADMIN_PASSWORD contains an insecure template placeholder from .env.example. ' +
+      'You must configure a real, unique administrator password of at least 12 characters in production.'
+    );
+  }
+
+  // Case 3: Check if username "admin" is already taken by a non-ADMIN account
+  const usernameConflict = await client.user.findUnique({
+    where: { username: 'admin' }
+  });
+
+  if (usernameConflict) {
+    throw new Error(
+      'FATAL: Username "admin" already exists with non-ADMIN role. ' +
+      'Cannot provision production administrator due to username conflict.'
+    );
+  }
+
+  // Check if admin email is already in use by another user
+  const emailConflict = await client.user.findUnique({
+    where: { email: prodAdminEmail }
+  });
+
+  if (emailConflict && emailConflict.username !== 'admin') {
+    throw new Error(
+      `FATAL: Email "${prodAdminEmail}" is already in use by user "${emailConflict.username}". ` +
+      'Cannot provision production administrator due to email conflict.'
+    );
+  }
+
+  // Case 1: No admin exists and username "admin" is available -> provision initial admin
+  const adminHash = await bcrypt.hash(prodAdminPassword, saltRounds);
+  await client.user.create({
+    data: {
+      username: 'admin',
+      email: prodAdminEmail,
+      password_hash: adminHash,
+      role: 'ADMIN',
+      is_active: true
+    }
+  });
+
+  console.log('Production initial administrator account provisioned securely.');
 }
 
 export function isPlaceholderPassword(val: string): boolean {
@@ -93,61 +193,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
         return;
       }
     } else {
-      // Case 2: Check if an administrator account already exists (role === 'ADMIN')
-      const existingAdmin = await client.user.findFirst({
-        where: { role: 'ADMIN' }
-      });
-
-      if (existingAdmin) {
-        console.log(
-          'Production administrator account already exists. Preserving existing credentials and role without mutation.'
-        );
-      } else {
-        if (isPlaceholderPassword(prodAdminPassword)) {
-          throw new Error(
-            'FATAL: SEED_ADMIN_PASSWORD contains an insecure template placeholder from .env.example. ' +
-            'You must configure a real, unique administrator password of at least 12 characters in production.'
-          );
-        }
-
-        // Case 3: Check if username "admin" is already taken by a non-ADMIN account
-        const usernameConflict = await client.user.findUnique({
-          where: { username: 'admin' }
-        });
-
-        if (usernameConflict) {
-          throw new Error(
-            'FATAL: Username "admin" already exists with non-ADMIN role. ' +
-            'Cannot provision production administrator due to username conflict.'
-          );
-        }
-
-        // Check if admin email is already in use by another user
-        const emailConflict = await client.user.findUnique({
-          where: { email: prodAdminEmail }
-        });
-
-        if (emailConflict && emailConflict.username !== 'admin') {
-          throw new Error(
-            `FATAL: Email "${prodAdminEmail}" is already in use by user "${emailConflict.username}". ` +
-            'Cannot provision production administrator due to email conflict.'
-          );
-        }
-
-        // Case 1: No admin exists and username "admin" is available -> provision initial admin
-        const adminHash = await bcrypt.hash(prodAdminPassword, saltRounds);
-        await client.user.create({
-          data: {
-            username: 'admin',
-            email: prodAdminEmail,
-            password_hash: adminHash,
-            role: 'ADMIN',
-            is_active: true
-          }
-        });
-
-        console.log('Production initial administrator account provisioned securely.');
-      }
+      await provisionAdmin(client, prodAdminPassword, prodAdminEmail, saltRounds);
     }
 
     // 2. Demo user provisioning in production (only when explicitly enabled via SEED_DEMO_DATA=true)

@@ -675,4 +675,61 @@ describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Id
     // Account #1 (Checking Bank) must be rolled back -> 0 accounts committed
     expect(committedAccounts.size).toBe(0);
   });
+
+  it('rolls back all 4 previous accounts atomically when creating the final (5th) standard account (Grocery) fails', async () => {
+    const committedAccounts = new Map<string, any>();
+
+    const txCapableClient: any = {
+      $transaction: vi.fn().mockImplementation(async (callback: any) => {
+        const stagedAccounts = new Map(committedAccounts);
+        const txClient = {
+          account: {
+            upsert: vi.fn().mockImplementation(async ({ where, create }: any) => {
+              if (create.name === 'Grocery') {
+                throw new Error('Simulated DB failure while creating final 5th account (Grocery)');
+              }
+              const key = `${where.user_id_name.user_id}:${where.user_id_name.name}`;
+              stagedAccounts.set(key, { id: `acc-${key}`, ...create });
+              return stagedAccounts.get(key);
+            })
+          }
+        };
+        const result = await callback(txClient);
+        committedAccounts.clear();
+        for (const [k, v] of stagedAccounts.entries()) {
+          committedAccounts.set(k, v);
+        }
+        return result;
+      })
+    };
+
+    await expect(
+      seedStandardAccountsForUser(txCapableClient, {
+        id: 'user-atomic-5',
+        role: 'USER',
+        username: 'user_demo'
+      })
+    ).rejects.toThrow(/Simulated DB failure while creating final 5th account/);
+
+    expect(txCapableClient.$transaction).toHaveBeenCalledTimes(1);
+    // Zero partial accounts left behind
+    expect(committedAccounts.size).toBe(0);
+  });
+
+  it('preserves existing financial transactions untouched across repeated seed executions', async () => {
+    mockPrisma.transaction = {
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn()
+    };
+
+    await seed(mockPrisma);
+    await seed(mockPrisma);
+
+    expect(mockPrisma.transaction.delete).not.toHaveBeenCalled();
+    expect(mockPrisma.transaction.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.transaction.update).not.toHaveBeenCalled();
+    expect(mockPrisma.transaction.updateMany).not.toHaveBeenCalled();
+  });
 });

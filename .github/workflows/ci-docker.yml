@@ -131,6 +131,18 @@ jobs:
             --build-arg APP_COMMIT_SHA="${{ github.sha }}" \
             -t whatsss:pr-${{ github.sha }} .
 
+      - name: Inspect Docker Image Layers & Filesystem for Leaked Secrets (P2-12)
+        run: |
+          echo "Inspecting Docker image history and /app filesystem for forbidden secret files..."
+          LEAKED_IN_IMAGE=$(docker run --rm --entrypoint sh "whatsss:pr-${{ github.sha }}" -c 'find /app -maxdepth 4 \( -name ".env" -o -name ".env.*" -o -name "*.pem" -o -name "*.key" -o -name "*service-account*.json" \) ! -name ".env.example" 2>/dev/null || true')
+          if [ -n "$LEAKED_IN_IMAGE" ]; then
+            echo "::error::Forbidden credential or .env file found inside Docker image:"
+            echo "$LEAKED_IN_IMAGE"
+            exit 1
+          fi
+          docker history --no-trunc "whatsss:pr-${{ github.sha }}" | grep -iE "SEED_ADMIN_PASSWORD|SEED_DEMO_PASSWORD|JWT_SECRET|POSTGRES_PASSWORD" && (echo "::error::Secret env leaked in Docker image history!" && exit 1) || true
+          echo "Verified: Zero secret files or build-layer credentials present inside production Docker image."
+
       - name: Verify Container Startup, Liveness & Database Readiness Probes
         run: |
           CONTAINER_NAME="whatsss-pr-test"

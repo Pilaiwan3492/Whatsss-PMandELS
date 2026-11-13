@@ -76,6 +76,9 @@ export async function healthHandler(req: Request, res: Response): Promise<void> 
 let activeReadyProbe: Promise<unknown> | null = null;
 
 export function resetReadyProbeForTesting(): void {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('resetReadyProbeForTesting cannot be called in production environment');
+  }
   activeReadyProbe = null;
 }
 

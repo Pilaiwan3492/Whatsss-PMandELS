@@ -159,24 +159,44 @@ describe('Unit Test: Cloud-Ready Health, Readiness Probes & Safe Logging (Point 
     expect(queryRawSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('deduplicates concurrent in-flight /api/ready probes to prevent connection pool exhaustion', async () => {
+  it('deduplicates 10 concurrent in-flight /api/ready probes to a single database query and allows a fresh query after completion', async () => {
     let resolveQuery!: (val: any) => void;
-    const queryRawSpy = vi.spyOn(prisma, '$queryRaw').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveQuery = resolve;
-        }) as any
-    );
+    const queryRawSpy = vi
+      .spyOn(prisma, '$queryRaw')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveQuery = resolve;
+          }) as any
+      )
+      .mockResolvedValueOnce([{ '?column?': 1 }] as any);
 
-    const p1 = readyHandler(mockReq, mockRes);
-    const p2 = readyHandler(mockReq, mockRes);
+    // 10 concurrent requests arrive while query #1 is in-flight
+    const pendingRequests = Array.from({ length: 10 }, () => readyHandler(mockReq, mockRes));
 
-    // Only a single underlying DB query should be issued while in-flight
+    // Only 1 underlying DB query must be issued across all 10 concurrent requests
     expect(queryRawSpy).toHaveBeenCalledTimes(1);
 
     resolveQuery([{ '?column?': 1 }]);
-    await Promise.all([p1, p2]);
+    await Promise.all(pendingRequests);
     expect(responseStatus).toBe(200);
+
+    // Subsequent request after query #1 settled starts a fresh query #2
+    await readyHandler(mockReq, mockRes);
+    expect(queryRawSpy).toHaveBeenCalledTimes(2);
+    expect(responseStatus).toBe(200);
+  });
+
+  it('prevents resetReadyProbeForTesting from being called in production environment', () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = 'production';
+      expect(() => resetReadyProbeForTesting()).toThrow(
+        /resetReadyProbeForTesting cannot be called in production environment/
+      );
+    } finally {
+      process.env.NODE_ENV = prevNodeEnv;
+    }
   });
 
   it('does not spawn a second DB query if Request A times out at 3s while the underlying DB query is still running, and recovers once settled', async () => {

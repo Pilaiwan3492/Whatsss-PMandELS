@@ -749,4 +749,107 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     expect(caughtError.summary?.failed).toBe(1);
     expect(failingQueue).toHaveLength(0); // Safely emptied to avoid dangling tasks
   });
+
+  it('P0-04 (Live DB): enforces cross-tenant isolation on POST /api/transactions/income, GET /api/transactions, and GET /api/reports/summary between User A and User B', async (ctx) => {
+    if (!isDbConnected) {
+      ctx.skip();
+      return;
+    }
+
+    const otherUser = await prisma.user.findUnique({ where: { username: 'user_other' } });
+    expect(otherUser).toBeDefined();
+
+    const otherChecking = await prisma.account.findFirst({
+      where: { user_id: otherUser!.id, name: 'Checking Bank' }
+    });
+    const otherSalary = await prisma.account.findFirst({
+      where: { user_id: otherUser!.id, name: 'Salary' }
+    });
+    expect(otherChecking).toBeDefined();
+    expect(otherSalary).toBeDefined();
+
+    // 1. User A attempts to record income into User B's primary CASH account -> 404 NOT_FOUND
+    const resForeignPrimary = await request(app)
+      .post('/api/transactions/income')
+      .set('Cookie', demoUserSessionCookie)
+      .set('Origin', TRUSTED_ORIGIN)
+      .send({
+        primary_account_id: otherChecking!.id,
+        income_account_id: demoSalaryAccount.id,
+        total_amount: '5000.00',
+        transaction_date: '2026-11-06',
+        description: 'Cross-tenant primary income attempt'
+      });
+    expect(resForeignPrimary.status).toBe(404);
+    expect(resForeignPrimary.body.error.code).toBe('NOT_FOUND');
+
+    // 2. User A attempts to record income using User B's INCOME category account -> 404 NOT_FOUND
+    const resForeignTarget = await request(app)
+      .post('/api/transactions/income')
+      .set('Cookie', demoUserSessionCookie)
+      .set('Origin', TRUSTED_ORIGIN)
+      .send({
+        primary_account_id: demoCheckingAccount.id,
+        income_account_id: otherSalary!.id,
+        total_amount: '5000.00',
+        transaction_date: '2026-11-06',
+        description: 'Cross-tenant target income attempt'
+      });
+    expect(resForeignTarget.status).toBe(404);
+    expect(resForeignTarget.body.error.code).toBe('NOT_FOUND');
+
+    // 3. Record a legitimate income transaction for User B and verify User A's transactions & summary never include User B's data
+    const otherCheckingSnap = await snapshotAccount(otherChecking!.id);
+    const createdOtherTxnIds: string[] = [];
+    pendingCleanups.push(async () => {
+      if (createdOtherTxnIds.length > 0) {
+        await prisma.allocationLine.deleteMany({ where: { transaction_id: { in: createdOtherTxnIds } } });
+        await prisma.transaction.deleteMany({ where: { id: { in: createdOtherTxnIds } } });
+      }
+      await restoreAccount(otherCheckingSnap);
+    });
+
+    const userABaselineSummary = await request(app)
+      .get('/api/reports/summary')
+      .set('Cookie', demoUserSessionCookie);
+    expect(userABaselineSummary.status).toBe(200);
+
+    const otherLoginRes = await request(app)
+      .post('/api/auth/login')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .send({ username: 'user_other', password: 'Password123!' });
+    expect(otherLoginRes.status).toBe(200);
+    const otherCookies = otherLoginRes.headers['set-cookie'];
+
+    const otherIncomeRes = await request(app)
+      .post('/api/transactions/income')
+      .set('Cookie', otherCookies)
+      .set('Origin', TRUSTED_ORIGIN)
+      .send({
+        primary_account_id: otherChecking!.id,
+        income_account_id: otherSalary!.id,
+        total_amount: '77777.00',
+        transaction_date: '2026-11-06',
+        description: 'User B Exclusive Salary'
+      });
+    expect(otherIncomeRes.status).toBe(201);
+    const otherTxnId = otherIncomeRes.body.data.transaction.id;
+    createdOtherTxnIds.push(otherTxnId);
+
+    // User A queries GET /api/transactions -> must NOT see User B's transaction
+    const userATxnsRes = await request(app)
+      .get('/api/transactions')
+      .set('Cookie', demoUserSessionCookie);
+    expect(userATxnsRes.status).toBe(200);
+    const leakedTxn = userATxnsRes.body.data.transactions.find((t: any) => t.id === otherTxnId);
+    expect(leakedTxn).toBeUndefined();
+
+    // User A queries GET /api/reports/summary -> must NOT include User B's 77,777.00 THB income
+    const userAAfterSummary = await request(app)
+      .get('/api/reports/summary')
+      .set('Cookie', demoUserSessionCookie);
+    expect(userAAfterSummary.status).toBe(200);
+    expect(userAAfterSummary.body.data).toEqual(userABaselineSummary.body.data);
+  });
 });

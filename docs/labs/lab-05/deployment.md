@@ -586,7 +586,10 @@ curl -i http://localhost:8080/api/ready
 # {"status":"ready","database":"connected","timestamp":"2026-11-13T04:42:12.558Z","commitSha":"development"}
 ```
 
-#### Step 4: End-to-End Authentication & Record Creation
+#### Step 4: End-to-End Authentication & Record Creation (Local Clean-Clone Walkthrough Fixture Example)
+> [!NOTE]
+> The account UUIDs (`ba318feb-9564-4464-b656-8d4cc7a63cd1`, `2f2d3c8d-916b-4601-9739-4c4b64bd5913`) and transaction ID (`8ae70038-8827-40df-b8d1-c88f23913bee`) below are **sample output fixtures** captured from the local Clean-Clone walkthrough run on `2026-11-13`. In automated CI runs (Section 8.2 & Section 10.1), account UUIDs are dynamically resolved on every run via `jq`.
+
 1. **User Authentication (`POST /api/auth/login`):**
    ```bash
    curl -i -c cookie.txt -X POST http://localhost:8080/api/auth/login \
@@ -732,7 +735,22 @@ flowchart TD
 * **Concurrency & Evidence Preservation (`cancel-in-progress: false`):** Concurrency is grouped by `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: false` to prevent a newer run from cancelling an already-running workflow in the same concurrency group. GitHub concurrency groups allow only one pending run per group, so this setting does not guarantee that every commit receives an individual workflow run. Workflow run history must not be manually deleted or rewritten, in accordance with R-10.
 * **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted in the workflow jobs.
 * **Supply-Chain Security:** All third-party GitHub Actions are pinned to full, immutable 40-character commit SHAs (`actions/checkout`, `actions/setup-node`, `docker/setup-buildx-action`, `gitleaks/gitleaks-action`) with version comments to prevent supply-chain attacks.
-* **Secret Detection & Prevention:** Gitleaks scans the full Git history and working tree using `.gitleaks.toml` with targeted allowlists for unit test fixtures and documentation template placeholders.
+* **Secret Detection & Prevention:** Gitleaks scans the full Git history and working tree using `.gitleaks.toml` with targeted allowlists for unit test fixtures and documentation template placeholders, and CI inspects the built Docker image layers and `/app` filesystem to confirm zero `.env` or credential files are packaged.
+
+### 10.1 Release Verification Evidence Summary (P1-06)
+
+| Item | Verified Evidence |
+|---|---|
+| **Feature PR (C-01)** | [PR #26 (`feat/ci-docker-c01 -> staging-lab5`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/26) — Merged in commit `b113cdf` (CI Run [`43401398693`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43401398693) on SHA `eaff10c7bb09a4d250ea593cc6452e77bca9478a`) |
+| **Release PR** | [PR #27 (`staging-lab5 -> main`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/27) |
+| **Verified PR Head SHA** | `d9e0add` (and latest commit on `staging-lab5`) |
+| **CI Run (PR `ci-docker.yml`)** | [Run `43447097425` (`test-and-docker`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43447097425/job/131959299795) — **PASSED** |
+| **CI Run (Push `ci.yml`)** | [Run `43447086952` (`Backend`, `Frontend`, `Docker`, `Secret Scan`, `Check C-03`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43447086952) — **PASSED** |
+| **Backend Test** | **PASSED** — 9 unit test suites (141 tests) + 12 live PostgreSQL integration & E2E suites (`npm test` & `npm run build` on Node.js 24 LTS) |
+| **Frontend Test** | **PASSED** — 7 test suites (55 tests) + Vite production bundle build (`npm test` & `npm run build` on Node.js 24 LTS) |
+| **Docker Build** | **PASSED** — Multi-stage `node:24-alpine` production image built, layer/filesystem secret inspection clean, `/api/health` (200), `/api/ready` (200), and `/` SPA verified |
+| **C-03 Clean Clone** | **PASSED** — Verified in both `test-and-docker` ([Job `131959299795`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43447097425/job/131959299795)) and `c03-clean-clone-verification` ([Job `131959757338`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43447086952/job/131959757338)): clean clone, special-char DB password, `docker compose config -q`, migration failure gate, 200/503/200 probes, 25,000 THB transaction, and volume persistence across restart |
+| **Cloud Deploy** | **PENDING** — Scheduled post-merge of Release PR #27 (`staging-lab5 -> main`); no production deployment is claimed prior to merge |
 
 ---
 

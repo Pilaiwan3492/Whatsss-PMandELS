@@ -499,15 +499,16 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
     expect(res.body.error.code).toBe('INVALID_AMOUNT');
   });
 
-  it('TEST-REPAY-SEC (Live DB): rejects cross-tenant repayment with HTTP 404', async (ctx) => {
+  it('TEST-REPAY-SEC (Live DB): rejects cross-tenant repayment (foreign source CASH or foreign target LOAN_TAKEN) with HTTP 404', async (ctx) => {
     if (!isCI && !allowLiveDb) {
       ctx.skip();
       return;
     }
 
-    if (!otherCheckingAccount) return;
+    if (!otherCheckingAccount || !otherCreditCardAccount) return;
 
-    const res = await request(app)
+    // 1. Foreign source CASH account -> 404 NOT_FOUND
+    const resForeignFrom = await request(app)
       .post('/api/transactions/repayment')
       .set('Origin', TRUSTED_ORIGIN)
       .set('Cookie', demoUserSessionCookie)
@@ -518,8 +519,23 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
         transaction_date: '2026-11-06'
       });
 
-    expect(res.status).toBe(404);
-    expect(res.body.error.code).toBe('NOT_FOUND');
+    expect(resForeignFrom.status).toBe(404);
+    expect(resForeignFrom.body.error.code).toBe('NOT_FOUND');
+
+    // 2. Foreign target LOAN_TAKEN account -> 404 NOT_FOUND
+    const resForeignTo = await request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', demoUserSessionCookie)
+      .send({
+        from_account_id: demoCheckingAccount.id,
+        to_account_id: otherCreditCardAccount.id,
+        amount: 100.00,
+        transaction_date: '2026-11-06'
+      });
+
+    expect(resForeignTo.status).toBe(404);
+    expect(resForeignTo.body.error.code).toBe('NOT_FOUND');
   });
 
   it('TEST-REPAY-CONCURRENT-DEBT (Live DB): serializes concurrent repayments on 3000 THB debt with two 2000 THB requests; exactly 1 succeeds and 1 fails with REPAYMENT_EXCEEDS_DEBT', async (ctx) => {

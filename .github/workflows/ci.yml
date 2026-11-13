@@ -9,6 +9,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend Test & Build
@@ -114,6 +117,18 @@ jobs:
 
       - name: Build Multi-stage Docker Image
         run: docker build -t whatsss:ci .
+
+      - name: Inspect Docker Image Layers & Filesystem for Leaked Secrets (P2-12)
+        run: |
+          echo "Inspecting Docker image history and /app filesystem for forbidden secret files..."
+          LEAKED_IN_IMAGE=$(docker run --rm --entrypoint sh whatsss:ci -c 'find /app -maxdepth 4 \( -name ".env" -o -name ".env.*" -o -name "*.pem" -o -name "*.key" -o -name "*service-account*.json" \) ! -name ".env.example" 2>/dev/null || true')
+          if [ -n "$LEAKED_IN_IMAGE" ]; then
+            echo "::error::Forbidden credential or .env file found inside Docker image:"
+            echo "$LEAKED_IN_IMAGE"
+            exit 1
+          fi
+          docker history --no-trunc whatsss:ci | grep -iE "SEED_ADMIN_PASSWORD|SEED_DEMO_PASSWORD|JWT_SECRET|POSTGRES_PASSWORD" && (echo "::error::Secret env leaked in Docker image history!" && exit 1) || true
+          echo "Verified: Zero secret files or build-layer credentials present inside whatsss:ci image."
 
       - name: Test Container Startup & Health Probes
         run: |

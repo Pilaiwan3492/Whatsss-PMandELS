@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import request from 'supertest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { app } from '../../src/app.js';
-import { seed } from '../../prisma/seed.js';
+import { seed, seedStandardAccountsForUser } from '../../prisma/seed.js';
 import { lockAccounts } from '../../src/services/accountLock.service.js';
 import { assertTestDatabase, executeCleanupsSafely } from '../fixtures/testDbGuard.js';
 
@@ -426,6 +426,96 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
         expect(u!.is_active).toBe(snap.is_active);
         expect(u!.updated_at.getTime()).toBe(snap.updated_at.getTime());
       }
+    });
+
+    it('P0-02 (Live PostgreSQL): rolls back earlier accounts in real PostgreSQL $transaction when 2nd or 5th account fails, and preserves existing transactions on seed re-run', async (ctx) => {
+      if (!isDbConnected) {
+        ctx.skip();
+        return;
+      }
+
+      const tempUsername = `temp_seed_atomic_${Date.now()}`;
+      const tempUser = await prisma.user.create({
+        data: {
+          username: tempUsername,
+          email: `${tempUsername}@whatsss.local`,
+          password_hash: '$2b$10$TempAtomicSeedUserHashValue123456789012345678901234',
+          role: 'USER',
+          is_active: true
+        }
+      });
+
+      pendingCleanups.push(async () => {
+        await prisma.account.deleteMany({ where: { user_id: tempUser.id } });
+        await prisma.user.deleteMany({ where: { id: tempUser.id } });
+      });
+
+      // Helper wrapping real PrismaClient so real SQL inserts happen for earlier accounts, then throws on targetAccountName
+      const makePartialFailClient = (failOnName: string): any =>
+        new Proxy(prisma, {
+          get(target, prop, receiver) {
+            if (prop === '$transaction') {
+              return async (fn: any, ...rest: any[]) =>
+                target.$transaction(async (realTx) => {
+                  const txProxy = new Proxy(realTx, {
+                    get(txTarget, txProp, txReceiver) {
+                      if (txProp === 'account') {
+                        return new Proxy(txTarget.account, {
+                          get(accTarget, accProp, accReceiver) {
+                            if (accProp === 'upsert') {
+                              return async (args: any) => {
+                                if (args?.create?.name === failOnName) {
+                                  throw new Error(`Injected live PostgreSQL failure on ${failOnName}`);
+                                }
+                                return accTarget.upsert(args);
+                              };
+                            }
+                            return Reflect.get(accTarget, accProp, accReceiver);
+                          }
+                        });
+                      }
+                      return Reflect.get(txTarget, txProp, txReceiver);
+                    }
+                  });
+                  return fn(txProxy);
+                }, ...rest);
+            }
+            return Reflect.get(target, prop, receiver);
+          }
+        });
+
+      // 1. Fail on 2nd account ('Visa Credit Card') -> 1st account ('Checking Bank') must be rolled back in PostgreSQL
+      await expect(
+        seedStandardAccountsForUser(makePartialFailClient('Visa Credit Card'), {
+          id: tempUser.id,
+          role: 'USER',
+          username: tempUser.username
+        })
+      ).rejects.toThrow(/Injected live PostgreSQL failure on Visa Credit Card/);
+
+      const countAfterSecondFail = await prisma.account.count({ where: { user_id: tempUser.id } });
+      expect(countAfterSecondFail).toBe(0);
+
+      // 2. Fail on 5th account ('Grocery') -> all 4 preceding accounts must be rolled back in PostgreSQL
+      await expect(
+        seedStandardAccountsForUser(makePartialFailClient('Grocery'), {
+          id: tempUser.id,
+          role: 'USER',
+          username: tempUser.username
+        })
+      ).rejects.toThrow(/Injected live PostgreSQL failure on Grocery/);
+
+      const countAfterFifthFail = await prisma.account.count({ where: { user_id: tempUser.id } });
+      expect(countAfterFifthFail).toBe(0);
+
+      // 3. Normal execution succeeds and commits all 5 accounts in PostgreSQL
+      await seedStandardAccountsForUser(prisma, {
+        id: tempUser.id,
+        role: 'USER',
+        username: tempUser.username
+      });
+      const countAfterSuccess = await prisma.account.count({ where: { user_id: tempUser.id } });
+      expect(countAfterSuccess).toBe(5);
     });
   });
 

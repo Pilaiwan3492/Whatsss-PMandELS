@@ -63,6 +63,38 @@ export function validateClientUrl(clientUrl: string | undefined, isProduction: b
   return parsed.origin;
 }
 
+export interface DatabaseUrlComponents {
+  user: string;
+  password: string;
+  host?: string;
+  port?: number | string;
+  database: string;
+  schema?: string;
+  cloudSqlInstance?: string;
+}
+
+/**
+ * Safely constructs a PostgreSQL connection URL by URL-encoding ONLY the username and password
+ * credentials while preserving URI separators (://, @, :, /, ?) and Cloud SQL Unix socket paths.
+ */
+export function buildDatabaseUrl(components: DatabaseUrlComponents): string {
+  const encodedUser = encodeURIComponent(components.user);
+  const encodedPass = encodeURIComponent(components.password);
+  const encodedDb = encodeURIComponent(components.database);
+  const schemaParam = components.schema ? `schema=${encodeURIComponent(components.schema)}` : '';
+
+  if (components.cloudSqlInstance) {
+    const socketHostParam = `host=/cloudsql/${components.cloudSqlInstance}`;
+    const query = [socketHostParam, schemaParam].filter(Boolean).join('&');
+    return `postgresql://${encodedUser}:${encodedPass}@localhost/${encodedDb}?${query}`;
+  }
+
+  const host = components.host || 'localhost';
+  const port = components.port ?? 5432;
+  const query = schemaParam ? `?${schemaParam}` : '';
+  return `postgresql://${encodedUser}:${encodedPass}@${host}:${port}/${encodedDb}${query}`;
+}
+
 export function validateDatabaseUrl(databaseUrl: string | undefined, isProduction: boolean): string {
   if (!databaseUrl || databaseUrl.trim() === '') {
     if (isProduction) {
@@ -76,12 +108,28 @@ export function validateDatabaseUrl(databaseUrl: string | undefined, isProductio
   }
 
   try {
+    const withoutScheme = databaseUrl.replace(/^postgres(?:ql)?:\/\//, '');
+    const slashIdx = withoutScheme.indexOf('/');
+    if (slashIdx === -1) {
+      throw new Error('Missing database path separator in DATABASE_URL');
+    }
+    const authority = withoutScheme.slice(0, slashIdx);
+    const atCount = (authority.match(/@/g) || []).length;
+    if (atCount > 1) {
+      throw new Error('Unencoded @ character in DATABASE_URL credentials');
+    }
+
     const parsed = new URL(databaseUrl);
     if (parsed.hash) {
       throw new Error('Unencoded hash fragment in DATABASE_URL');
     }
     if (!parsed.hostname && !parsed.searchParams.get('host')) {
       throw new Error('Missing host in DATABASE_URL');
+    }
+    // Pathname must be exactly "/<dbname>" (rejects unencoded "/" in password that shifts host into path)
+    const pathSegments = parsed.pathname.split('/').filter(Boolean);
+    if (pathSegments.length !== 1) {
+      throw new Error('Invalid database path in DATABASE_URL');
     }
   } catch {
     throw new Error('FATAL: DATABASE_URL is malformed and cannot be parsed as a valid connection URL. Ensure special characters in credentials are URL-encoded.');

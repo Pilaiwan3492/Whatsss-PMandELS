@@ -7,6 +7,7 @@ import {
   validatePort,
   validateClientUrl,
   validateDatabaseUrl,
+  buildDatabaseUrl,
   loadConfig
 } from '../../src/config/env.js';
 
@@ -172,6 +173,57 @@ describe('Unit Test: Environment Configuration & Security Validation (Section 2.
       expect(() => validateDatabaseUrl(unencodedSpecialPwdUrl, true)).toThrow(
         /FATAL: DATABASE_URL is malformed and cannot be parsed as a valid connection URL/
       );
+    });
+
+    it('P1-07: encodes special-character passwords safely via buildDatabaseUrl and validates without leaking passwords in errors', () => {
+      const passwordCases = [
+        'normal123',
+        'p@ssword',
+        'p#ssword',
+        'p/ssword',
+        'p:ssword'
+      ];
+
+      for (const rawPassword of passwordCases) {
+        const constructedUrl = buildDatabaseUrl({
+          user: 'postgres',
+          password: rawPassword,
+          host: 'localhost',
+          port: 5432,
+          database: 'whatsss_db',
+          schema: 'public'
+        });
+
+        // Must preserve URI separators while encoding only credentials
+        expect(constructedUrl.startsWith('postgresql://postgres:')).toBe(true);
+        expect(constructedUrl.endsWith('@localhost:5432/whatsss_db?schema=public')).toBe(true);
+        expect(validateDatabaseUrl(constructedUrl, true)).toBe(constructedUrl);
+      }
+
+      // Also verify Cloud SQL Unix socket construction preserves ?host=/cloudsql/...
+      const cloudSqlUrl = buildDatabaseUrl({
+        user: 'postgres',
+        password: 'p@ss#word/1:2',
+        database: 'whatsss_prod',
+        schema: 'public',
+        cloudSqlInstance: 'proj:asia-southeast1:inst'
+      });
+      expect(cloudSqlUrl).toBe(
+        'postgresql://postgres:p%40ss%23word%2F1%3A2@localhost/whatsss_prod?host=/cloudsql/proj:asia-southeast1:inst&schema=public'
+      );
+      expect(validateDatabaseUrl(cloudSqlUrl, true)).toBe(cloudSqlUrl);
+
+      // Verify raw unencoded special passwords (@, #, /) and invalid URLs fail safely without leaking the password in the error message
+      for (const badPassword of ['p@sswordSecret99', 'p#sswordSecret99', 'p/sswordSecret99']) {
+        const rawBrokenUrl = `postgresql://postgres:${badPassword}@localhost:5432/whatsss_db`;
+        try {
+          validateDatabaseUrl(rawBrokenUrl, true);
+          expect.fail(`Expected raw unencoded URL with ${badPassword} to throw`);
+        } catch (err: any) {
+          expect(err.message).toMatch(/FATAL: DATABASE_URL is malformed/);
+          expect(err.message).not.toContain(badPassword);
+        }
+      }
     });
   });
 
