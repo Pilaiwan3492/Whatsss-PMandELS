@@ -11,10 +11,21 @@ export const STANDARD_ACCOUNTS = [
   { name: 'Grocery', type: 'EXPENSE' as const }
 ];
 
+async function runInTransaction<T>(
+  client: any,
+  fn: (tx: any) => Promise<T>
+): Promise<T> {
+  if (typeof client?.$transaction === 'function') {
+    return client.$transaction(async (tx: any) => fn(tx));
+  }
+  return fn(client);
+}
+
 /**
  * Provisions the standard baseline financial accounts for a user.
  * Strictly enforces that financial accounts may ONLY be provisioned for users with role 'USER'.
  * Under BR-10, administrators and non-USER accounts must never possess or execute financial transactions.
+ * Wraps account creation in an atomic database transaction when supported by the client.
  */
 export async function seedStandardAccountsForUser(
   client: PrismaClient,
@@ -26,24 +37,26 @@ export async function seedStandardAccountsForUser(
     );
   }
 
-  for (const acc of STANDARD_ACCOUNTS) {
-    await client.account.upsert({
-      where: {
-        user_id_name: {
+  await runInTransaction(client, async (tx) => {
+    for (const acc of STANDARD_ACCOUNTS) {
+      await tx.account.upsert({
+        where: {
+          user_id_name: {
+            user_id: user.id,
+            name: acc.name
+          }
+        },
+        update: {},
+        create: {
           user_id: user.id,
-          name: acc.name
+          name: acc.name,
+          type: acc.type,
+          opening_balance: 0.00,
+          is_opening_locked: false
         }
-      },
-      update: {},
-      create: {
-        user_id: user.id,
-        name: acc.name,
-        type: acc.type,
-        opening_balance: 0.00,
-        is_opening_locked: false
-      }
-    });
-  }
+      });
+    }
+  });
 }
 
 export function isPlaceholderPassword(val: string): boolean {
@@ -156,52 +169,54 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
         );
       }
 
-      // Check whether user_demo already exists
-      const existingDemoUser = await client.user.findUnique({
-        where: { username: 'user_demo' }
-      });
-
-      let demoUser = existingDemoUser;
-
-      if (!existingDemoUser) {
-        // Check for email collision with other registered users
-        const emailConflict = await client.user.findUnique({
-          where: { email: demoEmail }
+      // Check whether user_demo already exists and provision atomically with its 5 standard accounts
+      await runInTransaction(client, async (tx) => {
+        const existingDemoUser = await tx.user.findUnique({
+          where: { username: 'user_demo' }
         });
 
-        if (emailConflict && emailConflict.username !== 'user_demo') {
-          throw new Error(
-            `FATAL: Email "${demoEmail}" is already in use by user "${emailConflict.username}". Cannot provision demo user.`
-          );
-        }
+        let demoUser = existingDemoUser;
 
-        // Provision initial user_demo with role USER
-        const demoHash = await bcrypt.hash(demoPassword, saltRounds);
-        const createdDemo = await client.user.create({
-          data: {
-            username: 'user_demo',
-            email: demoEmail,
-            password_hash: demoHash,
-            role: 'USER',
-            is_active: true
+        if (!existingDemoUser) {
+          // Check for email collision with other registered users
+          const emailConflict = await tx.user.findUnique({
+            where: { email: demoEmail }
+          });
+
+          if (emailConflict && emailConflict.username !== 'user_demo') {
+            throw new Error(
+              `FATAL: Email "${demoEmail}" is already in use by user "${emailConflict.username}". Cannot provision demo user.`
+            );
           }
-        });
-        demoUser = { role: 'USER' as const, ...createdDemo };
-        console.log('Production demo user (user_demo) provisioned securely.');
-      } else {
-        // Enforce role integrity on existing user_demo
-        if (existingDemoUser.role !== 'USER') {
-          throw new Error(
-            `FATAL: User "user_demo" already exists with non-USER role "${existingDemoUser.role}". Cannot provision financial demo accounts.`
-          );
-        }
-        console.log('Production demo user (user_demo) already exists. Preserving existing credentials.');
-      }
 
-      // Provision standard financial accounts ONLY for validated USER accounts
-      if (demoUser && demoUser.role === 'USER') {
-        await seedStandardAccountsForUser(client as any, demoUser);
-      }
+          // Provision initial user_demo with role USER
+          const demoHash = await bcrypt.hash(demoPassword, saltRounds);
+          const createdDemo = await tx.user.create({
+            data: {
+              username: 'user_demo',
+              email: demoEmail,
+              password_hash: demoHash,
+              role: 'USER',
+              is_active: true
+            }
+          });
+          demoUser = { role: 'USER' as const, ...createdDemo };
+          console.log('Production demo user (user_demo) provisioned securely.');
+        } else {
+          // Enforce role integrity on existing user_demo
+          if (existingDemoUser.role !== 'USER') {
+            throw new Error(
+              `FATAL: User "user_demo" already exists with non-USER role "${existingDemoUser.role}". Cannot provision financial demo accounts.`
+            );
+          }
+          console.log('Production demo user (user_demo) already exists. Preserving existing credentials.');
+        }
+
+        // Provision standard financial accounts ONLY for validated USER accounts
+        if (demoUser && demoUser.role === 'USER') {
+          await seedStandardAccountsForUser(tx as any, demoUser);
+        }
+      });
     }
 
     return;
@@ -211,24 +226,45 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   const devPassword = 'Password123!';
   const devHash = await bcrypt.hash(devPassword, saltRounds);
 
-  // 1. Seed or verify user_demo
-  let userDemo: any = null;
-  if (client.user?.findUnique) {
-    const existingDemo = await client.user.findUnique({
-      where: { username: 'user_demo' }
-    });
-
-    if (!existingDemo) {
-      const emailConflict = await client.user.findUnique({
-        where: { email: 'user_demo@whatsss.local' }
+  await runInTransaction(client, async (tx) => {
+    // 1. Seed or verify user_demo
+    let userDemo: any = null;
+    if (tx.user?.findUnique) {
+      const existingDemo = await tx.user.findUnique({
+        where: { username: 'user_demo' }
       });
-      if (emailConflict && emailConflict.username !== 'user_demo') {
-        throw new Error(
-          `FATAL: Email "user_demo@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision demo user.`
-        );
+
+      if (!existingDemo) {
+        const emailConflict = await tx.user.findUnique({
+          where: { email: 'user_demo@whatsss.local' }
+        });
+        if (emailConflict && emailConflict.username !== 'user_demo') {
+          throw new Error(
+            `FATAL: Email "user_demo@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision demo user.`
+          );
+        }
+        userDemo = await tx.user.create({
+          data: {
+            username: 'user_demo',
+            email: 'user_demo@whatsss.local',
+            password_hash: devHash,
+            role: 'USER',
+            is_active: true
+          }
+        });
+      } else {
+        if (existingDemo.role !== 'USER') {
+          throw new Error(
+            `FATAL: User "user_demo" already exists with non-USER role "${existingDemo.role}". Cannot provision financial demo accounts.`
+          );
+        }
+        userDemo = existingDemo;
       }
-      userDemo = await client.user.create({
-        data: {
+    } else if (tx.user?.upsert) {
+      userDemo = await tx.user.upsert({
+        where: { username: 'user_demo' },
+        update: {},
+        create: {
           username: 'user_demo',
           email: 'user_demo@whatsss.local',
           password_hash: devHash,
@@ -236,57 +272,52 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
           is_active: true
         }
       });
-    } else {
-      if (existingDemo.role !== 'USER') {
+      if (userDemo && userDemo.role !== 'USER') {
         throw new Error(
-          `FATAL: User "user_demo" already exists with non-USER role "${existingDemo.role}". Cannot provision financial demo accounts.`
+          `FATAL: User "user_demo" already exists with non-USER role "${userDemo.role}". Cannot provision financial demo accounts.`
         );
       }
-      userDemo = existingDemo;
-    }
-  } else if (client.user?.upsert) {
-    userDemo = await client.user.upsert({
-      where: { username: 'user_demo' },
-      update: {},
-      create: {
-        username: 'user_demo',
-        email: 'user_demo@whatsss.local',
-        password_hash: devHash,
-        role: 'USER',
-        is_active: true
-      }
-    });
-    if (userDemo && userDemo.role !== 'USER') {
-      throw new Error(
-        `FATAL: User "user_demo" already exists with non-USER role "${userDemo.role}". Cannot provision financial demo accounts.`
-      );
-    }
-  }
-
-  // 2. Seed or verify user_other (USER)
-  let userOther: any = null;
-  if (client.user?.findUnique) {
-    const existingOther = await client.user.findUnique({
-      where: { username: 'user_other' }
-    });
-
-    if (existingOther && existingOther.role !== 'USER') {
-      throw new Error(
-        `FATAL: User "user_other" already exists with non-USER role "${existingOther.role}".`
-      );
     }
 
-    if (!existingOther) {
-      const emailConflict = await client.user.findUnique({
-        where: { email: 'user_other@whatsss.local' }
+    // 2. Seed or verify user_other (USER)
+    let userOther: any = null;
+    if (tx.user?.findUnique) {
+      const existingOther = await tx.user.findUnique({
+        where: { username: 'user_other' }
       });
-      if (emailConflict && emailConflict.username !== 'user_other') {
+
+      if (existingOther && existingOther.role !== 'USER') {
         throw new Error(
-          `FATAL: Email "user_other@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision user_other.`
+          `FATAL: User "user_other" already exists with non-USER role "${existingOther.role}".`
         );
       }
-      userOther = await client.user.create({
-        data: {
+
+      if (!existingOther) {
+        const emailConflict = await tx.user.findUnique({
+          where: { email: 'user_other@whatsss.local' }
+        });
+        if (emailConflict && emailConflict.username !== 'user_other') {
+          throw new Error(
+            `FATAL: Email "user_other@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision user_other.`
+          );
+        }
+        userOther = await tx.user.create({
+          data: {
+            username: 'user_other',
+            email: 'user_other@whatsss.local',
+            password_hash: devHash,
+            role: 'USER',
+            is_active: true
+          }
+        });
+      } else {
+        userOther = existingOther;
+      }
+    } else if (tx.user?.upsert) {
+      userOther = await tx.user.upsert({
+        where: { username: 'user_other' },
+        update: {},
+        create: {
           username: 'user_other',
           email: 'user_other@whatsss.local',
           password_hash: devHash,
@@ -294,52 +325,52 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
           is_active: true
         }
       });
-    } else {
-      userOther = existingOther;
-    }
-  } else if (client.user?.upsert) {
-    userOther = await client.user.upsert({
-      where: { username: 'user_other' },
-      update: {},
-      create: {
-        username: 'user_other',
-        email: 'user_other@whatsss.local',
-        password_hash: devHash,
-        role: 'USER',
-        is_active: true
-      }
-    });
-    if (userOther && userOther.role !== 'USER') {
-      throw new Error(
-        `FATAL: User "user_other" already exists with non-USER role "${userOther.role}".`
-      );
-    }
-  }
-
-  // 3. Seed or verify admin_demo (ADMIN)
-  let adminDemo: any = null;
-  if (client.user?.findUnique) {
-    const existingAdminDemo = await client.user.findUnique({
-      where: { username: 'admin_demo' }
-    });
-
-    if (existingAdminDemo && existingAdminDemo.role !== 'ADMIN') {
-      throw new Error(
-        `FATAL: User "admin_demo" already exists with non-ADMIN role "${existingAdminDemo.role}".`
-      );
-    }
-
-    if (!existingAdminDemo) {
-      const emailConflict = await client.user.findUnique({
-        where: { email: 'admin_demo@whatsss.local' }
-      });
-      if (emailConflict && emailConflict.username !== 'admin_demo') {
+      if (userOther && userOther.role !== 'USER') {
         throw new Error(
-          `FATAL: Email "admin_demo@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision admin_demo.`
+          `FATAL: User "user_other" already exists with non-USER role "${userOther.role}".`
         );
       }
-      adminDemo = await client.user.create({
-        data: {
+    }
+
+    // 3. Seed or verify admin_demo (ADMIN)
+    let adminDemo: any = null;
+    if (tx.user?.findUnique) {
+      const existingAdminDemo = await tx.user.findUnique({
+        where: { username: 'admin_demo' }
+      });
+
+      if (existingAdminDemo && existingAdminDemo.role !== 'ADMIN') {
+        throw new Error(
+          `FATAL: User "admin_demo" already exists with non-ADMIN role "${existingAdminDemo.role}".`
+        );
+      }
+
+      if (!existingAdminDemo) {
+        const emailConflict = await tx.user.findUnique({
+          where: { email: 'admin_demo@whatsss.local' }
+        });
+        if (emailConflict && emailConflict.username !== 'admin_demo') {
+          throw new Error(
+            `FATAL: Email "admin_demo@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision admin_demo.`
+          );
+        }
+        adminDemo = await tx.user.create({
+          data: {
+            username: 'admin_demo',
+            email: 'admin_demo@whatsss.local',
+            password_hash: devHash,
+            role: 'ADMIN',
+            is_active: true
+          }
+        });
+      } else {
+        adminDemo = existingAdminDemo;
+      }
+    } else if (tx.user?.upsert) {
+      adminDemo = await tx.user.upsert({
+        where: { username: 'admin_demo' },
+        update: {},
+        create: {
           username: 'admin_demo',
           email: 'admin_demo@whatsss.local',
           password_hash: devHash,
@@ -347,35 +378,21 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
           is_active: true
         }
       });
-    } else {
-      adminDemo = existingAdminDemo;
-    }
-  } else if (client.user?.upsert) {
-    adminDemo = await client.user.upsert({
-      where: { username: 'admin_demo' },
-      update: {},
-      create: {
-        username: 'admin_demo',
-        email: 'admin_demo@whatsss.local',
-        password_hash: devHash,
-        role: 'ADMIN',
-        is_active: true
+      if (adminDemo && adminDemo.role !== 'ADMIN') {
+        throw new Error(
+          `FATAL: User "admin_demo" already exists with non-ADMIN role "${adminDemo.role}".`
+        );
       }
-    });
-    if (adminDemo && adminDemo.role !== 'ADMIN') {
-      throw new Error(
-        `FATAL: User "admin_demo" already exists with non-ADMIN role "${adminDemo.role}".`
-      );
     }
-  }
 
-  // 4. Seed standard financial accounts ONLY for USER role demo users (userDemo, userOther)
-  // Under BR-10, admin_demo (ADMIN) must not receive standard financial accounts during seeding.
-  for (const user of [userDemo, userOther]) {
-    if (user) {
-      await seedStandardAccountsForUser(client, user);
+    // 4. Seed standard financial accounts ONLY for USER role demo users (userDemo, userOther)
+    // Under BR-10, admin_demo (ADMIN) must not receive standard financial accounts during seeding.
+    for (const user of [userDemo, userOther]) {
+      if (user) {
+        await seedStandardAccountsForUser(tx, user);
+      }
     }
-  }
+  });
 
   console.log('Development seeding completed successfully.');
 }

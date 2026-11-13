@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { healthHandler, readyHandler, sanitizeLogMessage, app } from '../../src/app.js';
+import { healthHandler, readyHandler, resetReadyProbeForTesting, sanitizeLogMessage, app } from '../../src/app.js';
 import { prisma } from '../../src/prisma.js';
 import { config } from '../../src/config/env.js';
 
@@ -10,6 +10,7 @@ describe('Unit Test: Cloud-Ready Health, Readiness Probes & Safe Logging (Point 
   let responseStatus: number;
 
   beforeEach(() => {
+    resetReadyProbeForTesting();
     responseData = null;
     responseStatus = 0;
 
@@ -27,6 +28,7 @@ describe('Unit Test: Cloud-Ready Health, Readiness Probes & Safe Logging (Point 
   });
 
   afterEach(() => {
+    resetReadyProbeForTesting();
     vi.restoreAllMocks();
   });
 
@@ -175,6 +177,45 @@ describe('Unit Test: Cloud-Ready Health, Readiness Probes & Safe Logging (Point 
     resolveQuery([{ '?column?': 1 }]);
     await Promise.all([p1, p2]);
     expect(responseStatus).toBe(200);
+  });
+
+  it('does not spawn a second DB query if Request A times out at 3s while the underlying DB query is still running, and recovers once settled', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    let resolveHangingQuery!: (val: any) => void;
+    const queryRawSpy = vi
+      .spyOn(prisma, '$queryRaw')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveHangingQuery = resolve;
+          }) as any
+      )
+      .mockResolvedValueOnce([{ '?column?': 1 }] as any);
+
+    // Request A starts at t=0 and times out at t=3000ms while DB query #1 is still running
+    const reqA = readyHandler(mockReq, mockRes);
+    await vi.advanceTimersByTimeAsync(3100);
+    await reqA;
+    expect(responseStatus).toBe(503);
+    expect(queryRawSpy).toHaveBeenCalledTimes(1);
+
+    // Request B arrives at t=3100ms while DB query #1 is STILL running -> must reuse activeReadyProbe, not start query #2
+    const reqB = readyHandler(mockReq, mockRes);
+    expect(queryRawSpy).toHaveBeenCalledTimes(1);
+
+    // Now DB query #1 finally settles at t=3500ms -> Request B resolves 200 and activeReadyProbe is cleared
+    resolveHangingQuery([{ '?column?': 1 }]);
+    await reqB;
+    expect(responseStatus).toBe(200);
+
+    // Request C arrives after query #1 settled -> starts fresh DB query #2 and returns 200
+    await readyHandler(mockReq, mockRes);
+    expect(queryRawSpy).toHaveBeenCalledTimes(2);
+    expect(responseStatus).toBe(200);
+
+    vi.useRealTimers();
   });
 
   it('verifies that /api/health and /api/ready routes are registered in Express router stack', () => {

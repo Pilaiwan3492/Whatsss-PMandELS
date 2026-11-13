@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import request from 'supertest';
-import { app } from '../../src/app.js';
+import { app, resetReadyProbeForTesting } from '../../src/app.js';
 import { prisma } from '../../src/prisma.js';
 import { config } from '../../src/config/env.js';
 
 describe('HTTP Integration Test: Health Endpoints, CSRF Exemption & API 404 Routing', () => {
   afterEach(() => {
+    resetReadyProbeForTesting();
     vi.restoreAllMocks();
   });
 

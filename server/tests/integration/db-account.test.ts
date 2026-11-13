@@ -361,24 +361,39 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
 
       // 4. Construct proxy client where user operations hit real PostgreSQL,
       // but account.upsert throws an injected database error during seed execution
-      const proxyPrisma = new Proxy(prisma, {
-        get(target, prop, receiver) {
-          if (prop === 'account') {
-            const realAccount = target.account;
-            return new Proxy(realAccount, {
-              get(accTarget, accProp, accReceiver) {
-                if (accProp === 'upsert') {
-                  return async () => {
-                    throw new Error('Injected database error during real seed account upsert');
-                  };
+      // (both directly and inside interactive $transaction callbacks)
+      const wrapClientWithUpsertFailure = (clientTarget: any): any =>
+        new Proxy(clientTarget, {
+          get(target, prop, receiver) {
+            if (prop === '$transaction' && typeof target.$transaction === 'function') {
+              return async (arg: any, ...rest: any[]) => {
+                if (typeof arg === 'function') {
+                  return target.$transaction(
+                    async (tx: any) => arg(wrapClientWithUpsertFailure(tx)),
+                    ...rest
+                  );
                 }
-                return Reflect.get(accTarget, accProp, accReceiver);
-              }
-            });
+                return target.$transaction(arg, ...rest);
+              };
+            }
+            if (prop === 'account') {
+              const realAccount = target.account;
+              return new Proxy(realAccount, {
+                get(accTarget, accProp, accReceiver) {
+                  if (accProp === 'upsert') {
+                    return async () => {
+                      throw new Error('Injected database error during real seed account upsert');
+                    };
+                  }
+                  return Reflect.get(accTarget, accProp, accReceiver);
+                }
+              });
+            }
+            return Reflect.get(target, prop, receiver);
           }
-          return Reflect.get(target, prop, receiver);
-        }
-      });
+        });
+
+      const proxyPrisma = wrapClientWithUpsertFailure(prisma);
 
       // 5. Execute real seed(proxyPrisma) inside try/finally
       let seedError: Error | null = null;

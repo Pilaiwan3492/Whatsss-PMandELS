@@ -656,30 +656,31 @@ curl -i http://localhost:8080/api/ready
 
 **Conclusion:** Check **C-03** is fully satisfied. The application builds, seeds, and executes cleanly from a fresh clone with `.env.example` placeholders, and data persists across container lifecycles in the PostgreSQL volume.
 
-### 8.2 Automated Clean-Clone CI Pipeline Verification (`.github/workflows/ci.yml`)
+### 8.2 Automated Clean-Clone CI Pipeline Verification (`.github/workflows/ci-docker.yml` & `ci.yml`)
 
-To provide continuously verifiable, traceable proof that the application adheres to Check **C-03** on every code revision, the GitHub Actions CI pipeline executes an automated end-to-end job: `c03-clean-clone-verification`:
+To provide continuously verifiable, traceable proof that the application adheres to Check **C-03** on every Pull Request and branch push, both `.github/workflows/ci-docker.yml` (`test-and-docker` on PRs) and `.github/workflows/ci.yml` (`c03-clean-clone-verification` on pushes) execute the automated end-to-end C-03 verification:
 
-1. **Authentic Clean Git Clone:** Clones the repository afresh from the current workspace into an isolated runner directory (`../clean-clone-test`) and checks out the exact PR commit SHA (`git checkout "${{ github.sha }}"`), ensuring no untracked files or cached build artifacts leak into the test.
-2. **Template Secret Interpolation:** Copies `.env.example` to `.env` and generates dynamic, ephemeral random credentials (`openssl rand -hex 32` for `JWT_SECRET`, unique passwords for `POSTGRES_PASSWORD`, `SEED_ADMIN_PASSWORD`, and `SEED_DEMO_PASSWORD`), strictly validating that the application runs with real secrets and rejects placeholders.
-3. **Single-Command Stack Startup:** Executes `docker compose -p whatsss_c03_ci up -d --build`. Polling logic enforces a strict timeout: if the app container fails to report `healthy` within 30 cycles (60s), CI dumps container logs and immediately exits with failure (`exit 1`).
-4. **Health (Liveness) Verification:** Confirms `GET /api/health` returns HTTP 200 OK with `{"status":"ok"}`.
-5. **Readiness Probe State Discrimination (DB Healthy vs Outage vs Recovery):**
+1. **Authentic Clean Git Clone:** Clones the repository afresh from the current workspace into an isolated runner directory (`../clean-clone-test`) and checks out the exact PR/branch commit SHA (`git checkout "${{ github.sha }}"`), ensuring no untracked files or cached build artifacts leak into the test.
+2. **Template Secret Interpolation & Special-Character Password Encoding:** Copies `.env.example` to `.env`, generates dynamic ephemeral random credentials (`openssl rand -hex 32` for `JWT_SECRET`, unique passwords for `SEED_ADMIN_PASSWORD` and `SEED_DEMO_PASSWORD`), and tests `POSTGRES_PASSWORD` containing URI-reserved special characters (`@`, `#`, `/`, `:`) paired with a URL-encoded `DOCKER_DATABASE_URL`. Validates syntax via `docker compose config -q` and masks all generated secrets in CI logs (`::add-mask::`).
+3. **Migration Failure Gate Verification (`service_completed_successfully`):** Simulates a migration failure using an unreachable database target in an isolated compose project (`-p whatsss_mig_fail_ci`) and verifies that `docker compose up -d app` exits non-zero and the `app` container never starts when `migrate` fails.
+4. **Single-Command Stack Startup:** Executes `docker compose -p whatsss_c03_ci up -d --build`. Polling logic enforces a strict timeout: if the app container fails to report `healthy` within 30 cycles (60s), CI dumps container logs and immediately exits with failure (`exit 1`).
+5. **Health (Liveness) Verification:** Confirms `GET /api/health` returns HTTP 200 OK with `{"status":"ok"}`.
+6. **Readiness Probe State Discrimination (DB Healthy vs Outage vs Recovery):**
    - Asserts `GET /api/ready` returns **HTTP 200 OK** (`database: connected`).
    - Simulates database outage by stopping the PostgreSQL container (`docker compose -p whatsss_c03_ci stop postgres`).
    - Asserts `GET /api/ready` returns **HTTP 503 Service Unavailable** (`database: disconnected`).
    - Asserts `GET /api/health` still returns **HTTP 200 OK**, confirming process liveness is not tied to database availability.
    - Restarts PostgreSQL (`docker compose -p whatsss_c03_ci start postgres`), actively verifies that PostgreSQL recovers to `healthy` within 20 cycles (or exits immediately with `exit 1` and container logs), and confirms `GET /api/ready` recovers to **HTTP 200 OK**.
    - A shell `trap` guarantees that PostgreSQL is revived even if any intermediate assertion fails.
-6. **Robust End-to-End API Transaction Processing:**
+7. **Robust End-to-End API Transaction Processing:**
    - Authenticates as `user_demo` via `POST /api/auth/login` and captures the session cookie.
    - Queries `GET /api/accounts` and uses `jq` to parse the exact UUIDs for `Checking Bank` and `Salary`.
    - Records an income transaction of 25,000.00 THB (`POST /api/transactions/income`), receiving HTTP 201 Created.
-7. **Volume Persistence Verification Across Teardown:**
+8. **Volume Persistence Verification Across Teardown:**
    - Executes `docker compose -p whatsss_c03_ci down` (retaining volume `whatsss_c03_ci_whatsss_pgdata`).
    - Re-launches the stack via `docker compose -p whatsss_c03_ci up -d`, with health timeout validation.
    - Re-authenticates and calls `GET /api/transactions` to confirm that the recorded transaction and updated balance persisted intact across container destruction.
-8. **Scoped Project Cleanup:** Teardown is scoped strictly to project `-p whatsss_c03_ci` (`docker compose -p whatsss_c03_ci down -v`), ensuring that test volume removal is strictly isolated to CI and never impacts developer or production data.
+9. **Scoped Project Cleanup:** Teardown is scoped strictly to project `-p whatsss_c03_ci` (`docker compose -p whatsss_c03_ci down -v`), ensuring that test volume removal is strictly isolated to CI and never impacts developer or production data.
 
 ---
 
@@ -713,12 +714,13 @@ The repository CI workflow enforces rigorous quality gates on every push and pul
 
 ```mermaid
 flowchart TD
-    PR["Pull Request to staging-lab5 / main"] --> CIDocker["ci-docker.yml (Check C-01)"]
+    PR["Pull Request to staging-lab5 / main"] --> CIDocker["ci-docker.yml (Check C-01 & C-03)"]
     
     subgraph TestAndDockerJob ["Job: test-and-docker"]
         Checkout["Checkout & Gitleaks Scan"] --> BackendSteps["Backend: migrate + seed + test + build"]
         BackendSteps --> FrontendSteps["Frontend: test + build"]
         FrontendSteps --> DockerSteps["Docker: multi-stage build + probe"]
+        DockerSteps --> C03Steps["C-03 Clean Clone + Migration Gate + Persistence"]
     end
     
     CIDocker --> TestAndDockerJob
@@ -739,19 +741,19 @@ flowchart TD
 | # | Acceptance Criterion | Status | Verification Evidence / Artifact |
 |---|---|:---:|---|
 | 1 | **CSRF Integration Tests** covering all mutating & safe HTTP methods across trusted, untrusted, and missing origins | **COMPLETED** | `server/tests/integration/health.test.ts` (20 integration tests passed) verifying POST/PUT/PATCH/DELETE rejections (403), valid CLIENT_URL passage, and safe GET exemptions |
-| 2 | **Multi-stage Dockerfile** building full-stack production image cleanly | **COMPLETED** | Root `Dockerfile` with stages `client-builder` (`VITE_API_BASE_URL=/api`), `server-builder`, and `runner` (alpine-based, non-root `node:node`, ~179MB, accepting `APP_COMMIT_SHA`) |
+| 2 | **Multi-stage Dockerfile** building full-stack production image cleanly | **COMPLETED** | Root `Dockerfile` (`node:24-alpine`) with stages `client-builder` (`VITE_API_BASE_URL=/api`), `server-builder`, and `runner` (non-root `node:node`, ~179MB, accepting `APP_COMMIT_SHA`) |
 | 3 | **Docker Image Artifact Integrity** containing frontend dist, backend dist, and Prisma migrations | **COMPLETED** | Verified inside container: `/app/client/dist` (HTML, JS, CSS), `/app/server/dist`, `/app/server/prisma` (`schema.prisma`, `migrations/`, `seed.ts`) |
-| 4 | **Docker Container Startup & Liveness Probe** answering HTTP 200 | **COMPLETED** | Verified locally: `curl -i http://localhost:8080/api/health` returned HTTP 200 OK |
-| 5 | **Single-Container SPA & Backend API Routing** via `/api` | **COMPLETED** | Verified locally: `/` returns full SPA HTML; API routes (`/api/auth/*`, `/api/*`) operate through Express pipeline |
-| 6 | **Prisma Migration Execution** against real PostgreSQL database | **COMPLETED** | Verified inside container: `npx prisma migrate deploy` applied 3 migrations to live PostgreSQL container |
-| 7 | **Prisma Seed Idempotency & Data Safety** | **COMPLETED** | Verified: Seed script executed multiple times; preserved existing user credentials and roles; upserted standard accounts without duplicates; passwords stored as 60-char bcrypt hashes |
+| 4 | **Docker Container Startup & Liveness Probe** answering HTTP 200 | **COMPLETED** | Verified locally and in CI: `curl -i http://localhost:8080/api/health` returned HTTP 200 OK |
+| 5 | **Single-Container SPA & Backend API Routing** via `/api` | **COMPLETED** | Verified locally and in CI: `/` returns full SPA HTML; API routes (`/api/auth/*`, `/api/*`) operate through Express pipeline |
+| 6 | **Prisma Migration Execution** against real PostgreSQL database | **COMPLETED** | Verified inside container: `npx prisma migrate deploy` applied migrations to live PostgreSQL container; migration failure gate verified in CI |
+| 7 | **Prisma Seed Idempotency, Atomicity & Data Safety** | **COMPLETED** | Verified in `server/prisma/seed.ts` & `server/tests/unit/seed.test.ts` (30 tests): Atomic `$transaction` account provisioning; strict role enforcement (`USER` vs `ADMIN`); existing user credentials and roles preserved |
 | 8 | **Cloud Run + Cloud SQL Connectivity Architecture** | **COMPLETED** | Documented Unix Socket connection (`host=/cloudsql/...`), IAM `roles/cloudsql.client`, and decoupled Cloud Run Job migration |
-| 9 | **Secret Management Isolation** (Zero secrets in Image or Git) | **COMPLETED** | Enforced by `.dockerignore`, `.gitignore`, CI credential scan, and Secret Manager documentation |
-| 10 | **Readiness Probe State Discrimination** (200 on DB ready, 503 on DB disconnect) | **COMPLETED** | Verified locally: disconnected DB $\rightarrow$ HTTP 503 (`Database connection unavailable`); live DB $\rightarrow$ HTTP 200 (`database: connected`) |
-| 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci.yml` triggers on pushes; executes full test matrix and C-03 clean-clone verification |
-| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | Verified by GitHub Actions Run #3 ([43401398693](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43401398693)) on commit `eaff10c7bb09a4d250ea593cc6452e77bca9478a`; the unified `test-and-docker` job completed successfully. |
-| 13 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md` updated with exact verified commands, configuration runbooks, and diagrams |
-| 14 | **Traceable Verification Evidence & Commit SHA** | **PARTIALLY COMPLETED** | Feature PR verification logs and commit SHAs recorded; pending Release PR #1 (`staging-lab5 -> main`) merge and final deployed commit verification |
-| 15 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Fresh clone from branch with `.env.example` only; started via `docker compose up -d --build`; health probes 200 OK; transaction created; data persisted across `docker compose down` and restart |
+| 9 | **Secret Management Isolation** (Zero secrets in Image or Git) | **COMPLETED** | Enforced by `.dockerignore`, `.gitignore`, Gitleaks CI scan, `::add-mask::` in workflows, and Secret Manager documentation |
+| 10 | **Readiness Probe State Discrimination & In-Flight Deduplication** | **COMPLETED** | Verified in `server/src/app.ts` & `server/tests/unit/health.test.ts` (10 tests): 3s timeout, in-flight query deduplication until DB query settles, and 200/503/200 state transition |
+| 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci-docker.yml` and `.github/workflows/ci.yml` execute on Node.js 24 LTS across PRs and branch pushes |
+| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | Verified on Feature PR #26 (merged in `b113cdf`) and Release PR #27 (`staging-lab5 -> main`); the unified `test-and-docker` job completes all backend, frontend, Docker, and C-03 checks |
+| 13 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md` updated with exact verified commands, Node.js 24 LTS runtime, configuration runbooks, and diagrams |
+| 14 | **Traceable Verification Evidence & Commit SHA** | **PARTIALLY COMPLETED** | Feature PR #26 merged (`b113cdf`) and Release PR #27 (`staging-lab5 -> main`) opened with CI verification; pending Release PR #27 peer review approval/merge into `main` and final Cloud Run deployment verification |
+| 15 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Automated in both `ci-docker.yml` (PRs) and `ci.yml` (pushes): fresh clone, `.env.example` with special-char DB password & URL-encoded `DOCKER_DATABASE_URL`, migration failure gate, 200/503/200 probes, 25,000 THB transaction creation, and volume persistence across teardown |
 
 

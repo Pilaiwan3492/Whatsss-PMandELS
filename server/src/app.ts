@@ -75,26 +75,39 @@ export async function healthHandler(req: Request, res: Response): Promise<void> 
 
 let activeReadyProbe: Promise<unknown> | null = null;
 
+export function resetReadyProbeForTesting(): void {
+  activeReadyProbe = null;
+}
+
+function getOrStartReadyProbe(): Promise<unknown> {
+  if (!activeReadyProbe) {
+    const rawPromise = Promise.resolve(prisma.$queryRaw`SELECT 1`);
+    const probePromise = rawPromise.finally(() => {
+      if (activeReadyProbe === probePromise) {
+        activeReadyProbe = null;
+      }
+    });
+    activeReadyProbe = probePromise;
+  }
+  return activeReadyProbe;
+}
+
 export async function readyHandler(req: Request, res: Response): Promise<void> {
   try {
-    // Database probe with a 3-second timeout and in-flight deduplication to prevent connection pool exhaustion
+    // Database probe with a 3-second timeout and in-flight deduplication to prevent connection pool exhaustion.
+    // activeReadyProbe is only cleared when the underlying DB query settles, never on HTTP timeout.
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise((_, reject) => {
       timeoutHandle = setTimeout(() => {
-        activeReadyProbe = null;
         reject(new Error('Database probe query timed out after 3000ms'));
       }, 3000);
     });
 
-    if (!activeReadyProbe) {
-      activeReadyProbe = Promise.resolve(prisma.$queryRaw`SELECT 1`).finally(() => {
-        activeReadyProbe = null;
-      });
-    }
+    const probePromise = getOrStartReadyProbe();
 
     try {
       await Promise.race([
-        activeReadyProbe,
+        probePromise,
         timeoutPromise
       ]);
     } finally {

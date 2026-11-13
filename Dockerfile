@@ -57,7 +57,7 @@ COPY server/prisma ./prisma
 RUN npm ci --omit=dev && npx prisma generate
 
 # Copy compiled backend application
-# Node.js 20-alpine ES module distribution
+# Node.js 24-alpine ES module distribution
 COPY --from=server-builder /app/server/dist ./dist
 
 # Copy compiled frontend distribution to both /app/client/dist and ./client/dist

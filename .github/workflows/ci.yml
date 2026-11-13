@@ -185,20 +185,57 @@ jobs:
         run: |
           cp .env.example .env
 
-          # Generate dynamic random cryptographic secrets for isolated test execution
+          # Generate dynamic random secrets including special URI characters (@, #, /, :) in POSTGRES_PASSWORD
+          HEX_PART="$(openssl rand -hex 8)"
           CI_ADMIN_PWD="Admin_$(openssl rand -hex 12)!"
           CI_DEMO_PWD="Demo_$(openssl rand -hex 12)!"
-          CI_PG_PWD="Pg_$(openssl rand -hex 12)!"
+          CI_PG_PWD="Pg@${HEX_PART}#pass/123:ok"
+          CI_PG_PWD_ENCODED="Pg%40${HEX_PART}%23pass%2F123%3Aok"
           RANDOM_JWT="$(openssl rand -hex 32)"
+
+          # Mask generated credentials in GitHub Actions logs
+          echo "::add-mask::${CI_ADMIN_PWD}"
+          echo "::add-mask::${CI_DEMO_PWD}"
+          echo "::add-mask::${CI_PG_PWD}"
+          echo "::add-mask::${CI_PG_PWD_ENCODED}"
+          echo "::add-mask::${RANDOM_JWT}"
 
           sed -i "s|replace_with_a_long_random_secret_at_least_32_characters_for_production|${RANDOM_JWT}|g" .env
           sed -i "s|replace_with_secure_admin_password_min_12_chars|${CI_ADMIN_PWD}|g" .env
           sed -i "s|replace_with_secure_postgres_password_for_local|${CI_PG_PWD}|g" .env
           sed -i "s|SEED_DEMO_DATA=false|SEED_DEMO_DATA=true|g" .env
           sed -i "s|replace_with_secure_demo_password_min_12_chars|${CI_DEMO_PWD}|g" .env
+          sed -i "s|^DATABASE_URL=.*|DATABASE_URL=\"postgresql://postgres:${CI_PG_PWD_ENCODED}@localhost:5432/whatsss_db?schema=public\"|g" .env
+          echo "DOCKER_DATABASE_URL=postgresql://postgres:${CI_PG_PWD_ENCODED}@postgres:5432/whatsss_db?schema=public" >> .env
+
+          # Validate Docker Compose syntax quietly without printing sensitive environment values
+          docker compose config -q
 
           # Save demo user credentials for downstream authentication step
           echo "CI_DEMO_PWD=${CI_DEMO_PWD}" >> $GITHUB_ENV
+
+      - name: Verify Migration Failure Gate Blocks App Startup (service_completed_successfully)
+        working-directory: ../clean-clone-test
+        run: |
+          cleanup_mig_fail() {
+            docker compose -p whatsss_mig_fail_ci down -v 2>/dev/null || true
+          }
+          trap cleanup_mig_fail EXIT
+
+          echo "Simulating migration failure with unreachable database host in DOCKER_DATABASE_URL..."
+          if DOCKER_DATABASE_URL="postgresql://postgres:invalid@127.0.0.1:59999/whatsss_db?schema=public" \
+             POSTGRES_PORT=5434 PORT=8081 \
+             docker compose -p whatsss_mig_fail_ci up -d --build app; then
+            echo "::error::Expected docker compose up -d app to fail when migrate fails!"
+            exit 1
+          fi
+
+          APP_RUNNING=$(docker compose -p whatsss_mig_fail_ci ps -q --status running app 2>/dev/null || true)
+          if [ -n "$APP_RUNNING" ]; then
+            echo "::error::App container started despite migration failure!"
+            exit 1
+          fi
+          echo "Verified: Migration failure gate prevented app container from starting."
 
       - name: Start Full Stack with Docker Compose (C-03)
         working-directory: ../clean-clone-test

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import bcrypt from 'bcrypt';
-import { seed } from '../../prisma/seed.js';
+import { seed, seedStandardAccountsForUser } from '../../prisma/seed.js';
 
 describe('Unit Test: Production Seed Admin Provisioning & Conflict Handling (TASK 3)', () => {
   const originalEnv = process.env;
@@ -633,5 +633,46 @@ describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Id
     );
     expect(usersDb.get('admin_demo').role).toBe('USER');
     expect(accountsDb.size).toBe(0);
+  });
+
+  it('rolls back all created accounts atomically via $transaction when creating the 2nd standard account fails', async () => {
+    const committedAccounts = new Map<string, any>();
+
+    const txCapableClient: any = {
+      $transaction: vi.fn().mockImplementation(async (callback: any) => {
+        // Stage mutations in a transaction buffer; only commit to committedAccounts if callback succeeds
+        const stagedAccounts = new Map(committedAccounts);
+        const txClient = {
+          account: {
+            upsert: vi.fn().mockImplementation(async ({ where, create }: any) => {
+              if (create.name === 'Visa Credit Card') {
+                throw new Error('Simulated DB failure while creating 2nd account (Visa Credit Card)');
+              }
+              const key = `${where.user_id_name.user_id}:${where.user_id_name.name}`;
+              stagedAccounts.set(key, { id: `acc-${key}`, ...create });
+              return stagedAccounts.get(key);
+            })
+          }
+        };
+        const result = await callback(txClient);
+        committedAccounts.clear();
+        for (const [k, v] of stagedAccounts.entries()) {
+          committedAccounts.set(k, v);
+        }
+        return result;
+      })
+    };
+
+    await expect(
+      seedStandardAccountsForUser(txCapableClient, {
+        id: 'user-atomic-1',
+        role: 'USER',
+        username: 'user_demo'
+      })
+    ).rejects.toThrow(/Simulated DB failure while creating 2nd account/);
+
+    expect(txCapableClient.$transaction).toHaveBeenCalledTimes(1);
+    // Account #1 (Checking Bank) must be rolled back -> 0 accounts committed
+    expect(committedAccounts.size).toBe(0);
   });
 });
