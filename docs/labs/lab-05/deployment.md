@@ -690,37 +690,34 @@ To support zero-downtime rollbacks, schema migrations follow expand-and-contract
 
 ---
 
-## 10. CI/CD Pipeline Automation (`.github/workflows/ci.yml`)
+## 10. CI/CD Pipeline Automation (`.github/workflows/ci-docker.yml` & `ci.yml`)
 
 The repository CI workflow enforces rigorous quality gates on every push and pull request targeting `staging-lab5` and `main`:
 
 ```mermaid
-flowchart LR
-    PushOrPR["Git Push / PR to staging-lab5"]
+flowchart TD
+    PR["Pull Request to staging-lab5 / main"] --> CIDocker["ci-docker.yml (Check C-01)"]
     
-    subgraph CIJobs ["GitHub Actions CI Matrix"]
-        BackendJob["Backend Test & Build<br/>(PostgreSQL 16, Vitest, tsc)"]
-        FrontendJob["Frontend Test & Build<br/>(Vitest, Vite build)"]
-        DockerJob["Docker Build & Probe<br/>(Multi-stage build, health curl)"]
-        CleanCloneJob["Clean Clone C-03 Verification<br/>(docker-compose up, e2e API, persistence)"]
-        SecurityJob["Secret & Credential Scan<br/>(Detect .env, keys, pem)"]
+    subgraph TestAndDockerJob ["Job: test-and-docker"]
+        Checkout["Checkout & Gitleaks Scan"] --> BackendSteps["Backend: migrate + seed + test + build"]
+        BackendSteps --> FrontendSteps["Frontend: test + build"]
+        FrontendSteps --> DockerSteps["Docker: multi-stage build + probe"]
     end
     
-    PushOrPR --> BackendJob
-    PushOrPR --> FrontendJob
-    PushOrPR --> DockerJob
-    DockerJob --> CleanCloneJob
-    PushOrPR --> SecurityJob
+    CIDocker --> TestAndDockerJob
+    
+    PushBranch["Push to staging-lab5 / main"] --> CIPush["ci.yml (Matrix & C-03 Clean Clone)"]
 ```
 
-* **Branch Protection:** All five jobs must report Success before any PR targeting `staging-lab5` can be reviewed and approved.
+* **Check C-01 (PR Runs & Passes Build, Test, and Docker Build):** Configured in `.github/workflows/ci-docker.yml` under the unified required status check job named **`test-and-docker`**. Triggers on `pull_request` targeting `[main, staging-lab5]`, `workflow_call`, and `workflow_dispatch`.
+* **Branch Protection:** The required check job **`test-and-docker`** must report Success before any PR targeting `staging-lab5` or `main` can be reviewed and merged.
 * **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted.
 * **Supply-Chain Security:** All third-party GitHub Actions are pinned to full, immutable 40-character commit SHAs (`actions/checkout`, `actions/setup-node`, `docker/setup-buildx-action`, `gitleaks/gitleaks-action`) with version comments to prevent supply-chain attacks.
-* **Secret Detection & Prevention:** The `security-scan` job scans for forbidden credential files (`.env`, `.pem`, `.key`, service accounts) and executes Gitleaks (`gitleaks/gitleaks-action`) across full Git history and the working tree using `.gitleaks.toml` with targeted allowlists for explicit unit test fixtures and documentation template placeholders (no broad directory exclusions). Repositories should additionally enforce GitHub Secret Scanning and Push Protection.
+* **Secret Detection & Prevention:** Gitleaks scans the full Git history and working tree using `.gitleaks.toml` with targeted allowlists for unit test fixtures and documentation template placeholders.
 
 ---
 
-## 11. Peer Review Acceptance Criteria Checklist (14/14)
+## 11. Peer Review Acceptance Criteria Checklist (15/15)
 
 | # | Acceptance Criterion | Status | Verification Evidence / Artifact |
 |---|---|:---:|---|
@@ -734,9 +731,10 @@ flowchart LR
 | 8 | **Cloud Run + Cloud SQL Connectivity Architecture** | **COMPLETED** | Documented Unix Socket connection (`host=/cloudsql/...`), IAM `roles/cloudsql.client`, and decoupled Cloud Run Job migration |
 | 9 | **Secret Management Isolation** (Zero secrets in Image or Git) | **COMPLETED** | Enforced by `.dockerignore`, `.gitignore`, CI credential scan, and Secret Manager documentation |
 | 10 | **Readiness Probe State Discrimination** (200 on DB ready, 503 on DB disconnect) | **COMPLETED** | Verified locally: disconnected DB $\rightarrow$ HTTP 503 (`Database connection unavailable`); live DB $\rightarrow$ HTTP 200 (`database: connected`) |
-| 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci.yml` triggers on PRs to `staging-lab5`; executes Backend, Frontend, Docker Build & Probe, and Secret Scan |
-| 12 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md` updated with exact verified commands, configuration runbooks, and diagrams |
-| 13 | **Traceable Verification Evidence & Commit SHA** | **COMPLETED** | Commit history, command outputs, and test logs recorded for peer review |
-| 14 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Fresh clone from branch with `.env.example` only; started via `docker compose up -d --build`; health probes 200 OK; transaction created; data persisted across `docker compose down` and restart |
+| 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci.yml` triggers on pushes; executes full test matrix and C-03 clean-clone verification |
+| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | `.github/workflows/ci-docker.yml` triggers on PRs to `staging-lab5` and `main`; executes consolidated `test-and-docker` job (backend, frontend, Docker build and liveness probe) |
+| 13 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md` updated with exact verified commands, configuration runbooks, and diagrams |
+| 14 | **Traceable Verification Evidence & Commit SHA** | **COMPLETED** | Commit history, command outputs, and test logs recorded for peer review |
+| 15 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Fresh clone from branch with `.env.example` only; started via `docker compose up -d --build`; health probes 200 OK; transaction created; data persisted across `docker compose down` and restart |
 
 
