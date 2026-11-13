@@ -14,7 +14,7 @@ MOCKS_DIR="${SCRIPT_DIR}/mocks"
 cd "${REPO_ROOT}"
 export APP_COMMIT_SHA="${APP_COMMIT_SHA:-0123456789abcdef0123456789abcdef01234567}"
 
-chmod +x "${DEPLOY_SCRIPT}" "${DEPLOY_DIR}/release.sh" "${MOCKS_DIR}/gcloud" "${MOCKS_DIR}/docker" "${MOCKS_DIR}/curl"
+chmod +x "${DEPLOY_SCRIPT}" "${DEPLOY_DIR}/release.sh" "${DEPLOY_DIR}/rotate-db-password.sh" "${MOCKS_DIR}/gcloud" "${MOCKS_DIR}/docker" "${MOCKS_DIR}/curl"
 
 TEST_ROOT="$(mktemp -d 2>/dev/null || mktemp -d -t 'whatsss-test-deploy')"
 cleanup() {
@@ -358,93 +358,129 @@ pass_test "Active gcloud project mismatch guard prevents accidental cross-projec
 # ------------------------------------------------------------------------------
 # Test 15: Manual Maintenance Rotation Procedure Simulation with Failure Guards & Rollback
 # ------------------------------------------------------------------------------
-new_test_env "test15_manual_rotation_rollback"
-# Initialize baseline deployment
+# Test 14: Manual Maintenance Password Rotation Runbook & Automated Rollback
+# ------------------------------------------------------------------------------
+# 14a: Deploy failure after Cloud SQL password change triggers automated rollback
+new_test_env "test14a_deploy_failure_rollback"
 GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
 WHATSSS_DB_PASSWORD="OriginalDBPassword123" \
 bash "${DEPLOY_SCRIPT}" >/dev/null 2>&1
 
 original_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
 original_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
-
-# 15a: Failure Guard — Adding Secret Version Fails (Cloud SQL must NOT be modified)
-TMP_SECRET_FAIL="${MOCK_STATE_DIR}/tmp_fail_secret.txt"
-printf 'postgresql://whatsss_app:TestFail123@localhost:5432/whatsss_db' > "${TMP_SECRET_FAIL}"
-if output="$(
-  MOCK_FAIL_SECRET_UPDATE=1 \
-  gcloud secrets versions add whatsss-database-url --data-file="${TMP_SECRET_FAIL}" 2>&1
-)"; then
-  fail_test "Expected secret version add to fail under MOCK_FAIL_SECRET_UPDATE"
-fi
-rm -f "${TMP_SECRET_FAIL}"
-current_sql_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
-if [[ "${current_sql_pwd}" != "${original_pwd}" ]]; then
-  fail_test "Cloud SQL password was modified even though secret version creation failed"
+if [[ -z "${original_ver}" ]]; then
+  fail_test "Failed to resolve initial secret version in test 14a"
 fi
 
-# 15b: Failure Guard — Changing Cloud SQL Password Fails (Release must NOT proceed)
-TMP_SECRET_OK="${MOCK_STATE_DIR}/tmp_stage_secret.txt"
-printf 'postgresql://whatsss_app:StagedSecret456@localhost:5432/whatsss_db' > "${TMP_SECRET_OK}"
-gcloud secrets versions add whatsss-database-url --data-file="${TMP_SECRET_OK}" >/dev/null
-rm -f "${TMP_SECRET_OK}"
-staged_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
-if [[ -z "${staged_ver}" || "${staged_ver}" -le "${original_ver}" ]]; then
-  fail_test "Expected staged secret version to be greater than original version ${original_ver}"
+# Execute actual rotate-db-password.sh with simulated deploy failure
+export MOCK_FAIL_DEPLOY_ONCE=1
+output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  TMPDIR="${TEST_ROOT}/test14a_deploy_failure_rollback" \
+  bash "${DEPLOY_DIR}/rotate-db-password.sh" 2>&1 || true
+)"
+export MOCK_FAIL_DEPLOY_ONCE=0
+
+if [[ "${output}" != *"CRITICAL: Initiating automated rollback"* ]]; then
+  fail_test "Expected rotate-db-password.sh to initiate automated rollback upon deploy failure, got: ${output}"
 fi
-
-if output="$(
-  MOCK_FAIL_SQL_SET_PASSWORD=1 \
-  gcloud sql users set-password whatsss_app --instance=whatsss-sql --password="StagedSecret456" --project=cpe334-whatsss-pmandels 2>&1
-)"; then
-  fail_test "Expected sql users set-password to fail under MOCK_FAIL_SQL_SET_PASSWORD"
+if [[ "${output}" != *"Rollback completed successfully"* ]]; then
+  fail_test "Expected rotate-db-password.sh to complete rollback successfully, got: ${output}"
 fi
-current_sql_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
-if [[ "${current_sql_pwd}" != "${original_pwd}" ]]; then
-  fail_test "Cloud SQL password was corrupted despite set-password failure"
-fi
-
-# 15c: Full Manual Rotation with Rollback Simulation (Release Failure triggers Rollback)
-NEW_ROTATED_PWD="NewRotatedPassword456!"
-NEW_URL="postgresql://whatsss_app:${NEW_ROTATED_PWD}@localhost:5432/whatsss_db?host=/cloudsql/cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql&schema=public"
-TMP_ROTATE="${MOCK_STATE_DIR}/tmp_new_secret.txt"
-printf '%s' "${NEW_URL}" > "${TMP_ROTATE}"
-gcloud secrets versions add whatsss-database-url --data-file="${TMP_ROTATE}" >/dev/null
-rm -f "${TMP_ROTATE}"
-new_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
-
-# Update Cloud SQL password to new password
-gcloud sql users set-password whatsss_app --instance=whatsss-sql --password="${NEW_ROTATED_PWD}" --project=cpe334-whatsss-pmandels >/dev/null
-
-# Trigger release.sh with new secret version (simulating release failure)
-export MOCK_FAIL_RUN_DEPLOY=1
-if GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
-  APP_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
-  IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781" \
-  DB_URL_VERSION="${new_ver}" \
-  JWT_SECRET_VERSION="1" \
-  ADMIN_PASSWORD_VERSION="1" \
-  DEMO_PASSWORD_VERSION="1" \
-  bash "${DEPLOY_DIR}/release.sh" >/dev/null 2>&1; then
-  fail_test "Expected release.sh to fail under simulated release failure"
-fi
-
-# Perform Rollback — restore original Cloud SQL password & redeploy previous secret version
-gcloud sql users set-password whatsss_app --instance=whatsss-sql --password="${original_pwd}" --project=cpe334-whatsss-pmandels >/dev/null
-export MOCK_FAIL_RUN_DEPLOY=0
-GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
-APP_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
-IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781" \
-DB_URL_VERSION="${original_ver}" \
-JWT_SECRET_VERSION="1" \
-ADMIN_PASSWORD_VERSION="1" \
-DEMO_PASSWORD_VERSION="1" \
-bash "${DEPLOY_DIR}/release.sh" >/dev/null 2>&1
 
 rolled_back_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
 if [[ "${rolled_back_pwd}" != "${original_pwd}" ]]; then
-  fail_test "Rollback failed to restore original Cloud SQL password"
+  fail_test "Rollback failed to restore original Cloud SQL password (expected '${original_pwd}', got '${rolled_back_pwd}')"
 fi
-pass_test "Manual maintenance rotation procedure with safe rollback and failure guards restores original credentials and operational service"
+
+# Verify temporary files were cleaned up by trap
+leftover_tmp="$(find "${TEST_ROOT}/test14a_deploy_failure_rollback" -name "tmp.*" 2>/dev/null || true)"
+if [[ -n "${leftover_tmp}" ]]; then
+  fail_test "Temporary secret files were not cleaned up after rollback: ${leftover_tmp}"
+fi
+
+# 14b: Health check failure triggers automated rollback
+new_test_env "test14b_health_failure_rollback"
+GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+WHATSSS_DB_PASSWORD="OriginalDBPassword123" \
+bash "${DEPLOY_SCRIPT}" >/dev/null 2>&1
+
+export MOCK_FAIL_HEALTH_PROBE_ONCE=1
+output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  TMPDIR="${TEST_ROOT}/test14b_health_failure_rollback" \
+  bash "${DEPLOY_DIR}/rotate-db-password.sh" 2>&1 || true
+)"
+export MOCK_FAIL_HEALTH_PROBE_ONCE=0
+
+if [[ "${output}" != *"probe failed"* || "${output}" != *"Rollback completed successfully"* ]]; then
+  fail_test "Expected health probe failure to trigger automated rollback, got: ${output}"
+fi
+rolled_back_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
+if [[ "${rolled_back_pwd}" != "${original_pwd}" ]]; then
+  fail_test "Health failure rollback did not restore original Cloud SQL password"
+fi
+leftover_tmp="$(find "${TEST_ROOT}/test14b_health_failure_rollback" -name "tmp.*" 2>/dev/null || true)"
+if [[ -n "${leftover_tmp}" ]]; then
+  fail_test "Temporary secret files were not cleaned up after health check failure rollback: ${leftover_tmp}"
+fi
+
+# 14c: Rollback failure reports explicit fatal error and exits non-zero (code 2)
+new_test_env "test14c_rollback_failure"
+GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+WHATSSS_DB_PASSWORD="OriginalDBPassword123" \
+bash "${DEPLOY_SCRIPT}" >/dev/null 2>&1
+
+export MOCK_FAIL_RUN_DEPLOY=1
+export MOCK_FAIL_ROLLBACK_SQL_SET_PASSWORD=1
+export MOCK_ORIGINAL_PWD="${original_pwd}"
+
+exit_code=0
+output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  TMPDIR="${TEST_ROOT}/test14c_rollback_failure" \
+  bash "${DEPLOY_DIR}/rotate-db-password.sh" 2>&1
+)" || exit_code=$?
+
+export MOCK_FAIL_RUN_DEPLOY=0
+export MOCK_FAIL_ROLLBACK_SQL_SET_PASSWORD=0
+
+if [[ "${exit_code}" -ne 2 ]]; then
+  fail_test "Expected exit code 2 when rollback fails, got exit code ${exit_code}"
+fi
+if [[ "${output}" != *"FATAL ROLLBACK FAILURE"* ]]; then
+  fail_test "Expected FATAL ROLLBACK FAILURE message in output, got: ${output}"
+fi
+leftover_tmp="$(find "${TEST_ROOT}/test14c_rollback_failure" -name "tmp.*" 2>/dev/null || true)"
+if [[ -n "${leftover_tmp}" ]]; then
+  fail_test "Temporary secret files were not cleaned up after rollback failure: ${leftover_tmp}"
+fi
+
+# 14d: Successful manual password rotation
+new_test_env "test14d_success_rotation"
+GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+WHATSSS_DB_PASSWORD="OriginalDBPassword123" \
+bash "${DEPLOY_SCRIPT}" >/dev/null 2>&1
+
+output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  TMPDIR="${TEST_ROOT}/test14d_success_rotation" \
+  bash "${DEPLOY_DIR}/rotate-db-password.sh" 2>&1
+)"
+
+if [[ "${output}" != *"SUCCESS: Password rotation verified!"* ]]; then
+  fail_test "Expected successful password rotation output, got: ${output}"
+fi
+new_sql_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
+if [[ "${new_sql_pwd}" == "${original_pwd}" ]]; then
+  fail_test "Cloud SQL password was not updated after successful rotation"
+fi
+leftover_tmp="$(find "${TEST_ROOT}/test14d_success_rotation" -name "tmp.*" 2>/dev/null || true)"
+if [[ -n "${leftover_tmp}" ]]; then
+  fail_test "Temporary secret files were not cleaned up after successful rotation: ${leftover_tmp}"
+fi
+
+pass_test "Manual maintenance rotation runbook executes with automated rollback on deploy/probe failures, reports fatal error on rollback failure, and guarantees temp file cleanup"
 
 echo "=============================================================================="
 echo " ALL ${PASS_COUNT} DEPLOY SCRIPT TESTS PASSED!"

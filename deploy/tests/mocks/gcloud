@@ -211,6 +211,10 @@ case "${subcmd} ${subcmd2} ${subcmd3}" in
         --password=*) pwd_val="${arg#--password=}" ;;
       esac
     done
+    if [[ "${MOCK_FAIL_ROLLBACK_SQL_SET_PASSWORD:-0}" == "1" && "${pwd_val}" == "${MOCK_ORIGINAL_PWD:-}" ]]; then
+      echo "ERROR: (gcloud.sql.users.set-password) ROLLBACK_RESTORE_FAILED" >&2
+      exit 1
+    fi
     printf '%s' "${pwd_val}" > "${STATE_DIR}/sql_user_pwd_${user}"
     exit 0
     ;;
@@ -277,6 +281,22 @@ case "${subcmd} ${subcmd2} ${subcmd3}" in
     fi
     ver="$(cat "${STATE_DIR}/secret_ver_${sec}" 2>/dev/null || echo '1')"
     echo "projects/1086708130644/secrets/${sec}/versions/${ver}"
+    exit 0
+    ;;
+
+  "secrets versions access")
+    ver="${4:-}"
+    sec=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --secret=*) sec="${arg#--secret=}" ;;
+      esac
+    done
+    if [[ -f "${STATE_DIR}/secret_val_${sec}" ]]; then
+      cat "${STATE_DIR}/secret_val_${sec}"
+    else
+      echo "postgresql://whatsss_app:OriginalDBPassword123@localhost:5432/whatsss_db?host=/cloudsql/cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql&schema=public"
+    fi
     exit 0
     ;;
 
@@ -414,6 +434,13 @@ case "${subcmd} ${subcmd2} ${subcmd3}" in
       echo "ERROR: (gcloud.run.deploy) Service deployment failed" >&2
       exit 1
     fi
+    if [[ "${MOCK_FAIL_DEPLOY_ONCE:-0}" == "1" ]]; then
+      if [[ ! -f "${STATE_DIR}/deploy_failed_once" ]]; then
+        touch "${STATE_DIR}/deploy_failed_once"
+        echo "ERROR: (gcloud.run.deploy) Service deployment failed once" >&2
+        exit 1
+      fi
+    fi
     svc_name="${3:-}"
     sa_email=""
     client_url=""
@@ -460,6 +487,18 @@ case "${subcmd} ${subcmd2} ${subcmd3}" in
         ;;
       *containers.env.value*)
         cat "${STATE_DIR}/svc_client_url_${svc_name}"
+        ;;
+      *image*)
+        if [[ "${MOCK_FAIL_IMAGE_READ:-0}" == "1" ]]; then
+          exit 1
+        fi
+        echo "${MOCK_RUN_IMAGE:-asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781}"
+        ;;
+      *APP_COMMIT_SHA*)
+        if [[ "${MOCK_FAIL_COMMIT_READ:-0}" == "1" ]]; then
+          exit 1
+        fi
+        echo "${MOCK_RUN_COMMIT_SHA:-0123456789abcdef0123456789abcdef01234567}"
         ;;
     esac
     exit 0

@@ -359,7 +359,7 @@ The Whatsss deployment workflow deliberately employs `docker build` + `docker pu
 > [!CAUTION]
 > **Potential Service Downtime Warning:** Changing the database password on an active single-user Cloud SQL account (`whatsss_app`) creates a temporary credential mismatch during propagation. Existing Cloud Run container instances will continue attempting database queries using the previous password until the new revision is fully deployed and old instances are drained. **Never refer to this procedure as "atomic" or "zero-downtime".** Perform this maintenance strictly during a scheduled maintenance window.
 
-When business or security policies require rotating the Cloud SQL password, execute this hardened runbook. It includes `set -euo pipefail`, automatic cleanup via shell `trap`, explicit numeric Secret Manager version arguments, and deterministic failure recovery:
+When business or security policies require rotating the Cloud SQL password, execute this hardened runbook (also available as executable script at [`deploy/rotate-db-password.sh`](file:///c:/Users/User/Downloads/group_work_specs_v1/Whatsss-PMandELS/deploy/rotate-db-password.sh)). It includes `set -euo pipefail`, pre-validation of Cloud Run state before any mutations, automatic cleanup via shell `trap`, an active `ERR` trap ensuring that any failure after Cloud SQL password change enters rollback, and explicit reporting if rollback itself fails:
 
 ```bash
 #!/usr/bin/env bash
@@ -368,15 +368,23 @@ When business or security policies require rotating the Cloud SQL password, exec
 # ==============================================================================
 set -euo pipefail
 
-PROJECT_ID="cpe334-whatsss-pmandels"
-REGION="asia-southeast1"
-INSTANCE="whatsss-sql"
-DB_USER="whatsss_app"
-SECRET_NAME="whatsss-database-url"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+PROJECT_ID="${GCP_PROJECT_ID:-cpe334-whatsss-pmandels}"
+REGION="${GCP_REGION:-asia-southeast1}"
+INSTANCE="${SQL_INSTANCE:-whatsss-sql}"
+DB_USER="${DB_USER:-whatsss_app}"
+DB_NAME="${DB_NAME:-whatsss_db}"
+SECRET_NAME="${SECRET_DB_URL:-whatsss-database-url}"
+CLOUD_RUN_SERVICE="${CLOUD_RUN_SERVICE:-whatsss}"
+JWT_SECRET_VERSION="${JWT_SECRET_VERSION:-1}"
+ADMIN_PASSWORD_VERSION="${ADMIN_PASSWORD_VERSION:-1}"
+DEMO_PASSWORD_VERSION="${DEMO_PASSWORD_VERSION:-1}"
 
 # Automatic cleanup trap: ensures temporary secret files are shredded upon exit, error, or interruption
 TMP_BACKUP=""
 TMP_NEW_SECRET=""
+# shellcheck disable=SC2329
 cleanup_temp_files() {
   if [[ -n "${TMP_NEW_SECRET:-}" && -f "${TMP_NEW_SECRET}" ]]; then
     shred -u "${TMP_NEW_SECRET}" 2>/dev/null || rm -f "${TMP_NEW_SECRET}"
@@ -387,21 +395,93 @@ cleanup_temp_files() {
 }
 trap cleanup_temp_files EXIT INT TERM
 
+# Rollback procedure: triggered on ANY error after Cloud SQL password has been altered
+# shellcheck disable=SC2329
+rollback_rotation() {
+  trap - ERR
+  set +e
+  local exit_reason="${1:-Unknown failure occurred during post-rotation deployment or verification}"
+  echo "CRITICAL: Database password rotation failed: ${exit_reason}" >&2
+  echo "CRITICAL: Initiating automated rollback to restore operational service..." >&2
+
+  local rb_failed=0
+
+  # Step 1: Restore original Cloud SQL user password from backup
+  local prev_pwd=""
+  if [[ -n "${TMP_BACKUP:-}" && -f "${TMP_BACKUP}" ]]; then
+    prev_pwd="$(python3 -c '
+import sys, urllib.parse
+raw = open(sys.argv[1]).read().strip()
+parsed = urllib.parse.urlsplit(raw)
+print(urllib.parse.unquote(parsed.password or ""))
+' "${TMP_BACKUP}" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "${prev_pwd}" ]]; then
+    echo "FATAL: Rollback cannot recover previous database password from backup file." >&2
+    rb_failed=1
+  else
+    echo "Rollback: Restoring Cloud SQL user '${DB_USER}' password..." >&2
+    if ! gcloud sql users set-password "${DB_USER}" \
+      --instance="${INSTANCE}" \
+      --password="${prev_pwd}" \
+      --project="${PROJECT_ID}"; then
+      echo "FATAL: Rollback failed to restore Cloud SQL user password!" >&2
+      rb_failed=1
+    fi
+  fi
+
+  # Step 2: Redeploy Cloud Run service pinned to original numeric secret version
+  echo "Rollback: Redeploying Cloud Run service pinned to secret version ${CURRENT_VER}..." >&2
+  if ! (
+    GCP_PROJECT_ID="${PROJECT_ID}" \
+    GCP_REGION="${REGION}" \
+    APP_COMMIT_SHA="${COMMIT_SHA}" \
+    IMAGE_REF="${IMAGE_DIGEST}" \
+    DB_URL_VERSION="${CURRENT_VER}" \
+    JWT_SECRET_VERSION="${JWT_SECRET_VERSION}" \
+    ADMIN_PASSWORD_VERSION="${ADMIN_PASSWORD_VERSION}" \
+    DEMO_PASSWORD_VERSION="${DEMO_PASSWORD_VERSION}" \
+    bash "${SCRIPT_DIR}/release.sh"
+  ); then
+    echo "FATAL: Rollback failed to redeploy Cloud Run service on secret version ${CURRENT_VER}!" >&2
+    rb_failed=1
+  fi
+
+  if [[ "${rb_failed}" -eq 1 ]]; then
+    echo "FATAL ROLLBACK FAILURE: Automated rollback could not fully restore the system. Immediate manual intervention required." >&2
+    exit 2
+  fi
+
+  echo "Rollback completed successfully. Restored operational service on secret version ${CURRENT_VER}." >&2
+  exit 1
+}
+
 # ------------------------------------------------------------------------------
-# Phase 1: Preparation & Backup of Current State
+# Phase 1: Preparation & State Pre-Validation (BEFORE Any Mutation)
 # ------------------------------------------------------------------------------
-echo "=== Phase 1: Resolving current active secret version & backing up payload ==="
+echo "=== Phase 1: Resolving current active secret version, service state & backing up payload ==="
 CURRENT_VER="$(gcloud secrets versions list "${SECRET_NAME}" \
   --project="${PROJECT_ID}" \
   --filter="state:ENABLED" \
   --format="value(name)" \
   --sort-by="~create_time" | head -n 1)"
+CURRENT_VER="${CURRENT_VER##*/}"
 
 if [[ -z "${CURRENT_VER}" || ! "${CURRENT_VER}" =~ ^[0-9]+$ ]]; then
   echo "ERROR: Unable to resolve numeric active version for secret '${SECRET_NAME}'." >&2
   exit 1
 fi
 echo "Current active database secret version: ${CURRENT_VER}"
+
+# Pre-validate Cloud Run image digest and commit SHA BEFORE modifying anything
+IMAGE_DIGEST="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region="${REGION}" --project="${PROJECT_ID}" --format='value(spec.template.spec.containers[0].image)')"
+COMMIT_SHA="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region="${REGION}" --project="${PROJECT_ID}" --format='value(spec.template.spec.containers[0].env[?(@.name=="APP_COMMIT_SHA")].value)')"
+
+if [[ -z "${IMAGE_DIGEST}" || -z "${COMMIT_SHA}" ]]; then
+  echo "ERROR: Unable to resolve active Cloud Run image digest or commit SHA before rotation." >&2
+  exit 1
+fi
 
 TMP_BACKUP="$(mktemp)"
 chmod 600 "${TMP_BACKUP}"
@@ -413,7 +493,7 @@ gcloud secrets versions access "${CURRENT_VER}" --secret="${SECRET_NAME}" --proj
 echo "=== Phase 2: Staging new secret version in Secret Manager ==="
 NEW_PASSWORD="$(openssl rand -base64 24 | tr -d '\n+/=' | head -c 24)"
 NEW_PASSWORD_ENCODED="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${NEW_PASSWORD}")"
-NEW_DB_URL="postgresql://${DB_USER}:${NEW_PASSWORD_ENCODED}@localhost:5432/whatsss_db?host=/cloudsql/${PROJECT_ID}:${REGION}:${INSTANCE}&schema=public"
+NEW_DB_URL="postgresql://${DB_USER}:${NEW_PASSWORD_ENCODED}@localhost:5432/${DB_NAME}?host=/cloudsql/${PROJECT_ID}:${REGION}:${INSTANCE}&schema=public"
 
 TMP_NEW_SECRET="$(mktemp)"
 chmod 600 "${TMP_NEW_SECRET}"
@@ -435,6 +515,7 @@ NEW_VER="$(gcloud secrets versions list "${SECRET_NAME}" \
   --filter="state:ENABLED" \
   --format="value(name)" \
   --sort-by="~create_time" | head -n 1)"
+NEW_VER="${NEW_VER##*/}"
 
 if [[ -z "${NEW_VER}" || ! "${NEW_VER}" =~ ^[0-9]+$ || "${NEW_VER}" -le "${CURRENT_VER}" ]]; then
   echo "ERROR: New secret version staging failed verification. Expected numeric version > ${CURRENT_VER}." >&2
@@ -443,7 +524,7 @@ fi
 echo "New database secret version staged: ${NEW_VER}"
 
 # ------------------------------------------------------------------------------
-# Phase 3: Update Cloud SQL User Password
+# Phase 3: Update Cloud SQL User Password & Arm Rollback Error Trap
 # ------------------------------------------------------------------------------
 echo "=== Phase 3: Updating Cloud SQL user '${DB_USER}' password ==="
 # [FAILURE GUARD 2]: If setting Cloud SQL password fails, abort before triggering release.sh
@@ -459,79 +540,44 @@ if ! gcloud sql users set-password "${DB_USER}" \
 fi
 unset NEW_PASSWORD NEW_PASSWORD_ENCODED NEW_DB_URL
 
+# CRITICAL SAFETY: Arm the automated rollback trap for ANY subsequent failure
+trap 'rollback_rotation "Command on line $LINENO ($BASH_COMMAND) failed"' ERR
+
 # ------------------------------------------------------------------------------
 # Phase 4: Deploy Cloud Run Revision with Explicit Numeric Secret Versions
 # ------------------------------------------------------------------------------
 echo "=== Phase 4: Releasing Cloud Run service with new secret version ${NEW_VER} ==="
-IMAGE_DIGEST="$(gcloud run services describe whatsss --region="${REGION}" --project="${PROJECT_ID}" --format='value(spec.template.spec.containers[0].image)')"
-COMMIT_SHA="$(gcloud run services describe whatsss --region="${REGION}" --project="${PROJECT_ID}" --format='value(spec.template.spec.containers[0].env[?(@.name=="APP_COMMIT_SHA")].value)')"
-
-DEPLOY_SUCCESS=0
-if GCP_PROJECT_ID="${PROJECT_ID}" \
-   GCP_REGION="${REGION}" \
-   APP_COMMIT_SHA="${COMMIT_SHA}" \
-   IMAGE_REF="${IMAGE_DIGEST}" \
-   DB_URL_VERSION="${NEW_VER}" \
-   JWT_SECRET_VERSION="1" \
-   ADMIN_PASSWORD_VERSION="1" \
-   DEMO_PASSWORD_VERSION="1" \
-   bash deploy/release.sh; then
-  DEPLOY_SUCCESS=1
-fi
-
-# ------------------------------------------------------------------------------
-# Phase 5: Verification of Health and Readiness Probes
-# ------------------------------------------------------------------------------
-SERVICE_URL="$(gcloud run services describe whatsss --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')"
-HEALTH_STATUS="000"
-READY_STATUS=""
-
-if [[ "${DEPLOY_SUCCESS}" -eq 1 && -n "${SERVICE_URL}" ]]; then
-  echo "=== Phase 5: Verifying /api/health and /api/ready probes ==="
-  HEALTH_STATUS="$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/api/health" || echo "000")"
-  READY_STATUS="$(curl -s "${SERVICE_URL}/api/ready" || echo "")"
-fi
-
-if [[ "${DEPLOY_SUCCESS}" -eq 1 && "${HEALTH_STATUS}" == "200" && "${READY_STATUS}" == *'"database":"connected"'* ]]; then
-  echo "SUCCESS: Password rotation verified! Active secret version: ${NEW_VER}"
-  exit 0
-fi
-
-# ------------------------------------------------------------------------------
-# Phase 6: Automated Rollback Procedure [FAILURE GUARD 3]
-# ------------------------------------------------------------------------------
-echo "CRITICAL: Post-rotation release or health verification failed!" >&2
-echo "Initiating immediate rollback to restore operational service..." >&2
-
-# Step 1: Extract and restore original password in Cloud SQL
-PREV_PASSWORD="$(python3 -c '
-import sys, urllib.parse
-raw = open(sys.argv[1]).read().strip()
-parsed = urllib.parse.urlsplit(raw)
-print(urllib.parse.unquote(parsed.password or ""))
-' "${TMP_BACKUP}")"
-
-echo "Restoring Cloud SQL user '${DB_USER}' password to previous credentials..." >&2
-gcloud sql users set-password "${DB_USER}" \
-  --instance="${INSTANCE}" \
-  --password="${PREV_PASSWORD}" \
-  --project="${PROJECT_ID}"
-unset PREV_PASSWORD
-
-# Step 2: Redeploy previous revision with original numeric secret version
-echo "Redeploying Cloud Run service pinned to original secret version ${CURRENT_VER}..." >&2
 GCP_PROJECT_ID="${PROJECT_ID}" \
 GCP_REGION="${REGION}" \
 APP_COMMIT_SHA="${COMMIT_SHA}" \
 IMAGE_REF="${IMAGE_DIGEST}" \
-DB_URL_VERSION="${CURRENT_VER}" \
-JWT_SECRET_VERSION="1" \
-ADMIN_PASSWORD_VERSION="1" \
-DEMO_PASSWORD_VERSION="1" \
-bash deploy/release.sh
+DB_URL_VERSION="${NEW_VER}" \
+JWT_SECRET_VERSION="${JWT_SECRET_VERSION}" \
+ADMIN_PASSWORD_VERSION="${ADMIN_PASSWORD_VERSION}" \
+DEMO_PASSWORD_VERSION="${DEMO_PASSWORD_VERSION}" \
+bash "${SCRIPT_DIR}/release.sh"
 
-echo "Rollback completed. Restored operational service on secret version ${CURRENT_VER}." >&2
-exit 1
+# ------------------------------------------------------------------------------
+# Phase 5: Verification of Health and Readiness Probes
+# ------------------------------------------------------------------------------
+echo "=== Phase 5: Verifying /api/health and /api/ready probes ==="
+SERVICE_URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')"
+if [[ -z "${SERVICE_URL}" || ! "${SERVICE_URL}" =~ ^https:// ]]; then
+  rollback_rotation "Cloud Run service URL is missing or non-HTTPS: '${SERVICE_URL:-}'"
+fi
+
+HEALTH_STATUS="$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/api/health" || echo "000")"
+READY_STATUS="$(curl -s "${SERVICE_URL}/api/ready" || echo "")"
+
+if [[ "${HEALTH_STATUS}" != "200" || "${READY_STATUS}" != *'"database":"connected"'* ]]; then
+  rollback_rotation "Health or readiness probes failed (health: ${HEALTH_STATUS}, ready: ${READY_STATUS})"
+fi
+
+# Disarm ERR trap on verified success
+trap - ERR
+echo "SUCCESS: Password rotation verified! Active secret version: ${NEW_VER}"
+exit 0
+```
 ```
 
 ### 6.2 Creating Secrets in GCP Secret Manager
@@ -1111,9 +1157,9 @@ flowchart TD
 |---|---|
 | **Feature PR (C-01)** | [PR #26 (`feat/ci-docker-c01 -> staging-lab5`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/26) — Approved by `@Pilaiwan3492` ([Review `5891356921`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/26#pullrequestreview-5891356921) on `52d19ba`) and merged into `staging-lab5` in commit `b113cdf` (CI Run #3 [`43401398693`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43401398693)) |
 | **Release PR** | [PR #27 (`staging-lab5 -> main`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/27) — Reviewed, approved, and merged by `@Pilaiwan3492` into `main` in commit `015d9c0` |
-| **Verified PR Head SHA** | PR #28 Working Branch Head SHA: `bf9464e461e2e0aef1e7fde271f809d6c4fdd55` (subject to new commit upon push); `main` release `e86ee2a` / `015d9c0` |
+| **Verified PR Head SHA** | PR #28 Working Branch Head: Verified commit `be830d2f4f430219c78661c2b63c04a5e06f0ffc` (CI Run `43500933925`), followed by manual rotation runbook hardening commit `d104f9c`; `main` release `e86ee2a` / `015d9c0` |
 | **Deployed Cloud Run Commit SHA** | **`2a7c4c7343e6426cfca713d3288d495dfed5f92d`** (Active deployed image `whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781` in revision `whatsss-00006-9j1` on Google Cloud Run serving 100% traffic) |
-| **CI Run (PR `ci-docker.yml`)** | [PR #28 CI Run (`43495620797`, Job `test-and-docker`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43495620797) & [Release PR #27 Run #10 (`43459279046`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43459279046) — **PASSED** |
+| **CI Run (PR `ci-docker.yml`)** | [PR #28 CI Run (`43500933925`, Job `test-and-docker`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43500933925) & [Previous PR #28 Run (`43495620797`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43495620797) & [Release PR #27 Run #10 (`43459279046`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43459279046) — **PASSED** |
 | **CI Run (Push `ci.yml`)** | [Run `43459265389` (`Backend`, `Frontend`, `Docker`, `Secret Scan`, `Check C-03`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43459265389) — **PASSED** |
 | **Backend Test** | **PASSED** — 9 unit test suites (145 tests including `P1-07` 6-case URL encoding) + 12 integration & E2E suites (including live PostgreSQL special-char password Prisma connection test in `db-password.test.ts` on Node.js 24 LTS) |
 | **Frontend Test** | **PASSED** — 7 test suites (55 tests) + Vite production bundle build (`npm test` & `npm run build` on Node.js 24 LTS) |
