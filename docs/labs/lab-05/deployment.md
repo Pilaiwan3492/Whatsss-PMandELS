@@ -19,7 +19,7 @@ flowchart TD
     
     subgraph CloudRunService ["Google Cloud Run Service (Single Container)"]
         direction TB
-        ExpressServer["Express.js Server (Node.js 24)<br/>HOST: 0.0.0.0 | PORT: dynamic"]
+        ExpressServer["Express.js Server (Node.js 20 LTS)<br/>HOST: 0.0.0.0 | PORT: dynamic"]
         StaticServe["Static Asset Serving<br/>(express.static client/dist)"]
         SPAFallback["SPA Fallback Routing<br/>(GET * -> index.html)"]
         APIRouter["Express API Router<br/>(/api/*)"]
@@ -45,8 +45,8 @@ flowchart TD
 ```
 
 ### 1.1 Technology Stack Summary
-* **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons. Built into static artifacts (`client/dist`).
-* **Backend:** Node.js 24, Express, TypeScript, Prisma ORM. Built into CommonJS JavaScript in `server/dist`.
+* **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons. Built into static artifacts (`client/dist`). Engine standard: Node.js 20.
+* **Backend:** Node.js 20 (Active LTS), Express, TypeScript, Prisma ORM 5.x. Built into CommonJS JavaScript in `server/dist`. Standardized across `.nvmrc`, `server/package.json` engines (`>=20.0.0`), `Dockerfile` (`node:20-alpine`), and GitHub Actions CI runner (`node-version: 20`).
 * **Database:** PostgreSQL 16 (relational schema enforcing ACID invariants, split allocation integrity, and account type rules).
 * **Serving Topology:** Single-container deployment where the Express backend serves both the REST API endpoints (`/api/*`) and compiled static frontend assets (`client/dist`), with SPA fallback routing to `index.html` for client-side navigation.
 
@@ -690,37 +690,34 @@ To support zero-downtime rollbacks, schema migrations follow expand-and-contract
 
 ---
 
-## 10. CI/CD Pipeline Automation (`.github/workflows/ci.yml`)
+## 10. CI/CD Pipeline Automation (`.github/workflows/ci-docker.yml` & `ci.yml`)
 
 The repository CI workflow enforces rigorous quality gates on every push and pull request targeting `staging-lab5` and `main`:
 
 ```mermaid
-flowchart LR
-    PushOrPR["Git Push / PR to staging-lab5"]
+flowchart TD
+    PR["Pull Request to staging-lab5 / main"] --> CIDocker["ci-docker.yml (Check C-01)"]
     
-    subgraph CIJobs ["GitHub Actions CI Matrix"]
-        BackendJob["Backend Test & Build<br/>(PostgreSQL 16, Vitest, tsc)"]
-        FrontendJob["Frontend Test & Build<br/>(Vitest, Vite build)"]
-        DockerJob["Docker Build & Probe<br/>(Multi-stage build, health curl)"]
-        CleanCloneJob["Clean Clone C-03 Verification<br/>(docker-compose up, e2e API, persistence)"]
-        SecurityJob["Secret & Credential Scan<br/>(Detect .env, keys, pem)"]
+    subgraph TestAndDockerJob ["Job: test-and-docker"]
+        Checkout["Checkout & Gitleaks Scan"] --> BackendSteps["Backend: migrate + seed + test + build"]
+        BackendSteps --> FrontendSteps["Frontend: test + build"]
+        FrontendSteps --> DockerSteps["Docker: multi-stage build + probe"]
     end
     
-    PushOrPR --> BackendJob
-    PushOrPR --> FrontendJob
-    PushOrPR --> DockerJob
-    DockerJob --> CleanCloneJob
-    PushOrPR --> SecurityJob
+    CIDocker --> TestAndDockerJob
+    
+    PushBranch["Push to staging-lab5 / main"] --> CIPush["ci.yml (Matrix & C-03 Clean Clone)"]
 ```
 
-* **Branch Protection:** All five jobs must report Success before any PR targeting `staging-lab5` can be reviewed and approved.
-* **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted.
+* **PR Status Check:** The workflow defines a unified job named `test-and-docker` in `.github/workflows/ci-docker.yml` (triggered on `pull_request` targeting `[main, staging-lab5]`, `workflow_call`, and `workflow_dispatch`). Configure this job as a required status check in GitHub branch protection rules for `staging-lab5` and `main`.
+* **Concurrency & Evidence Preservation (`cancel-in-progress: false`):** Concurrency is grouped by `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: false` to prevent a newer run from cancelling an already-running workflow in the same concurrency group. GitHub concurrency groups allow only one pending run per group, so this setting does not guarantee that every commit receives an individual workflow run. Workflow run history must not be manually deleted or rewritten, in accordance with R-10.
+* **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted in the workflow jobs.
 * **Supply-Chain Security:** All third-party GitHub Actions are pinned to full, immutable 40-character commit SHAs (`actions/checkout`, `actions/setup-node`, `docker/setup-buildx-action`, `gitleaks/gitleaks-action`) with version comments to prevent supply-chain attacks.
-* **Secret Detection & Prevention:** The `security-scan` job scans for forbidden credential files (`.env`, `.pem`, `.key`, service accounts) and executes Gitleaks (`gitleaks/gitleaks-action`) across full Git history and the working tree using `.gitleaks.toml` with targeted allowlists for explicit unit test fixtures and documentation template placeholders (no broad directory exclusions). Repositories should additionally enforce GitHub Secret Scanning and Push Protection.
+* **Secret Detection & Prevention:** Gitleaks scans the full Git history and working tree using `.gitleaks.toml` with targeted allowlists for unit test fixtures and documentation template placeholders.
 
 ---
 
-## 11. Peer Review Acceptance Criteria Checklist (14/14)
+## 11. Peer Review Acceptance Criteria Checklist (14/15 Completed, 1 Partially Completed)
 
 | # | Acceptance Criterion | Status | Verification Evidence / Artifact |
 |---|---|:---:|---|
@@ -734,9 +731,10 @@ flowchart LR
 | 8 | **Cloud Run + Cloud SQL Connectivity Architecture** | **COMPLETED** | Documented Unix Socket connection (`host=/cloudsql/...`), IAM `roles/cloudsql.client`, and decoupled Cloud Run Job migration |
 | 9 | **Secret Management Isolation** (Zero secrets in Image or Git) | **COMPLETED** | Enforced by `.dockerignore`, `.gitignore`, CI credential scan, and Secret Manager documentation |
 | 10 | **Readiness Probe State Discrimination** (200 on DB ready, 503 on DB disconnect) | **COMPLETED** | Verified locally: disconnected DB $\rightarrow$ HTTP 503 (`Database connection unavailable`); live DB $\rightarrow$ HTTP 200 (`database: connected`) |
-| 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci.yml` triggers on PRs to `staging-lab5`; executes Backend, Frontend, Docker Build & Probe, and Secret Scan |
-| 12 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md` updated with exact verified commands, configuration runbooks, and diagrams |
-| 13 | **Traceable Verification Evidence & Commit SHA** | **COMPLETED** | Commit history, command outputs, and test logs recorded for peer review |
-| 14 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Fresh clone from branch with `.env.example` only; started via `docker compose up -d --build`; health probes 200 OK; transaction created; data persisted across `docker compose down` and restart |
+| 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci.yml` triggers on pushes; executes full test matrix and C-03 clean-clone verification |
+| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | Verified by GitHub Actions Run #3 ([43401398693](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43401398693)) on commit `eaff10c7bb09a4d250ea593cc6452e77bca9478a`; the unified `test-and-docker` job completed successfully. |
+| 13 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md` updated with exact verified commands, configuration runbooks, and diagrams |
+| 14 | **Traceable Verification Evidence & Commit SHA** | **PARTIALLY COMPLETED** | Feature PR verification logs and commit SHAs recorded; pending Release PR #1 (`staging-lab5 -> main`) merge and final deployed commit verification |
+| 15 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Fresh clone from branch with `.env.example` only; started via `docker compose up -d --build`; health probes 200 OK; transaction created; data persisted across `docker compose down` and restart |
 
 

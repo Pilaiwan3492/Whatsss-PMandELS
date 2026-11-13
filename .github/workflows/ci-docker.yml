@@ -1,0 +1,180 @@
+name: CI and Docker Build (C-01)
+
+on:
+  workflow_call:
+  pull_request:
+    branches:
+      - main
+      - staging-lab5
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-docker:
+    name: test-and-docker
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: whatsss_user
+          POSTGRES_PASSWORD: whatsss_password
+          POSTGRES_DB: whatsss_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: "postgresql://whatsss_user:whatsss_password@localhost:5432/whatsss_test?schema=public"
+      JWT_SECRET: "ci_pipeline_cryptographically_secure_jwt_secret_key_32_chars"
+      CLIENT_URL: "http://localhost:5173"
+      PORT: "8080"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Verify Secret & Credential Safety (Gitleaks)
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.8
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: |
+            server/package-lock.json
+            client/package-lock.json
+
+      # ------------------------------------------------------------------------
+      # 1. Backend Pipeline
+      # ------------------------------------------------------------------------
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Generate Prisma Client
+        working-directory: server
+        run: npx prisma generate
+
+      - name: Deploy Prisma Migrations
+        working-directory: server
+        run: npx prisma migrate deploy
+
+      - name: Seed Database
+        working-directory: server
+        run: npx tsx prisma/seed.ts
+
+      - name: Run Backend Automated Tests
+        working-directory: server
+        env:
+          NODE_ENV: test
+        run: npm test
+
+      - name: Build Server
+        working-directory: server
+        run: npm run build
+
+      # ------------------------------------------------------------------------
+      # 2. Frontend Pipeline
+      # ------------------------------------------------------------------------
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Run Frontend Automated Tests
+        working-directory: client
+        run: npm test
+
+      - name: Build Client
+        working-directory: client
+        run: npm run build
+
+      # ------------------------------------------------------------------------
+      # 3. Docker Build & Probe
+      # ------------------------------------------------------------------------
+      - name: Lint Deployment Scripts (if present)
+        run: |
+          if [ -d "deploy" ]; then
+            echo "Linting shell scripts in deploy/..."
+            find deploy -name "*.sh" -exec bash -n {} +
+          else
+            echo "No deploy/ directory present yet, skipping script lint."
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
+
+      - name: Build Production Multi-stage Docker Image
+        run: |
+          docker build \
+            --build-arg VITE_API_BASE_URL=/api \
+            --build-arg APP_COMMIT_SHA="${{ github.sha }}" \
+            -t whatsss:pr-${{ github.sha }} .
+
+      - name: Verify Container Startup, Liveness & Database Readiness Probes
+        run: |
+          CONTAINER_NAME="whatsss-pr-test"
+
+          # Guarantee container cleanup on script exit, success, or failure
+          cleanup() {
+            echo "Cleaning up container $CONTAINER_NAME..."
+            docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "Starting production Docker container with database connectivity..."
+          docker run -d --name "$CONTAINER_NAME" \
+            --network host \
+            -e NODE_ENV=production \
+            -e PORT=8080 \
+            -e HOST=0.0.0.0 \
+            -e JWT_SECRET="ci_test_super_secret_jwt_key_at_least_32_chars" \
+            -e CLIENT_URL="http://localhost:8080" \
+            -e DATABASE_URL="${{ env.DATABASE_URL }}" \
+            whatsss:pr-${{ github.sha }}
+
+          echo "Waiting for container and database readiness probe (/api/ready)..."
+          is_ready=false
+          for i in {1..30}; do
+            READY_RESPONSE=$(curl -s http://127.0.0.1:8080/api/ready || echo "unreachable")
+            if echo "$READY_RESPONSE" | grep -q '"status":"ready"'; then
+              is_ready=true
+              echo "Container database probe PASSED on attempt $i ($READY_RESPONSE)"
+              break
+            fi
+            echo "Waiting for container readiness ($i/30): $READY_RESPONSE"
+            sleep 1
+          done
+
+          if [ "$is_ready" != "true" ]; then
+            echo "::error::Container failed readiness check (/api/ready)"
+            echo "--- Container Logs ---"
+            docker logs "$CONTAINER_NAME"
+            exit 1
+          fi
+
+          echo "Testing Liveness Probe (/api/health)..."
+          curl -f http://127.0.0.1:8080/api/health
+
+          echo "Testing Database Readiness Probe (/api/ready)..."
+          curl -f http://127.0.0.1:8080/api/ready
+
+          echo "Testing SPA Static Asset Serving (/)..."
+          curl -f http://127.0.0.1:8080/
