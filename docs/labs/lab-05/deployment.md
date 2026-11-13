@@ -709,15 +709,15 @@ flowchart TD
     PushBranch["Push to staging-lab5 / main"] --> CIPush["ci.yml (Matrix & C-03 Clean Clone)"]
 ```
 
-* **Check C-01 (PR Runs & Passes Build, Test, and Docker Build):** Configured in `.github/workflows/ci-docker.yml` under the unified required status check job named **`test-and-docker`**. Triggers on `pull_request` targeting `[main, staging-lab5]`, `workflow_call`, and `workflow_dispatch`.
-* **Branch Protection:** The required check job **`test-and-docker`** must report Success before any PR targeting `staging-lab5` or `main` can be reviewed and merged.
-* **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted.
+* **PR Status Check:** The workflow defines a unified job named `test-and-docker` in `.github/workflows/ci-docker.yml` (triggered on `pull_request` targeting `[main, staging-lab5]`, `workflow_call`, and `workflow_dispatch`). Configure this job as a required status check in GitHub branch protection rules for `staging-lab5` and `main`.
+* **Concurrency & Evidence Preservation (`cancel-in-progress: false`):** Concurrency is grouped by `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: false` so every pushed commit runs to completion without cancelling prior runs, preserving complete audit logs per R-10.
+* **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted in the workflow jobs.
 * **Supply-Chain Security:** All third-party GitHub Actions are pinned to full, immutable 40-character commit SHAs (`actions/checkout`, `actions/setup-node`, `docker/setup-buildx-action`, `gitleaks/gitleaks-action`) with version comments to prevent supply-chain attacks.
 * **Secret Detection & Prevention:** Gitleaks scans the full Git history and working tree using `.gitleaks.toml` with targeted allowlists for unit test fixtures and documentation template placeholders.
 
 ---
 
-## 11. Peer Review Acceptance Criteria Checklist (15/15)
+## 11. Peer Review Acceptance Criteria Checklist (14/15 Completed, 1 Partially Completed)
 
 | # | Acceptance Criterion | Status | Verification Evidence / Artifact |
 |---|---|:---:|---|
@@ -732,9 +732,9 @@ flowchart TD
 | 9 | **Secret Management Isolation** (Zero secrets in Image or Git) | **COMPLETED** | Enforced by `.dockerignore`, `.gitignore`, CI credential scan, and Secret Manager documentation |
 | 10 | **Readiness Probe State Discrimination** (200 on DB ready, 503 on DB disconnect) | **COMPLETED** | Verified locally: disconnected DB $\rightarrow$ HTTP 503 (`Database connection unavailable`); live DB $\rightarrow$ HTTP 200 (`database: connected`) |
 | 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci.yml` triggers on pushes; executes full test matrix and C-03 clean-clone verification |
-| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | `.github/workflows/ci-docker.yml` triggers on PRs to `staging-lab5` and `main`; executes consolidated `test-and-docker` job (backend, frontend, Docker multi-stage build, container startup, liveness probe `/api/health`, and live database readiness probe `/api/ready` with automated EXIT trap cleanup) |
+| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | `.github/workflows/ci-docker.yml` triggers on PRs to `staging-lab5` and `main`; verified in GitHub Actions Run #2 (`43399118219`) executing `test-and-docker` (backend, frontend, Docker multi-stage build, `/api/health`, live DB `/api/ready`, and EXIT trap cleanup) |
 | 13 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md` updated with exact verified commands, configuration runbooks, and diagrams |
-| 14 | **Traceable Verification Evidence & Commit SHA** | **COMPLETED** | Commit history, command outputs, and test logs recorded for peer review |
+| 14 | **Traceable Verification Evidence & Commit SHA** | **PARTIALLY COMPLETED** | Feature PR verification logs and commit SHAs recorded; pending Release PR #1 (`staging-lab5 -> main`) merge and final deployed commit verification |
 | 15 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Fresh clone from branch with `.env.example` only; started via `docker compose up -d --build`; health probes 200 OK; transaction created; data persisted across `docker compose down` and restart |
 
 
