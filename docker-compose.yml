@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured in .env}
       POSTGRES_DB: ${POSTGRES_DB:-whatsss_db}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -31,7 +31,7 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured in .env}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD must be configured in .env (min 12 characters)}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@whatsss.local}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
@@ -60,7 +60,7 @@ services:
       PORT: 8080
       HOST: 0.0.0.0
       CLIENT_URL: ${CLIENT_URL:-http://localhost:8080}
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured in .env}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be configured in .env (min 32 characters)}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
       APP_COMMIT_SHA: ${APP_COMMIT_SHA:-development}

@@ -349,7 +349,7 @@ docker run -d --name whatsss-test-instance \
   -e NODE_ENV=production \
   -e PORT=8080 \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET="replace-with-a-valid-secret-at-least-32-chars" \
+  -e JWT_SECRET="test_only_cryptographically_secure_jwt_secret_32_chars" \
   -e CLIENT_URL="http://localhost:8080" \
   -e DATABASE_URL="postgresql://test:test@127.0.0.1:5432/test" \
   -p 8080:8080 \
@@ -387,7 +387,7 @@ docker run -d --name whatsss-live-instance --network whatsss-pmandels_default \
   -e NODE_ENV=production \
   -e PORT=8080 \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET="replace-with-a-valid-secret-at-least-32-chars" \
+  -e JWT_SECRET="test_only_cryptographically_secure_jwt_secret_32_chars" \
   -e CLIENT_URL="http://localhost:8080" \
   -e DATABASE_URL="postgresql://postgres:postgres@whatsss_postgres:5432/whatsss_db?schema=public" \
   -p 8080:8080 \
@@ -406,17 +406,35 @@ curl -i http://localhost:8080/api/ready
 # 1. Initialize environment file from template
 cp .env.example .env
 
-# 2. Start PostgreSQL, apply migrations, seed demo accounts, and launch application
+# 2. Generate local-only test secrets
+JWT_SECRET=$(openssl rand -hex 32)
+ADMIN_PASSWORD=$(openssl rand -hex 16)
+POSTGRES_PASSWORD=$(openssl rand -hex 16)
+
+# 3. Edit .env and replace template placeholders with the generated values:
+# - JWT_SECRET: Replace placeholder with $JWT_SECRET
+# - SEED_ADMIN_PASSWORD: Replace placeholder with $ADMIN_PASSWORD
+# - POSTGRES_PASSWORD: Replace placeholder with $POSTGRES_PASSWORD
+# - DATABASE_URL: Update password in connection string to match $POSTGRES_PASSWORD
+#
+# NOTE ON DEMO USER:
+# SEED_DEMO_DATA is false by default. If you need a pre-seeded demo user (user_demo)
+# for evaluation, set SEED_DEMO_DATA=true and assign a secure SEED_DEMO_PASSWORD (min 12 chars).
+
+# 4. Verify Compose configuration and variable interpolation
+docker compose config
+
+# 5. Start PostgreSQL, apply migrations, seed admin account, and launch application
 docker compose up -d --build
 
-# 3. Verify all services are healthy and running
+# 6. Verify all services are healthy and running
 docker compose ps
 # Expected output:
 # whatsss_app        whatsss:local   Up (healthy)   0.0.0.0:8080->8080/tcp
 # whatsss_migrate    whatsss:local   Exited (0)     (migrations & seed completed)
 # whatsss_postgres   postgres:16     Up (healthy)   0.0.0.0:5432->5432/tcp
 
-# 4. Probe application health & readiness
+# 7. Probe application health & readiness
 curl -i http://localhost:8080/api/health
 curl -i http://localhost:8080/api/ready
 ```
@@ -440,10 +458,16 @@ cd clean-clone-dir
 cp .env.example .env
 ```
 Populated valid local testing secrets in `.env` (substituting template placeholders):
+* `POSTGRES_PASSWORD` (min 12 chars, generated local database password)
+* `DATABASE_URL` (synchronized with `POSTGRES_PASSWORD`)
 * `SEED_ADMIN_PASSWORD` (min 12 chars, e.g. generated secure password)
 * `SEED_DEMO_DATA="true"` (explicitly enabled for test evaluation)
 * `SEED_DEMO_PASSWORD` (min 12 chars, e.g. generated secure password)
 * `JWT_SECRET` (min 32 chars, generated via `openssl rand -hex 32`)
+
+> [!WARNING]
+> **PostgreSQL Password with Existing Docker Volumes:**
+> If an existing PostgreSQL data volume (`whatsss_pgdata`) has already been initialized, changing `POSTGRES_PASSWORD` in `.env` alone will **not** alter the database password stored inside the volume. In that case, you must update the password directly in PostgreSQL (`ALTER USER postgres WITH PASSWORD '...';`) or retain the existing password in `.env`. Do **not** arbitrarily run `docker compose down -v` on persistent environments, as that will destroy stored business data.
 
 #### Step 2: Build & Start Full-Stack Services
 ```bash
@@ -562,7 +586,7 @@ curl -i http://localhost:8080/api/ready
 To provide continuously verifiable, traceable proof that the application adheres to Check **C-03** on every code revision, the GitHub Actions CI pipeline executes an automated end-to-end job: `c03-clean-clone-verification`:
 
 1. **Authentic Clean Git Clone:** Clones the repository afresh from the current workspace into an isolated runner directory (`../clean-clone-test`) and checks out the exact PR commit SHA (`git checkout "${{ github.sha }}"`), ensuring no untracked files or cached build artifacts leak into the test.
-2. **Template Secret Interpolation:** Copies `.env.example` to `.env` and generates dynamic, ephemeral random credentials (`openssl rand -hex 32` for `JWT_SECRET`, unique passwords for `SEED_ADMIN_PASSWORD` and `SEED_DEMO_PASSWORD`), strictly validating that the application runs with real secrets and rejects placeholders.
+2. **Template Secret Interpolation:** Copies `.env.example` to `.env` and generates dynamic, ephemeral random credentials (`openssl rand -hex 32` for `JWT_SECRET`, unique passwords for `POSTGRES_PASSWORD`, `SEED_ADMIN_PASSWORD`, and `SEED_DEMO_PASSWORD`), strictly validating that the application runs with real secrets and rejects placeholders.
 3. **Single-Command Stack Startup:** Executes `docker compose -p whatsss_c03_ci up -d --build`. Polling logic enforces a strict timeout: if the app container fails to report `healthy` within 30 cycles (60s), CI dumps container logs and immediately exits with failure (`exit 1`).
 4. **Health (Liveness) Verification:** Confirms `GET /api/health` returns HTTP 200 OK with `{"status":"ok"}`.
 5. **Readiness Probe State Discrimination (DB Healthy vs Outage vs Recovery):**
@@ -570,7 +594,7 @@ To provide continuously verifiable, traceable proof that the application adheres
    - Simulates database outage by stopping the PostgreSQL container (`docker compose -p whatsss_c03_ci stop postgres`).
    - Asserts `GET /api/ready` returns **HTTP 503 Service Unavailable** (`database: disconnected`).
    - Asserts `GET /api/health` still returns **HTTP 200 OK**, confirming process liveness is not tied to database availability.
-   - Restarts PostgreSQL (`docker compose -p whatsss_c03_ci start postgres`) and confirms `GET /api/ready` recovers to **HTTP 200 OK**.
+   - Restarts PostgreSQL (`docker compose -p whatsss_c03_ci start postgres`), actively verifies that PostgreSQL recovers to `healthy` within 20 cycles (or exits immediately with `exit 1` and container logs), and confirms `GET /api/ready` recovers to **HTTP 200 OK**.
    - A shell `trap` guarantees that PostgreSQL is revived even if any intermediate assertion fails.
 6. **Robust End-to-End API Transaction Processing:**
    - Authenticates as `user_demo` via `POST /api/auth/login` and captures the session cookie.
@@ -633,6 +657,8 @@ flowchart LR
 
 * **Branch Protection:** All five jobs must report Success before any PR targeting `staging-lab5` can be reviewed and approved.
 * **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted.
+* **Supply-Chain Security:** All third-party GitHub Actions are pinned to full, immutable 40-character commit SHAs (`actions/checkout`, `actions/setup-node`, `docker/setup-buildx-action`) with version comments to prevent supply-chain attacks.
+* **Secret Detection & Prevention:** The `security-scan` job scans for forbidden files (`.env`, `.pem`, `.key`, service accounts) and inspects tracked source files for hardcoded private keys or live API tokens. Repositories should additionally enforce GitHub Secret Scanning and Push Protection.
 
 ---
 

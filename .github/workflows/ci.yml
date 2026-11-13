@@ -36,10 +36,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: 'npm'
@@ -85,10 +85,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: 'npm'
@@ -112,10 +112,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
 
       - name: Build Multi-stage Docker Image
         run: docker build -t whatsss:ci .
@@ -142,7 +142,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
       - name: Scan Repository for Sensitive Credential Files
         run: |
@@ -155,6 +155,17 @@ jobs:
           fi
           echo "Secret scan clean: No forbidden credential files found in repository."
 
+      - name: Scan Tracked Source Files for Hardcoded Credentials
+        run: |
+          echo "Scanning tracked git files for hardcoded private keys, tokens, and credentials..."
+          LEAKS=$(git grep -EI '(BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY|AIza[0-9A-Za-z\\-_]{35}|ghp_[0-9a-zA-Z]{36}|AKIA[0-9A-Z]{16})' -- ':!server/tests/**' ':!docs/**' || true)
+          if [ -n "$LEAKS" ]; then
+            echo "CRITICAL: Potential hardcoded secret detected in source tree:"
+            echo "$LEAKS"
+            exit 1
+          fi
+          echo "Tracked files clean: No hardcoded private keys or live API tokens detected."
+
   c03-clean-clone-verification:
     name: Check C-03 Clean Clone Build & Run Verification
     runs-on: ubuntu-latest
@@ -162,7 +173,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
       - name: Perform Clean Git Clone into Isolated Workspace
         run: |
@@ -180,10 +191,12 @@ jobs:
           # Generate dynamic random cryptographic secrets for isolated test execution
           CI_ADMIN_PWD="Admin_$(openssl rand -hex 12)!"
           CI_DEMO_PWD="Demo_$(openssl rand -hex 12)!"
+          CI_PG_PWD="Pg_$(openssl rand -hex 12)!"
           RANDOM_JWT="$(openssl rand -hex 32)"
 
           sed -i "s|replace_with_a_long_random_secret_at_least_32_characters_for_production|${RANDOM_JWT}|g" .env
           sed -i "s|replace_with_secure_admin_password_min_12_chars|${CI_ADMIN_PWD}|g" .env
+          sed -i "s|replace_with_secure_postgres_password_for_local|${CI_PG_PWD}|g" .env
           sed -i "s|SEED_DEMO_DATA=false|SEED_DEMO_DATA=true|g" .env
           sed -i "s|replace_with_secure_demo_password_min_12_chars|${CI_DEMO_PWD}|g" .env
 
@@ -253,6 +266,7 @@ jobs:
           docker compose -p whatsss_c03_ci start postgres
 
           echo "Waiting for postgres recovery..."
+          PG_STATUS="starting"
           for i in {1..20}; do
             PG_STATUS=$(docker inspect --format='{{.State.Health.Status}}' whatsss_postgres 2>/dev/null || echo "starting")
             if [ "$PG_STATUS" = "healthy" ]; then
@@ -261,6 +275,13 @@ jobs:
             fi
             sleep 1
           done
+
+          if [ "$PG_STATUS" != "healthy" ]; then
+            echo "::error::PostgreSQL failed to recover within timeout"
+            docker compose -p whatsss_c03_ci ps
+            docker compose -p whatsss_c03_ci logs postgres
+            exit 1
+          fi
 
           echo "6. Asserting /api/ready returns 200 OK after database recovery..."
           READY_RECOVERED=$(curl -s -i http://localhost:8080/api/ready)
