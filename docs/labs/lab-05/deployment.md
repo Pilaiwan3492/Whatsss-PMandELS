@@ -19,7 +19,7 @@ flowchart TD
     
     subgraph CloudRunService ["Google Cloud Run Service (Single Container)"]
         direction TB
-        ExpressServer["Express.js Server (Node.js 20 LTS)<br/>HOST: 0.0.0.0 | PORT: dynamic"]
+        ExpressServer["Express.js Server (Node.js 24 LTS)<br/>HOST: 0.0.0.0 | PORT: dynamic"]
         StaticServe["Static Asset Serving<br/>(express.static client/dist)"]
         SPAFallback["SPA Fallback Routing<br/>(GET * -> index.html)"]
         APIRouter["Express API Router<br/>(/api/*)"]
@@ -45,10 +45,27 @@ flowchart TD
 ```
 
 ### 1.1 Technology Stack Summary
-* **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons. Built into static artifacts (`client/dist`). Engine standard: Node.js 20.
-* **Backend:** Node.js 20 (Active LTS), Express, TypeScript, Prisma ORM 5.x. Built into CommonJS JavaScript in `server/dist`. Standardized across `.nvmrc`, `server/package.json` engines (`>=20.0.0`), `Dockerfile` (`node:20-alpine`), and GitHub Actions CI runner (`node-version: 20`).
+* **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons. Built into static artifacts (`client/dist`). Engine standard: Node.js 24 LTS.
+* **Backend:** Node.js 24 LTS, Express, TypeScript, Prisma ORM 5.x. Built into CommonJS JavaScript in `server/dist`. Standardized across `.nvmrc` (`24`), `server/package.json` & `client/package.json` engines (`>=24.0.0`), `Dockerfile` (`node:24-alpine`), and GitHub Actions CI runners (`node-version: 24`).
 * **Database:** PostgreSQL 16 (relational schema enforcing ACID invariants, split allocation integrity, and account type rules).
 * **Serving Topology:** Single-container deployment where the Express backend serves both the REST API endpoints (`/api/*`) and compiled static frontend assets (`client/dist`), with SPA fallback routing to `index.html` for client-side navigation.
+
+### 1.2 Runtime Requirements
+* **Node.js 24 LTS** (verified across `.nvmrc`, `package.json`, `Dockerfile`, and CI workflows)
+* **npm** version provided with the supported Node.js 24 runtime
+* **Docker Engine** with Docker Compose plugin
+* **PostgreSQL 16** (Docker deployment / Cloud SQL)
+
+### 1.3 Database Deployment
+1. Configure the production environment variables.
+2. Verify `DATABASE_URL` and database connectivity (ensuring any special characters in credentials are URL-encoded).
+3. Run Prisma migrations using `prisma migrate deploy`.
+4. Run the approved seed procedure (`npm run prisma:seed`).
+5. Start the application only after migrations complete (`condition: service_completed_successfully`).
+6. Verify `/api/health` and `/api/ready`.
+
+### 1.4 Data Persistence
+The PostgreSQL data directory is backed by the `whatsss_pgdata` named volume. Normal shutdown must use `docker compose down` without the `-v` option to preserve database data across restarts.
 
 ---
 

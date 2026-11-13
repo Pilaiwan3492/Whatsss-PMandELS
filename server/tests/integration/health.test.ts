@@ -87,6 +87,26 @@ describe('HTTP Integration Test: Health Endpoints, CSRF Exemption & API 404 Rout
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('ready');
     });
+
+    it('transitions from 503 during DB outage back to 200 on recovery while /api/health stays 200', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(prisma, '$queryRaw')
+        .mockRejectedValueOnce(new Error('Connection refused'))
+        .mockResolvedValueOnce([{ '?column?': 1 }] as any);
+
+      const outageRes = await request(app).get('/api/ready');
+      expect(outageRes.status).toBe(503);
+      expect(outageRes.body.status).toBe('not_ready');
+
+      const healthDuringOutage = await request(app).get('/api/health');
+      expect(healthDuringOutage.status).toBe(200);
+      expect(healthDuringOutage.body.status).toBe('ok');
+
+      const recoveredRes = await request(app).get('/api/ready');
+      expect(recoveredRes.status).toBe(200);
+      expect(recoveredRes.body.status).toBe('ready');
+      expect(recoveredRes.body.database).toBe('connected');
+    });
   });
 
   describe('API 404 Catch-All & SPA Fallback Routing', () => {

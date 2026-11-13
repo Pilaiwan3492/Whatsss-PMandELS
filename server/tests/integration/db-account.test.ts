@@ -184,19 +184,20 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
   }
 
   describe('Database Schema & Seed Verification (Fix #4)', () => {
-    it('validates seeded accounts in PostgreSQL have correct types, zero initial balance, and are unlocked for all 3 demo users', async (ctx) => {
+    it('validates seeded accounts in PostgreSQL have correct types, zero initial balance, and are unlocked for USER demo users while admin_demo has no financial accounts', async (ctx) => {
       if (!isDbConnected) {
         ctx.skip();
         return;
       }
 
-      for (const username of ['user_demo', 'user_other', 'admin_demo']) {
+      for (const username of ['user_demo', 'user_other']) {
         const user = await prisma.user.findUnique({
           where: { username },
           include: { accounts: { orderBy: { created_at: 'asc' } } }
         });
 
         expect(user).toBeDefined();
+        expect(user!.role).toBe('USER');
         expect(user!.accounts).toHaveLength(5);
 
         const accountNames = user!.accounts.map((a) => a.name);
@@ -214,6 +215,14 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
           expect(acc.is_opening_locked).toBe(false);
         }
       }
+
+      const adminUser = await prisma.user.findUnique({
+        where: { username: 'admin_demo' },
+        include: { accounts: true }
+      });
+      expect(adminUser).toBeDefined();
+      expect(adminUser!.role).toBe('ADMIN');
+      expect(adminUser!.accounts).toHaveLength(0);
     });
 
     it('validates @@unique([user_id, name]) constraint in PostgreSQL', async (ctx) => {

@@ -36,16 +36,31 @@ export function validateClientUrl(clientUrl: string | undefined, isProduction: b
     return 'http://localhost:5173';
   }
 
+  let parsed: URL;
   try {
-    const parsed = new URL(clientUrl);
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      throw new Error('Protocol must be http: or https:');
-    }
+    parsed = new URL(clientUrl);
   } catch {
     throw new Error(`FATAL: CLIENT_URL is not a valid URL. Received: "${clientUrl}"`);
   }
 
-  return clientUrl;
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`FATAL: CLIENT_URL is not a valid URL. Protocol must be http: or https:. Received: "${clientUrl}"`);
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new Error('FATAL: CLIENT_URL must not contain credentials.');
+  }
+
+  if (parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('FATAL: CLIENT_URL must contain only an origin, without path, query, or hash.');
+  }
+
+  const isLoopback = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  if (isProduction && parsed.protocol !== 'https:' && !isLoopback) {
+    throw new Error('FATAL: CLIENT_URL must use HTTPS in production.');
+  }
+
+  return parsed.origin;
 }
 
 export function validateDatabaseUrl(databaseUrl: string | undefined, isProduction: boolean): string {
@@ -61,9 +76,15 @@ export function validateDatabaseUrl(databaseUrl: string | undefined, isProductio
   }
 
   try {
-    new URL(databaseUrl);
+    const parsed = new URL(databaseUrl);
+    if (parsed.hash) {
+      throw new Error('Unencoded hash fragment in DATABASE_URL');
+    }
+    if (!parsed.hostname && !parsed.searchParams.get('host')) {
+      throw new Error('Missing host in DATABASE_URL');
+    }
   } catch {
-    throw new Error('FATAL: DATABASE_URL is malformed and cannot be parsed as a valid connection URL.');
+    throw new Error('FATAL: DATABASE_URL is malformed and cannot be parsed as a valid connection URL. Ensure special characters in credentials are URL-encoded.');
   }
 
   return databaseUrl;

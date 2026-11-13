@@ -7,7 +7,7 @@
 # ------------------------------------------------------------------------------
 # Stage 1: Build Frontend Assets (Vite SPA)
 # ------------------------------------------------------------------------------
-FROM node:20-alpine AS client-builder
+FROM node:24-alpine AS client-builder
 WORKDIR /app/client
 
 # Build-time API Base URL for Vite SPA (defaults to relative /api in single-container deployment)
@@ -23,7 +23,7 @@ RUN npm run build
 # ------------------------------------------------------------------------------
 # Stage 2: Build Backend Application & Prisma Types
 # ------------------------------------------------------------------------------
-FROM node:20-alpine AS server-builder
+FROM node:24-alpine AS server-builder
 WORKDIR /app/server
 
 COPY server/package*.json ./
@@ -36,7 +36,7 @@ RUN npm run build
 # ------------------------------------------------------------------------------
 # Stage 3: Production Runtime
 # ------------------------------------------------------------------------------
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app/server
 
 # Install runtime system packages for Prisma query engine, signal handling, and health probes

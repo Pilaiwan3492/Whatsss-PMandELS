@@ -482,3 +482,156 @@ describe('Unit Test: User Demo Provisioning, Conflict Handling & Role Protection
     );
   });
 });
+
+describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Idempotency', () => {
+  const originalEnv = process.env;
+  let mockPrisma: any;
+  let usersDb: Map<string, any>;
+  let accountsDb: Map<string, any>;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    process.env.NODE_ENV = 'test';
+
+    usersDb = new Map();
+    accountsDb = new Map();
+
+    mockPrisma = {
+      user: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where.username) {
+            return usersDb.get(where.username) || null;
+          }
+          if (where.email) {
+            for (const u of usersDb.values()) {
+              if (u.email === where.email) return u;
+            }
+            return null;
+          }
+          return null;
+        }),
+        create: vi.fn().mockImplementation(async ({ data }: any) => {
+          const record = { id: `id-${data.username}`, ...data };
+          usersDb.set(data.username, record);
+          return record;
+        }),
+        update: vi.fn(),
+        upsert: vi.fn()
+      },
+      account: {
+        upsert: vi.fn().mockImplementation(async ({ where, update, create }: any) => {
+          const key = `${where.user_id_name.user_id}:${where.user_id_name.name}`;
+          if (accountsDb.has(key)) {
+            const existing = accountsDb.get(key);
+            const updated = { ...existing, ...update };
+            accountsDb.set(key, updated);
+            return updated;
+          }
+          const created = { id: `acc-${key}`, ...create };
+          accountsDb.set(key, created);
+          return created;
+        })
+      }
+    };
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.restoreAllMocks();
+  });
+
+  it('creates user_demo and user_other with USER role and 5 standard accounts each, while admin_demo gets ADMIN role and 0 accounts', async () => {
+    await seed(mockPrisma);
+
+    const userDemo = usersDb.get('user_demo');
+    const userOther = usersDb.get('user_other');
+    const adminDemo = usersDb.get('admin_demo');
+
+    expect(userDemo).toBeDefined();
+    expect(userDemo.role).toBe('USER');
+    expect(userOther).toBeDefined();
+    expect(userOther.role).toBe('USER');
+    expect(adminDemo).toBeDefined();
+    expect(adminDemo.role).toBe('ADMIN');
+
+    // Only user_demo (5) and user_other (5) receive standard accounts = 10 total
+    expect(accountsDb.size).toBe(10);
+    for (const acc of accountsDb.values()) {
+      expect([userDemo.id, userOther.id]).toContain(acc.user_id);
+      expect(acc.user_id).not.toBe(adminDemo.id);
+    }
+  });
+
+  it('is idempotent on second run without creating duplicate accounts or overwriting existing balances or passwords', async () => {
+    await seed(mockPrisma);
+
+    // Mutate user_demo password and Checking Bank balance to simulate developer state
+    const userDemo = usersDb.get('user_demo');
+    userDemo.password_hash = '$2b$10$CustomDeveloperPasswordHashNotToBeOverwritten123456';
+    const checkingKey = `${userDemo.id}:Checking Bank`;
+    const checkingAcc = accountsDb.get(checkingKey);
+    checkingAcc.opening_balance = 25000.00;
+    checkingAcc.is_opening_locked = true;
+
+    await seed(mockPrisma);
+
+    expect(accountsDb.size).toBe(10);
+    expect(usersDb.get('user_demo').password_hash).toBe('$2b$10$CustomDeveloperPasswordHashNotToBeOverwritten123456');
+    expect(accountsDb.get(checkingKey).opening_balance).toBe(25000.00);
+    expect(accountsDb.get(checkingKey).is_opening_locked).toBe(true);
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('throws fatal error when existing user_demo has role ADMIN and does not mutate role or create accounts', async () => {
+    usersDb.set('user_demo', {
+      id: 'id-user_demo',
+      username: 'user_demo',
+      email: 'user_demo@whatsss.local',
+      role: 'ADMIN',
+      password_hash: 'existing-hash',
+      is_active: true
+    });
+
+    await expect(seed(mockPrisma)).rejects.toThrow(
+      /FATAL: User "user_demo" already exists with non-USER role "ADMIN"/
+    );
+    expect(usersDb.get('user_demo').role).toBe('ADMIN');
+    expect(accountsDb.size).toBe(0);
+  });
+
+  it('throws fatal error when existing user_other has role ADMIN and does not mutate role or create accounts', async () => {
+    usersDb.set('user_other', {
+      id: 'id-user_other',
+      username: 'user_other',
+      email: 'user_other@whatsss.local',
+      role: 'ADMIN',
+      password_hash: 'existing-hash',
+      is_active: true
+    });
+
+    await expect(seed(mockPrisma)).rejects.toThrow(
+      /FATAL: User "user_other" already exists with non-USER role "ADMIN"/
+    );
+    expect(usersDb.get('user_other').role).toBe('ADMIN');
+    expect(accountsDb.size).toBe(0);
+  });
+
+  it('throws fatal error when existing admin_demo has non-ADMIN role (USER) instead of silently changing role', async () => {
+    usersDb.set('admin_demo', {
+      id: 'id-admin_demo',
+      username: 'admin_demo',
+      email: 'admin_demo@whatsss.local',
+      role: 'USER',
+      password_hash: 'existing-hash',
+      is_active: true
+    });
+
+    await expect(seed(mockPrisma)).rejects.toThrow(
+      /FATAL: User "admin_demo" already exists with non-ADMIN role "USER"/
+    );
+    expect(usersDb.get('admin_demo').role).toBe('USER');
+    expect(accountsDb.size).toBe(0);
+  });
+});

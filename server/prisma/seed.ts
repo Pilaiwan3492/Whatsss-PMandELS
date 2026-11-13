@@ -247,7 +247,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   } else if (client.user?.upsert) {
     userDemo = await client.user.upsert({
       where: { username: 'user_demo' },
-      update: { password_hash: devHash, role: 'USER', is_active: true },
+      update: {},
       create: {
         username: 'user_demo',
         email: 'user_demo@whatsss.local',
@@ -256,6 +256,11 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
         is_active: true
       }
     });
+    if (userDemo && userDemo.role !== 'USER') {
+      throw new Error(
+        `FATAL: User "user_demo" already exists with non-USER role "${userDemo.role}". Cannot provision financial demo accounts.`
+      );
+    }
   }
 
   // 2. Seed or verify user_other (USER)
@@ -264,6 +269,12 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
     const existingOther = await client.user.findUnique({
       where: { username: 'user_other' }
     });
+
+    if (existingOther && existingOther.role !== 'USER') {
+      throw new Error(
+        `FATAL: User "user_other" already exists with non-USER role "${existingOther.role}".`
+      );
+    }
 
     if (!existingOther) {
       const emailConflict = await client.user.findUnique({
@@ -289,7 +300,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   } else if (client.user?.upsert) {
     userOther = await client.user.upsert({
       where: { username: 'user_other' },
-      update: { password_hash: devHash, role: 'USER', is_active: true },
+      update: {},
       create: {
         username: 'user_other',
         email: 'user_other@whatsss.local',
@@ -298,6 +309,11 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
         is_active: true
       }
     });
+    if (userOther && userOther.role !== 'USER') {
+      throw new Error(
+        `FATAL: User "user_other" already exists with non-USER role "${userOther.role}".`
+      );
+    }
   }
 
   // 3. Seed or verify admin_demo (ADMIN)
@@ -306,6 +322,12 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
     const existingAdminDemo = await client.user.findUnique({
       where: { username: 'admin_demo' }
     });
+
+    if (existingAdminDemo && existingAdminDemo.role !== 'ADMIN') {
+      throw new Error(
+        `FATAL: User "admin_demo" already exists with non-ADMIN role "${existingAdminDemo.role}".`
+      );
+    }
 
     if (!existingAdminDemo) {
       const emailConflict = await client.user.findUnique({
@@ -331,7 +353,7 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
   } else if (client.user?.upsert) {
     adminDemo = await client.user.upsert({
       where: { username: 'admin_demo' },
-      update: { password_hash: devHash, role: 'ADMIN', is_active: true },
+      update: {},
       create: {
         username: 'admin_demo',
         email: 'admin_demo@whatsss.local',
@@ -340,32 +362,18 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
         is_active: true
       }
     });
+    if (adminDemo && adminDemo.role !== 'ADMIN') {
+      throw new Error(
+        `FATAL: User "admin_demo" already exists with non-ADMIN role "${adminDemo.role}".`
+      );
+    }
   }
 
-  // 4. Seed standard financial accounts for demo users (userDemo, userOther, adminDemo)
-  // In development/test mode, admin_demo possesses baseline accounts in the database to verify that
-  // financial API endpoints strictly reject admin requests with HTTP 403 Forbidden under BR-10.
-  // In production mode, administrators are never granted financial accounts.
-  for (const user of [userDemo, userOther, adminDemo]) {
+  // 4. Seed standard financial accounts ONLY for USER role demo users (userDemo, userOther)
+  // Under BR-10, admin_demo (ADMIN) must not receive standard financial accounts during seeding.
+  for (const user of [userDemo, userOther]) {
     if (user) {
-      for (const acc of STANDARD_ACCOUNTS) {
-        await client.account.upsert({
-          where: {
-            user_id_name: {
-              user_id: user.id,
-              name: acc.name
-            }
-          },
-          update: {},
-          create: {
-            user_id: user.id,
-            name: acc.name,
-            type: acc.type,
-            opening_balance: 0.00,
-            is_opening_locked: false
-          }
-        });
-      }
+      await seedStandardAccountsForUser(client, user);
     }
   }
 

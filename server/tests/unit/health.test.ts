@@ -132,6 +132,51 @@ describe('Unit Test: Cloud-Ready Health, Readiness Probes & Safe Logging (Point 
     vi.useRealTimers();
   });
 
+  it('GET /api/ready recovers to 200 after database outage, while GET /api/health remains 200 throughout outage', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const queryRawSpy = vi
+      .spyOn(prisma, '$queryRaw')
+      .mockRejectedValueOnce(new Error('Database down'))
+      .mockResolvedValueOnce([{ '?column?': 1 }] as any);
+
+    // 1. Outage -> /api/ready returns 503
+    await readyHandler(mockReq, mockRes);
+    expect(responseStatus).toBe(503);
+    expect(responseData.status).toBe('not_ready');
+
+    // 2. During outage -> /api/health still returns 200
+    await healthHandler(mockReq, mockRes);
+    expect(responseStatus).toBe(200);
+    expect(responseData.status).toBe('ok');
+
+    // 3. Recovery -> /api/ready returns 200 again
+    await readyHandler(mockReq, mockRes);
+    expect(responseStatus).toBe(200);
+    expect(responseData.status).toBe('ready');
+    expect(responseData.database).toBe('connected');
+    expect(queryRawSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('deduplicates concurrent in-flight /api/ready probes to prevent connection pool exhaustion', async () => {
+    let resolveQuery!: (val: any) => void;
+    const queryRawSpy = vi.spyOn(prisma, '$queryRaw').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveQuery = resolve;
+        }) as any
+    );
+
+    const p1 = readyHandler(mockReq, mockRes);
+    const p2 = readyHandler(mockReq, mockRes);
+
+    // Only a single underlying DB query should be issued while in-flight
+    expect(queryRawSpy).toHaveBeenCalledTimes(1);
+
+    resolveQuery([{ '?column?': 1 }]);
+    await Promise.all([p1, p2]);
+    expect(responseStatus).toBe(200);
+  });
+
   it('verifies that /api/health and /api/ready routes are registered in Express router stack', () => {
     const routes = app._router.stack
       .filter((layer: any) => layer.route)

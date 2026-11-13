@@ -5,7 +5,7 @@
   "description": "Backend API for Whatsss Personal Finance Management",
   "main": "dist/index.js",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "build": "tsc",

@@ -103,8 +103,33 @@ describe('Unit Test: Environment Configuration & Security Validation (Section 2.
       expect(() => validateClientUrl('ftp://example.com', false)).toThrow(/FATAL: CLIENT_URL is not a valid URL/);
     });
 
-    it('accepts valid HTTP/HTTPS URLs', () => {
+    it('accepts valid HTTP/HTTPS URLs and normalizes trailing slash to pure origin', () => {
+      expect(validateClientUrl('https://example.com', true)).toBe('https://example.com');
+      expect(validateClientUrl('https://example.com/', true)).toBe('https://example.com');
       expect(validateClientUrl('https://whatsss.a.run.app', true)).toBe('https://whatsss.a.run.app');
+      expect(validateClientUrl('http://localhost:5173', false)).toBe('http://localhost:5173');
+      expect(validateClientUrl('http://localhost:5173/', false)).toBe('http://localhost:5173');
+    });
+
+    it('rejects CLIENT_URL containing a non-root path, query string, hash fragment, or embedded credentials', () => {
+      expect(() => validateClientUrl('https://example.com/app', true)).toThrow(
+        /FATAL: CLIENT_URL must contain only an origin, without path, query, or hash/
+      );
+      expect(() => validateClientUrl('https://example.com?foo=bar', true)).toThrow(
+        /FATAL: CLIENT_URL must contain only an origin, without path, query, or hash/
+      );
+      expect(() => validateClientUrl('https://example.com#section', true)).toThrow(
+        /FATAL: CLIENT_URL must contain only an origin, without path, query, or hash/
+      );
+      expect(() => validateClientUrl('https://user:pass@example.com', true)).toThrow(
+        /FATAL: CLIENT_URL must not contain credentials/
+      );
+    });
+
+    it('rejects non-HTTPS non-loopback CLIENT_URL in production while allowing HTTP localhost in development', () => {
+      expect(() => validateClientUrl('http://example.com', true)).toThrow(
+        /FATAL: CLIENT_URL must use HTTPS in production/
+      );
       expect(validateClientUrl('http://localhost:5173', false)).toBe('http://localhost:5173');
     });
   });
@@ -135,10 +160,17 @@ describe('Unit Test: Environment Configuration & Security Validation (Section 2.
       );
     });
 
-    it('accepts valid postgresql connection strings', () => {
+    it('accepts valid postgresql connection strings including URL-encoded special characters and rejects unencoded special characters', () => {
       expect(validateDatabaseUrl(validDatabaseUrl, true)).toBe(validDatabaseUrl);
       expect(validateDatabaseUrl('postgres://user:pass@localhost:5432/db', false)).toBe(
         'postgres://user:pass@localhost:5432/db'
+      );
+      const encodedSpecialPwdUrl = 'postgresql://whatsss_user:P%40ss%23w0rd%2F1%3A2!@localhost:5432/whatsss_db?schema=public';
+      expect(validateDatabaseUrl(encodedSpecialPwdUrl, true)).toBe(encodedSpecialPwdUrl);
+
+      const unencodedSpecialPwdUrl = 'postgresql://whatsss_user:P@ss#w0rd/1:2!@localhost:5432/whatsss_db?schema=public';
+      expect(() => validateDatabaseUrl(unencodedSpecialPwdUrl, true)).toThrow(
+        /FATAL: DATABASE_URL is malformed and cannot be parsed as a valid connection URL/
       );
     });
   });
