@@ -3,123 +3,43 @@ import bcrypt from 'bcrypt';
 
 const defaultPrisma = new PrismaClient();
 
-export async function seed(client: PrismaClient = defaultPrisma): Promise<void> {
-  const isProduction = process.env.NODE_ENV === 'production';
-  const saltRounds = 10;
+export const STANDARD_ACCOUNTS = [
+  { name: 'Checking Bank', type: 'CASH' as const },
+  { name: 'Visa Credit Card', type: 'LOAN_TAKEN' as const },
+  { name: 'Salary', type: 'INCOME' as const },
+  { name: 'Dining', type: 'EXPENSE' as const },
+  { name: 'Grocery', type: 'EXPENSE' as const }
+];
 
-  if (isProduction) {
-    const prodAdminPassword = process.env.SEED_ADMIN_PASSWORD;
-    const prodAdminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@whatsss.local';
+async function runInTransaction<T>(
+  client: any,
+  fn: (tx: any) => Promise<T>
+): Promise<T> {
+  if (typeof client?.$transaction === 'function') {
+    return client.$transaction(async (tx: any) => fn(tx));
+  }
+  return fn(client);
+}
 
-    // Case 4: No SEED_ADMIN_PASSWORD or password < 12 chars
-    if (!prodAdminPassword || prodAdminPassword.length < 12) {
-      console.warn(
-        'Production environment detected: Demo accounts are strictly disabled. ' +
-        'To provision an initial administrator, configure SEED_ADMIN_PASSWORD (min 12 chars). Skipping seeding.'
-      );
-      return;
-    }
-
-    // Case 2: Check if an administrator account already exists (role === 'ADMIN')
-    const existingAdmin = await client.user.findFirst({
-      where: { role: 'ADMIN' }
-    });
-
-    if (existingAdmin) {
-      console.log(
-        'Production administrator account already exists. Preserving existing credentials and role without mutation.'
-      );
-      return;
-    }
-
-    // Case 3: Check if username "admin" is already taken by a non-ADMIN account
-    const usernameConflict = await client.user.findUnique({
-      where: { username: 'admin' }
-    });
-
-    if (usernameConflict) {
-      throw new Error(
-        'FATAL: Username "admin" already exists with non-ADMIN role. ' +
-        'Cannot provision production administrator due to username conflict.'
-      );
-    }
-
-    // Case 1: No admin exists and username "admin" is available -> provision initial admin
-    const adminHash = await bcrypt.hash(prodAdminPassword, saltRounds);
-    await client.user.create({
-      data: {
-        username: 'admin',
-        email: prodAdminEmail,
-        password_hash: adminHash,
-        role: 'ADMIN',
-        is_active: true
-      }
-    });
-
-    console.log('Production initial administrator account provisioned securely.');
-    return;
+/**
+ * Provisions the standard baseline financial accounts for a user.
+ * Strictly enforces that financial accounts may ONLY be provisioned for users with role 'USER'.
+ * Under BR-10, administrators and non-USER accounts must never possess or execute financial transactions.
+ * Wraps account creation in an atomic database transaction when supported by the client.
+ */
+export async function provisionDemoAccounts(
+  client: PrismaClient,
+  user: { id: string; role: string; username?: string }
+): Promise<void> {
+  if (user.role !== 'USER') {
+    throw new Error(
+      `FATAL: Cannot create financial accounts for user "${user.username || user.id}" with non-USER role "${user.role}".`
+    );
   }
 
-  // Development and Test seeding with well-known test fixtures
-  const demoPassword = 'Password123!';
-  const passwordHash = await bcrypt.hash(demoPassword, saltRounds);
-
-  // Seed user_demo (USER)
-  const userDemo = await client.user.upsert({
-    where: { username: 'user_demo' },
-    update: { password_hash: passwordHash, role: 'USER', is_active: true },
-    create: {
-      username: 'user_demo',
-      email: 'user_demo@whatsss.local',
-      password_hash: passwordHash,
-      role: 'USER',
-      is_active: true
-    }
-  });
-
-  // Seed user_other (USER)
-  const userOther = await client.user.upsert({
-    where: { username: 'user_other' },
-    update: { password_hash: passwordHash, role: 'USER', is_active: true },
-    create: {
-      username: 'user_other',
-      email: 'user_other@whatsss.local',
-      password_hash: passwordHash,
-      role: 'USER',
-      is_active: true
-    }
-  });
-
-  // NOTE: Hardcoded demo credentials are for local development/testing environments only.
-  // Production admin account provisioning must be configured using environment secrets.
-  // Seed admin_demo (ADMIN)
-  const adminDemo = await client.user.upsert({
-    where: { username: 'admin_demo' },
-    update: { password_hash: passwordHash, role: 'ADMIN', is_active: true },
-    create: {
-      username: 'admin_demo',
-      email: 'admin_demo@whatsss.local',
-      password_hash: passwordHash,
-      role: 'ADMIN',
-      is_active: true
-    }
-  });
-
-  // Seed standard financial accounts for all demo users (user_demo, user_other, admin_demo)
-  // In accordance with WP-02 and Issue #3 backlog specifications.
-  // Note: While admin_demo has seeded baseline accounts in the database, API access to
-  // financial endpoints remains strictly blocked with 403 Forbidden under BR-10.
-  const standardAccounts = [
-    { name: 'Checking Bank', type: 'CASH' as const },
-    { name: 'Visa Credit Card', type: 'LOAN_TAKEN' as const },
-    { name: 'Salary', type: 'INCOME' as const },
-    { name: 'Dining', type: 'EXPENSE' as const },
-    { name: 'Grocery', type: 'EXPENSE' as const }
-  ];
-
-  for (const user of [userDemo, userOther, adminDemo]) {
-    for (const acc of standardAccounts) {
-      await client.account.upsert({
+  await runInTransaction(client, async (tx) => {
+    for (const acc of STANDARD_ACCOUNTS) {
+      await tx.account.upsert({
         where: {
           user_id_name: {
             user_id: user.id,
@@ -136,7 +56,403 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
         }
       });
     }
+  });
+}
+
+export const seedStandardAccountsForUser = provisionDemoAccounts;
+
+export async function validateSeedUsers(
+  tx: any,
+  specs: Array<{ username: string; email: string; expectedRole: 'USER' | 'ADMIN' }>
+): Promise<void> {
+  if (!tx.user?.findUnique) return;
+  for (const spec of specs) {
+    const existingByUsername = await tx.user.findUnique({
+      where: { username: spec.username }
+    });
+    if (existingByUsername && existingByUsername.role !== spec.expectedRole) {
+      if (spec.username === 'user_demo' && spec.expectedRole === 'USER') {
+        throw new Error(
+          `FATAL: User "user_demo" already exists with non-USER role "${existingByUsername.role}". Cannot provision financial demo accounts.`
+        );
+      }
+      throw new Error(
+        `FATAL: User "${spec.username}" already exists with non-${spec.expectedRole} role "${existingByUsername.role}".`
+      );
+    }
+
+    if (!existingByUsername) {
+      const emailConflict = await tx.user.findUnique({
+        where: { email: spec.email }
+      });
+      if (emailConflict && emailConflict.username !== spec.username) {
+        const suffix = spec.username === 'user_demo' ? 'demo user' : spec.username;
+        throw new Error(
+          `FATAL: Email "${spec.email}" is already in use by user "${emailConflict.username}". Cannot provision ${suffix}.`
+        );
+      }
+    }
   }
+}
+
+export async function provisionAdmin(
+  client: any,
+  prodAdminPassword: string,
+  prodAdminEmail: string,
+  saltRounds: number = 10
+): Promise<void> {
+  // Case 2: Check if an administrator account already exists (role === 'ADMIN')
+  const existingAdmin = await client.user.findFirst({
+    where: { role: 'ADMIN' }
+  });
+
+  if (existingAdmin) {
+    console.log(
+      'Production administrator account already exists. Preserving existing credentials and role without mutation.'
+    );
+    return;
+  }
+
+  if (isPlaceholderPassword(prodAdminPassword)) {
+    throw new Error(
+      'FATAL: SEED_ADMIN_PASSWORD contains an insecure template placeholder from .env.example. ' +
+      'You must configure a real, unique administrator password of at least 12 characters in production.'
+    );
+  }
+
+  // Case 3: Check if username "admin" is already taken by a non-ADMIN account
+  const usernameConflict = await client.user.findUnique({
+    where: { username: 'admin' }
+  });
+
+  if (usernameConflict) {
+    throw new Error(
+      'FATAL: Username "admin" already exists with non-ADMIN role. ' +
+      'Cannot provision production administrator due to username conflict.'
+    );
+  }
+
+  // Check if admin email is already in use by another user
+  const emailConflict = await client.user.findUnique({
+    where: { email: prodAdminEmail }
+  });
+
+  if (emailConflict && emailConflict.username !== 'admin') {
+    throw new Error(
+      `FATAL: Email "${prodAdminEmail}" is already in use by user "${emailConflict.username}". ` +
+      'Cannot provision production administrator due to email conflict.'
+    );
+  }
+
+  // Case 1: No admin exists and username "admin" is available -> provision initial admin
+  const adminHash = await bcrypt.hash(prodAdminPassword, saltRounds);
+  await client.user.create({
+    data: {
+      username: 'admin',
+      email: prodAdminEmail,
+      password_hash: adminHash,
+      role: 'ADMIN',
+      is_active: true
+    }
+  });
+
+  console.log('Production initial administrator account provisioned securely.');
+}
+
+export function isPlaceholderPassword(val: string): boolean {
+  const lower = val.toLowerCase();
+  return (
+    lower.includes('replace_with') ||
+    lower.includes('placeholder') ||
+    lower.includes('changeme') ||
+    lower.includes('adminsecurepassword123!') ||
+    lower.includes('demosecurepassword123!')
+  );
+}
+
+export async function seed(client: PrismaClient = defaultPrisma): Promise<void> {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const saltRounds = 10;
+
+  /**
+   * TRANSACTION BOUNDARY DESIGN (P0-02 / P0-03):
+   * 1. Production Mode (`NODE_ENV=production`):
+   *    - Phase 1 (`provisionAdmin`): Runs as an independent, atomic operation (`user.create`) before demo user provisioning.
+   *      This separation is intentional: if optional demo data provisioning (`SEED_DEMO_DATA=true`) fails due to an email/role
+   *      conflict or account upsert error, the production administrator account remains safely provisioned (or preserved).
+   *    - Phase 2 (`user_demo` + 5 standard accounts): Executed inside a single atomic `runInTransaction(client, ...)` boundary.
+   *      If creating `user_demo` or upserting any of its 5 standard accounts fails, the entire demo provisioning phase rolls back
+   *      atomically without leaving a partial `user_demo` or partial financial accounts, while Phase 1 (`admin`) remains intact.
+   * 2. Development / Test Mode (`NODE_ENV !== 'production'`):
+   *    - All fixture users (`user_demo`, `user_other`, `admin_demo`) and the 10 standard financial accounts (5 for `user_demo`,
+   *      5 for `user_other`, 0 for `admin_demo` per BR-10) are provisioned inside a single unified `runInTransaction(client, ...)`
+   *      boundary so any failure rolls back the entire dev/test seed atomically.
+   */
+  if (isProduction) {
+    const prodAdminPassword = process.env.SEED_ADMIN_PASSWORD;
+    const prodAdminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@whatsss.local';
+
+    // 1. Provision or verify production administrator
+    if (!prodAdminPassword || prodAdminPassword.length < 12) {
+      if (process.env.SEED_DEMO_DATA === 'true') {
+        console.warn(
+          'Production environment: SEED_ADMIN_PASSWORD is missing or shorter than 12 characters. ' +
+          'To provision an initial administrator, configure SEED_ADMIN_PASSWORD (min 12 chars). Skipping administrator seeding.'
+        );
+      } else {
+        console.warn(
+          'Production environment detected: To provision an initial administrator, configure SEED_ADMIN_PASSWORD (min 12 chars). ' +
+          'Demo accounts are disabled by default (enable via SEED_DEMO_DATA=true). Skipping seeding.'
+        );
+        return;
+      }
+    } else {
+      await provisionAdmin(client, prodAdminPassword, prodAdminEmail, saltRounds);
+    }
+
+    // 2. Demo user provisioning in production (only when explicitly enabled via SEED_DEMO_DATA=true)
+    if (process.env.SEED_DEMO_DATA === 'true') {
+      const demoPassword = process.env.SEED_DEMO_PASSWORD;
+      const demoEmail = process.env.SEED_DEMO_EMAIL || 'user_demo@whatsss.local';
+
+      if (!demoPassword || demoPassword.length < 12) {
+        console.warn(
+          'SEED_DEMO_DATA is true but SEED_DEMO_PASSWORD is missing or shorter than 12 characters. Skipping demo user seeding.'
+        );
+        return;
+      }
+
+      if (isPlaceholderPassword(demoPassword)) {
+        throw new Error(
+          'FATAL: SEED_DEMO_PASSWORD contains an insecure template placeholder from .env.example. ' +
+          'You must configure a real, unique demo user password of at least 12 characters in production.'
+        );
+      }
+
+      // Check whether user_demo already exists and provision atomically with its 5 standard accounts
+      await runInTransaction(client, async (tx) => {
+        const existingDemoUser = await tx.user.findUnique({
+          where: { username: 'user_demo' }
+        });
+
+        let demoUser = existingDemoUser;
+
+        if (!existingDemoUser) {
+          // Check for email collision with other registered users
+          const emailConflict = await tx.user.findUnique({
+            where: { email: demoEmail }
+          });
+
+          if (emailConflict && emailConflict.username !== 'user_demo') {
+            throw new Error(
+              `FATAL: Email "${demoEmail}" is already in use by user "${emailConflict.username}". Cannot provision demo user.`
+            );
+          }
+
+          // Provision initial user_demo with role USER
+          const demoHash = await bcrypt.hash(demoPassword, saltRounds);
+          const createdDemo = await tx.user.create({
+            data: {
+              username: 'user_demo',
+              email: demoEmail,
+              password_hash: demoHash,
+              role: 'USER',
+              is_active: true
+            }
+          });
+          demoUser = { role: 'USER' as const, ...createdDemo };
+          console.log('Production demo user (user_demo) provisioned securely.');
+        } else {
+          // Enforce role integrity on existing user_demo
+          if (existingDemoUser.role !== 'USER') {
+            throw new Error(
+              `FATAL: User "user_demo" already exists with non-USER role "${existingDemoUser.role}". Cannot provision financial demo accounts.`
+            );
+          }
+          console.log('Production demo user (user_demo) already exists. Preserving existing credentials.');
+        }
+
+        // Provision standard financial accounts ONLY for validated USER accounts
+        if (demoUser && demoUser.role === 'USER') {
+          await seedStandardAccountsForUser(tx as any, demoUser);
+        }
+      });
+    }
+
+    return;
+  }
+
+  // Development and Test seeding with well-known test fixtures
+  const devPassword = 'Password123!';
+  const devHash = await bcrypt.hash(devPassword, saltRounds);
+
+  await runInTransaction(client, async (tx) => {
+    // 1. Seed or verify user_demo
+    let userDemo: any = null;
+    if (tx.user?.findUnique) {
+      const existingDemo = await tx.user.findUnique({
+        where: { username: 'user_demo' }
+      });
+
+      if (!existingDemo) {
+        const emailConflict = await tx.user.findUnique({
+          where: { email: 'user_demo@whatsss.local' }
+        });
+        if (emailConflict && emailConflict.username !== 'user_demo') {
+          throw new Error(
+            `FATAL: Email "user_demo@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision demo user.`
+          );
+        }
+        userDemo = await tx.user.create({
+          data: {
+            username: 'user_demo',
+            email: 'user_demo@whatsss.local',
+            password_hash: devHash,
+            role: 'USER',
+            is_active: true
+          }
+        });
+      } else {
+        if (existingDemo.role !== 'USER') {
+          throw new Error(
+            `FATAL: User "user_demo" already exists with non-USER role "${existingDemo.role}". Cannot provision financial demo accounts.`
+          );
+        }
+        userDemo = existingDemo;
+      }
+    } else if (tx.user?.upsert) {
+      userDemo = await tx.user.upsert({
+        where: { username: 'user_demo' },
+        update: {},
+        create: {
+          username: 'user_demo',
+          email: 'user_demo@whatsss.local',
+          password_hash: devHash,
+          role: 'USER',
+          is_active: true
+        }
+      });
+      if (userDemo && userDemo.role !== 'USER') {
+        throw new Error(
+          `FATAL: User "user_demo" already exists with non-USER role "${userDemo.role}". Cannot provision financial demo accounts.`
+        );
+      }
+    }
+
+    // 2. Seed or verify user_other (USER)
+    let userOther: any = null;
+    if (tx.user?.findUnique) {
+      const existingOther = await tx.user.findUnique({
+        where: { username: 'user_other' }
+      });
+
+      if (existingOther && existingOther.role !== 'USER') {
+        throw new Error(
+          `FATAL: User "user_other" already exists with non-USER role "${existingOther.role}".`
+        );
+      }
+
+      if (!existingOther) {
+        const emailConflict = await tx.user.findUnique({
+          where: { email: 'user_other@whatsss.local' }
+        });
+        if (emailConflict && emailConflict.username !== 'user_other') {
+          throw new Error(
+            `FATAL: Email "user_other@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision user_other.`
+          );
+        }
+        userOther = await tx.user.create({
+          data: {
+            username: 'user_other',
+            email: 'user_other@whatsss.local',
+            password_hash: devHash,
+            role: 'USER',
+            is_active: true
+          }
+        });
+      } else {
+        userOther = existingOther;
+      }
+    } else if (tx.user?.upsert) {
+      userOther = await tx.user.upsert({
+        where: { username: 'user_other' },
+        update: {},
+        create: {
+          username: 'user_other',
+          email: 'user_other@whatsss.local',
+          password_hash: devHash,
+          role: 'USER',
+          is_active: true
+        }
+      });
+      if (userOther && userOther.role !== 'USER') {
+        throw new Error(
+          `FATAL: User "user_other" already exists with non-USER role "${userOther.role}".`
+        );
+      }
+    }
+
+    // 3. Seed or verify admin_demo (ADMIN)
+    let adminDemo: any = null;
+    if (tx.user?.findUnique) {
+      const existingAdminDemo = await tx.user.findUnique({
+        where: { username: 'admin_demo' }
+      });
+
+      if (existingAdminDemo && existingAdminDemo.role !== 'ADMIN') {
+        throw new Error(
+          `FATAL: User "admin_demo" already exists with non-ADMIN role "${existingAdminDemo.role}".`
+        );
+      }
+
+      if (!existingAdminDemo) {
+        const emailConflict = await tx.user.findUnique({
+          where: { email: 'admin_demo@whatsss.local' }
+        });
+        if (emailConflict && emailConflict.username !== 'admin_demo') {
+          throw new Error(
+            `FATAL: Email "admin_demo@whatsss.local" is already in use by user "${emailConflict.username}". Cannot provision admin_demo.`
+          );
+        }
+        adminDemo = await tx.user.create({
+          data: {
+            username: 'admin_demo',
+            email: 'admin_demo@whatsss.local',
+            password_hash: devHash,
+            role: 'ADMIN',
+            is_active: true
+          }
+        });
+      } else {
+        adminDemo = existingAdminDemo;
+      }
+    } else if (tx.user?.upsert) {
+      adminDemo = await tx.user.upsert({
+        where: { username: 'admin_demo' },
+        update: {},
+        create: {
+          username: 'admin_demo',
+          email: 'admin_demo@whatsss.local',
+          password_hash: devHash,
+          role: 'ADMIN',
+          is_active: true
+        }
+      });
+      if (adminDemo && adminDemo.role !== 'ADMIN') {
+        throw new Error(
+          `FATAL: User "admin_demo" already exists with non-ADMIN role "${adminDemo.role}".`
+        );
+      }
+    }
+
+    // 4. Seed standard financial accounts ONLY for USER role demo users (userDemo, userOther)
+    // Under BR-10, admin_demo (ADMIN) must not receive standard financial accounts during seeding.
+    for (const user of [userDemo, userOther]) {
+      if (user) {
+        await seedStandardAccountsForUser(tx, user);
+      }
+    }
+  });
 
   console.log('Development seeding completed successfully.');
 }

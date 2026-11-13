@@ -1,0 +1,14 @@
+[allowlist]
+description = "Allowlist for explicit unit test fixtures and documentation template placeholders"
+regexes = [
+    '''replace-with-a-valid-secret-at-least-32-chars''',
+    '''legitimate_secret_key_with_at_least_32_characters_123''',
+    '''attacker_secret_key_with_at_least_32_characters_456''',
+    '''replace_with_a_long_random_secret_at_least_32_characters_for_production''',
+    '''replace_with_secure_admin_password_min_12_chars''',
+    '''replace_with_secure_demo_password_min_12_chars''',
+    '''replace_with_secure_postgres_password_for_local''',
+    '''test_only_cryptographically_secure_jwt_secret_32_chars''',
+    '''ci_pipeline_cryptographically_secure_jwt_secret_key_32_chars''',
+    '''ci_test_super_secret_jwt_key_at_least_32_chars'''
+]

@@ -4,6 +4,9 @@
   "private": true,
   "description": "Backend API for Whatsss Personal Finance Management",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -21,7 +24,9 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "prisma": "^5.14.0",
+    "tsx": "^4.10.5"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
@@ -31,9 +36,7 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.12.12",
     "@types/supertest": "^6.0.2",
-    "prisma": "^5.14.0",
     "supertest": "^7.0.0",
-    "tsx": "^4.10.5",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   },

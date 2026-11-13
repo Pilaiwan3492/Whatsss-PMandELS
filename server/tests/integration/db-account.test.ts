@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import request from 'supertest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { app } from '../../src/app.js';
-import { seed } from '../../prisma/seed.js';
+import { seed, seedStandardAccountsForUser } from '../../prisma/seed.js';
 import { lockAccounts } from '../../src/services/accountLock.service.js';
 import { assertTestDatabase, executeCleanupsSafely } from '../fixtures/testDbGuard.js';
 
@@ -184,19 +184,20 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
   }
 
   describe('Database Schema & Seed Verification (Fix #4)', () => {
-    it('validates seeded accounts in PostgreSQL have correct types, zero initial balance, and are unlocked for all 3 demo users', async (ctx) => {
+    it('validates seeded accounts in PostgreSQL have correct types, zero initial balance, and are unlocked for USER demo users while admin_demo has no financial accounts', async (ctx) => {
       if (!isDbConnected) {
         ctx.skip();
         return;
       }
 
-      for (const username of ['user_demo', 'user_other', 'admin_demo']) {
+      for (const username of ['user_demo', 'user_other']) {
         const user = await prisma.user.findUnique({
           where: { username },
           include: { accounts: { orderBy: { created_at: 'asc' } } }
         });
 
         expect(user).toBeDefined();
+        expect(user!.role).toBe('USER');
         expect(user!.accounts).toHaveLength(5);
 
         const accountNames = user!.accounts.map((a) => a.name);
@@ -214,6 +215,14 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
           expect(acc.is_opening_locked).toBe(false);
         }
       }
+
+      const adminUser = await prisma.user.findUnique({
+        where: { username: 'admin_demo' },
+        include: { accounts: true }
+      });
+      expect(adminUser).toBeDefined();
+      expect(adminUser!.role).toBe('ADMIN');
+      expect(adminUser!.accounts).toHaveLength(0);
     });
 
     it('validates @@unique([user_id, name]) constraint in PostgreSQL', async (ctx) => {
@@ -352,24 +361,39 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
 
       // 4. Construct proxy client where user operations hit real PostgreSQL,
       // but account.upsert throws an injected database error during seed execution
-      const proxyPrisma = new Proxy(prisma, {
-        get(target, prop, receiver) {
-          if (prop === 'account') {
-            const realAccount = target.account;
-            return new Proxy(realAccount, {
-              get(accTarget, accProp, accReceiver) {
-                if (accProp === 'upsert') {
-                  return async () => {
-                    throw new Error('Injected database error during real seed account upsert');
-                  };
+      // (both directly and inside interactive $transaction callbacks)
+      const wrapClientWithUpsertFailure = (clientTarget: any): any =>
+        new Proxy(clientTarget, {
+          get(target, prop, receiver) {
+            if (prop === '$transaction' && typeof target.$transaction === 'function') {
+              return async (arg: any, ...rest: any[]) => {
+                if (typeof arg === 'function') {
+                  return target.$transaction(
+                    async (tx: any) => arg(wrapClientWithUpsertFailure(tx)),
+                    ...rest
+                  );
                 }
-                return Reflect.get(accTarget, accProp, accReceiver);
-              }
-            });
+                return target.$transaction(arg, ...rest);
+              };
+            }
+            if (prop === 'account') {
+              const realAccount = target.account;
+              return new Proxy(realAccount, {
+                get(accTarget, accProp, accReceiver) {
+                  if (accProp === 'upsert') {
+                    return async () => {
+                      throw new Error('Injected database error during real seed account upsert');
+                    };
+                  }
+                  return Reflect.get(accTarget, accProp, accReceiver);
+                }
+              });
+            }
+            return Reflect.get(target, prop, receiver);
           }
-          return Reflect.get(target, prop, receiver);
-        }
-      });
+        });
+
+      const proxyPrisma = wrapClientWithUpsertFailure(prisma);
 
       // 5. Execute real seed(proxyPrisma) inside try/finally
       let seedError: Error | null = null;
@@ -402,6 +426,96 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
         expect(u!.is_active).toBe(snap.is_active);
         expect(u!.updated_at.getTime()).toBe(snap.updated_at.getTime());
       }
+    });
+
+    it('P0-02 (Live PostgreSQL): rolls back earlier accounts in real PostgreSQL $transaction when 2nd or 5th account fails, and preserves existing transactions on seed re-run', async (ctx) => {
+      if (!isDbConnected) {
+        ctx.skip();
+        return;
+      }
+
+      const tempUsername = `temp_seed_atomic_${Date.now()}`;
+      const tempUser = await prisma.user.create({
+        data: {
+          username: tempUsername,
+          email: `${tempUsername}@whatsss.local`,
+          password_hash: '$2b$10$TempAtomicSeedUserHashValue123456789012345678901234',
+          role: 'USER',
+          is_active: true
+        }
+      });
+
+      pendingCleanups.push(async () => {
+        await prisma.account.deleteMany({ where: { user_id: tempUser.id } });
+        await prisma.user.deleteMany({ where: { id: tempUser.id } });
+      });
+
+      // Helper wrapping real PrismaClient so real SQL inserts happen for earlier accounts, then throws on targetAccountName
+      const makePartialFailClient = (failOnName: string): any =>
+        new Proxy(prisma, {
+          get(target, prop, receiver) {
+            if (prop === '$transaction') {
+              return async (fn: any, ...rest: any[]) =>
+                target.$transaction(async (realTx) => {
+                  const txProxy = new Proxy(realTx, {
+                    get(txTarget, txProp, txReceiver) {
+                      if (txProp === 'account') {
+                        return new Proxy(txTarget.account, {
+                          get(accTarget, accProp, accReceiver) {
+                            if (accProp === 'upsert') {
+                              return async (args: any) => {
+                                if (args?.create?.name === failOnName) {
+                                  throw new Error(`Injected live PostgreSQL failure on ${failOnName}`);
+                                }
+                                return accTarget.upsert(args);
+                              };
+                            }
+                            return Reflect.get(accTarget, accProp, accReceiver);
+                          }
+                        });
+                      }
+                      return Reflect.get(txTarget, txProp, txReceiver);
+                    }
+                  });
+                  return fn(txProxy);
+                }, ...rest);
+            }
+            return Reflect.get(target, prop, receiver);
+          }
+        });
+
+      // 1. Fail on 2nd account ('Visa Credit Card') -> 1st account ('Checking Bank') must be rolled back in PostgreSQL
+      await expect(
+        seedStandardAccountsForUser(makePartialFailClient('Visa Credit Card'), {
+          id: tempUser.id,
+          role: 'USER',
+          username: tempUser.username
+        })
+      ).rejects.toThrow(/Injected live PostgreSQL failure on Visa Credit Card/);
+
+      const countAfterSecondFail = await prisma.account.count({ where: { user_id: tempUser.id } });
+      expect(countAfterSecondFail).toBe(0);
+
+      // 2. Fail on 5th account ('Grocery') -> all 4 preceding accounts must be rolled back in PostgreSQL
+      await expect(
+        seedStandardAccountsForUser(makePartialFailClient('Grocery'), {
+          id: tempUser.id,
+          role: 'USER',
+          username: tempUser.username
+        })
+      ).rejects.toThrow(/Injected live PostgreSQL failure on Grocery/);
+
+      const countAfterFifthFail = await prisma.account.count({ where: { user_id: tempUser.id } });
+      expect(countAfterFifthFail).toBe(0);
+
+      // 3. Normal execution succeeds and commits all 5 accounts in PostgreSQL
+      await seedStandardAccountsForUser(prisma, {
+        id: tempUser.id,
+        role: 'USER',
+        username: tempUser.username
+      });
+      const countAfterSuccess = await prisma.account.count({ where: { user_id: tempUser.id } });
+      expect(countAfterSuccess).toBe(5);
     });
   });
 
@@ -545,6 +659,30 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       expect(patchForeignRes.status).toBe(404);
       expect(patchForeignRes.body.success).toBe(false);
       expect(patchForeignRes.body.error.code).toBe('NOT_FOUND');
+
+      // 4b. User A attempts PUT and DELETE on User B account and transactions via real HTTP endpoints -> 404 NOT_FOUND
+      const putForeignAccRes = await request(app)
+        .put(`/api/accounts/${userBChecking!.id}`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookies)
+        .send({ name: 'Tampered', opening_balance: 5555.00 });
+      expect(putForeignAccRes.status).toBe(404);
+      expect(putForeignAccRes.body.error.code).toBe('NOT_FOUND');
+
+      const deleteForeignAccRes = await request(app)
+        .delete(`/api/accounts/${userBChecking!.id}`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userACookies);
+      expect(deleteForeignAccRes.status).toBe(404);
+      expect(deleteForeignAccRes.body.error.code).toBe('NOT_FOUND');
+
+      const deleteForeignTxnRes = await request(app)
+        .delete(`/api/transactions/${userBChecking!.id}`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userACookies);
+      expect(deleteForeignTxnRes.status).toBe(404);
+      expect(deleteForeignTxnRes.body.error.code).toBe('NOT_FOUND');
 
       // 5. Verify User B's row in PostgreSQL remains completely untouched
       const recheckedUserB = await prisma.account.findUnique({ where: { id: userBChecking!.id } });

@@ -467,6 +467,10 @@ export async function recordExpense(
           }
         }
 
+        if (targetAccounts.length !== uniqueTargetIds.length) {
+          throw new ExpenseError('Target allocation account not found.', 404, 'NOT_FOUND');
+        }
+
         // D. Atomically lock opening balances of all involved accounts (AC-03-3)
         await lockAccounts(tx, [primaryAccount.id, ...uniqueTargetIds], userId);
 

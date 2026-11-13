@@ -1,11 +1,10 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: whatsss_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured in .env}
       POSTGRES_DB: ${POSTGRES_DB:-whatsss_db}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -13,9 +12,63 @@ services:
       - whatsss_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
+      interval: 3s
+      timeout: 3s
       retries: 5
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        APP_COMMIT_SHA: ${APP_COMMIT_SHA:-development}
+    image: whatsss:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured in .env}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD must be configured in .env (min 12 characters)}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@whatsss.local}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-}
+      SEED_DEMO_EMAIL: ${SEED_DEMO_EMAIL:-user_demo@whatsss.local}
+    command: sh -c "npx prisma migrate deploy && npm run prisma:seed"
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        APP_COMMIT_SHA: ${APP_COMMIT_SHA:-development}
+    image: whatsss:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      HOST: 0.0.0.0
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:8080}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured in .env}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be configured in .env (min 32 characters)}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
+      APP_COMMIT_SHA: ${APP_COMMIT_SHA:-development}
+    ports:
+      - "${PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
 volumes:
   whatsss_pgdata:
