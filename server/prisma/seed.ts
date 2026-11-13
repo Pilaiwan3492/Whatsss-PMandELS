@@ -46,6 +46,17 @@ export async function seedStandardAccountsForUser(
   }
 }
 
+export function isPlaceholderPassword(val: string): boolean {
+  const lower = val.toLowerCase();
+  return (
+    lower.includes('replace_with') ||
+    lower.includes('placeholder') ||
+    lower.includes('changeme') ||
+    lower.includes('adminsecurepassword123!') ||
+    lower.includes('demosecurepassword123!')
+  );
+}
+
 export async function seed(client: PrismaClient = defaultPrisma): Promise<void> {
   const isProduction = process.env.NODE_ENV === 'production';
   const saltRounds = 10;
@@ -79,6 +90,13 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
           'Production administrator account already exists. Preserving existing credentials and role without mutation.'
         );
       } else {
+        if (isPlaceholderPassword(prodAdminPassword)) {
+          throw new Error(
+            'FATAL: SEED_ADMIN_PASSWORD contains an insecure template placeholder from .env.example. ' +
+            'You must configure a real, unique administrator password of at least 12 characters in production.'
+          );
+        }
+
         // Case 3: Check if username "admin" is already taken by a non-ADMIN account
         const usernameConflict = await client.user.findUnique({
           where: { username: 'admin' }
@@ -129,6 +147,13 @@ export async function seed(client: PrismaClient = defaultPrisma): Promise<void> 
           'SEED_DEMO_DATA is true but SEED_DEMO_PASSWORD is missing or shorter than 12 characters. Skipping demo user seeding.'
         );
         return;
+      }
+
+      if (isPlaceholderPassword(demoPassword)) {
+        throw new Error(
+          'FATAL: SEED_DEMO_PASSWORD contains an insecure template placeholder from .env.example. ' +
+          'You must configure a real, unique demo user password of at least 12 characters in production.'
+        );
       }
 
       // Check whether user_demo already exists

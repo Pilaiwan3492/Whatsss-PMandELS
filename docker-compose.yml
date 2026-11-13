@@ -32,10 +32,10 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public}
-      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-AdminSecurePassword123!}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD must be configured in .env (min 12 characters)}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@whatsss.local}
-      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
-      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-DemoSecurePassword123!}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-}
       SEED_DEMO_EMAIL: ${SEED_DEMO_EMAIL:-user_demo@whatsss.local}
     command: sh -c "npx prisma migrate deploy && npm run prisma:seed"
     restart: "no"
@@ -61,13 +61,13 @@ services:
       HOST: 0.0.0.0
       CLIENT_URL: ${CLIENT_URL:-http://localhost:8080}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public}
-      JWT_SECRET: ${JWT_SECRET:-replace_with_a_long_random_secret_at_least_32_characters_for_production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be configured in .env (min 32 characters)}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
       APP_COMMIT_SHA: ${APP_COMMIT_SHA:-development}
     ports:
       - "${PORT:-8080}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health && curl -f http://localhost:8080/api/ready || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 5

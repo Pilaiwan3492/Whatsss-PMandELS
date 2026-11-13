@@ -80,6 +80,8 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 ### Point 5: Dynamic Port & Host Interface Binding & Environment Validation
 * The Express server binds to `process.env.HOST || '0.0.0.0'` and `process.env.PORT || 5000`.
 * In `server/src/config/env.ts`, strict startup validation guarantees that `PORT` is an integer between 1 and 65535, `CLIENT_URL` is a valid URL and required in production, and `DATABASE_URL` uses `postgresql://` or `postgres://` and is required in production. All error messages sanitize sensitive credentials.
+* **Template Placeholder Rejection (CWE-1188 / Security Baseline):** Both the runtime server (`validateJwtSecret`) and seed process (`isPlaceholderPassword`) actively detect and reject `.env.example` placeholder strings (e.g. `replace_with_*`, `changeme`). If an operator copies `.env.example` without substituting real cryptographic secrets, the application immediately aborts startup with an explicit fatal error rather than running insecurely with known secrets.
+* **Docker Compose Required Interpolation:** `docker-compose.yml` does not provide hardcoded default secret fallbacks. Secrets use required interpolation syntax (e.g. `${JWT_SECRET:?JWT_SECRET must be configured in .env}` and `${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD must be configured in .env}`), failing fast before container startup if secrets are omitted.
 
 ### Point 6: Observability, Health & Readiness Probes
 * **Reverse Proxy Trust:** Configured `app.set('trust proxy', 1)` in `server/src/app.ts` so Express accurately detects client protocols, client IP addresses, and secure HTTPS headers passed from Google Front End (GFE).
@@ -551,6 +553,18 @@ curl -i http://localhost:8080/api/ready
 
 **Conclusion:** Check **C-03** is fully satisfied. The application builds, seeds, and executes cleanly from a fresh clone with `.env.example` placeholders, and data persists across container lifecycles in the PostgreSQL volume.
 
+### 8.2 Automated Clean-Clone CI Pipeline Verification (`.github/workflows/ci.yml`)
+
+To provide continuously verifiable, traceable proof that the application adheres to Check **C-03** on every code revision, the GitHub Actions CI pipeline includes a dedicated automation job: `c03-clean-clone-verification`:
+
+1. **Clean Workspace Isolation:** Clones/copies the workspace into a fresh, isolated directory (`../clean-clone-test`), completely free from cached dependencies or build remnants.
+2. **Template Interpolation Verification:** Copies `.env.example` to `.env` and generates dynamic, cryptographically secure secrets (`openssl rand -hex 32` for `JWT_SECRET`, secure passwords for admin/demo).
+3. **Single-Command Startup:** Executes `docker compose up -d --build` and polls until all containers report `healthy`.
+4. **Health & Readiness Inspection:** Probes both `GET /api/health` and `GET /api/ready`, asserting HTTP 200 OK responses.
+5. **Real Transaction Creation:** Authenticates via `POST /api/auth/login`, retrieves account UUIDs, and creates a live income transaction (`POST /api/transactions/income`).
+6. **Container Teardown & Restart:** Executes `docker compose down` (preserving `whatsss_pgdata`), re-starts via `docker compose up -d`, and confirms that the transaction and updated balances persist intact.
+7. **Traceability:** Every GitHub Actions workflow run links directly to the git commit SHA, providing immutable audit evidence for reviewers and evaluators.
+
 ---
 
 ## 9. Rollback & Disaster Recovery Runbook
@@ -589,16 +603,18 @@ flowchart LR
         BackendJob["Backend Test & Build<br/>(PostgreSQL 16, Vitest, tsc)"]
         FrontendJob["Frontend Test & Build<br/>(Vitest, Vite build)"]
         DockerJob["Docker Build & Probe<br/>(Multi-stage build, health curl)"]
+        CleanCloneJob["Clean Clone C-03 Verification<br/>(docker-compose up, e2e API, persistence)"]
         SecurityJob["Secret & Credential Scan<br/>(Detect .env, keys, pem)"]
     end
     
     PushOrPR --> BackendJob
     PushOrPR --> FrontendJob
     PushOrPR --> DockerJob
+    DockerJob --> CleanCloneJob
     PushOrPR --> SecurityJob
 ```
 
-* **Branch Protection:** All four jobs must report Success before any PR targeting `staging-lab5` can be reviewed and approved.
+* **Branch Protection:** All five jobs must report Success before any PR targeting `staging-lab5` can be reviewed and approved.
 * **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted.
 
 ---

@@ -154,3 +154,121 @@ jobs:
             exit 1
           fi
           echo "Secret scan clean: No forbidden credential files found in repository."
+
+  c03-clean-clone-verification:
+    name: Check C-03 Clean Clone Build & Run Verification
+    runs-on: ubuntu-latest
+    needs: [docker]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Clean Clone Environment in Isolated Workspace
+        run: |
+          mkdir -p ../clean-clone-test
+          cp -r . ../clean-clone-test/
+          cd ../clean-clone-test
+
+          # Copy .env strictly from .env.example
+          cp .env.example .env
+
+          # Configure dynamic secure testing secrets (replacing template placeholders)
+          RANDOM_JWT=$(openssl rand -hex 32)
+          sed -i "s|replace_with_a_long_random_secret_at_least_32_characters_for_production|${RANDOM_JWT}|g" .env
+          sed -i "s|replace_with_secure_admin_password_min_12_chars|CiAdminPassword2026!|g" .env
+          sed -i "s|SEED_DEMO_DATA=false|SEED_DEMO_DATA=true|g" .env
+          sed -i "s|replace_with_secure_demo_password_min_12_chars|CiDemoPassword2026!|g" .env
+
+      - name: Start Full Stack with Docker Compose (C-03)
+        working-directory: ../clean-clone-test
+        run: |
+          docker compose up -d --build
+
+          echo "Waiting for app container health..."
+          for i in {1..30}; do
+            HEALTH_STATUS=$(docker inspect --format='{{json .State.Health.Status}}' whatsss_app 2>/dev/null || echo "starting")
+            if [ "$HEALTH_STATUS" = "\"healthy\"" ]; then
+              echo "whatsss_app is healthy!"
+              break
+            fi
+            echo "Waiting for healthcheck ($i/30)... current: $HEALTH_STATUS"
+            sleep 2
+          done
+
+          docker compose ps
+          docker logs whatsss_migrate
+
+      - name: Probe Health and Readiness Endpoints
+        run: |
+          echo "Probing /api/health (Liveness)..."
+          curl -f -s -i http://localhost:8080/api/health | grep "HTTP/1.1 200 OK"
+
+          echo "Probing /api/ready (Readiness)..."
+          curl -f -s -i http://localhost:8080/api/ready | grep "HTTP/1.1 200 OK"
+
+      - name: End-to-End API Authentication & Transaction Creation
+        run: |
+          echo "Authenticating as user_demo..."
+          LOGIN_RES=$(curl -s -i -c cookie.txt -X POST http://localhost:8080/api/auth/login \
+            -H "Content-Type: application/json" \
+            -H "Origin: http://localhost:8080" \
+            -d '{"username":"user_demo","password":"CiDemoPassword2026!"}')
+          echo "$LOGIN_RES" | grep "HTTP/1.1 200 OK"
+
+          echo "Fetching baseline accounts..."
+          ACCOUNTS_RES=$(curl -s -b cookie.txt http://localhost:8080/api/accounts)
+          echo "$ACCOUNTS_RES"
+          CHECKING_ID=$(echo "$ACCOUNTS_RES" | grep -o '"id":"[^"]*","user_id":"[^"]*","name":"Checking Bank"' | head -1 | cut -d'"' -f4)
+          SALARY_ID=$(echo "$ACCOUNTS_RES" | grep -o '"id":"[^"]*","user_id":"[^"]*","name":"Salary"' | head -1 | cut -d'"' -f4)
+
+          if [ -z "$CHECKING_ID" ] || [ -z "$SALARY_ID" ]; then
+            echo "FATAL: Failed to resolve Checking Bank or Salary account IDs!"
+            exit 1
+          fi
+
+          echo "Recording income transaction of 25000.00 THB..."
+          TX_RES=$(curl -s -i -b cookie.txt -X POST http://localhost:8080/api/transactions/income \
+            -H "Content-Type: application/json" \
+            -H "Origin: http://localhost:8080" \
+            -d "{\"primary_account_id\":\"${CHECKING_ID}\",\"income_account_id\":\"${SALARY_ID}\",\"total_amount\":\"25000.00\",\"transaction_date\":\"2026-11-13\",\"description\":\"CI C-03 Clean Clone Verification Transaction\"}")
+          echo "$TX_RES" | grep "HTTP/1.1 201 Created"
+
+      - name: Teardown and Re-launch Stack (Volume Persistence Verification)
+        working-directory: ../clean-clone-test
+        run: |
+          echo "Executing docker compose down (preserving volume)..."
+          docker compose down
+
+          echo "Re-launching stack with existing PostgreSQL volume..."
+          docker compose up -d
+
+          echo "Waiting for app container health after restart..."
+          for i in {1..30}; do
+            HEALTH_STATUS=$(docker inspect --format='{{json .State.Health.Status}}' whatsss_app 2>/dev/null || echo "starting")
+            if [ "$HEALTH_STATUS" = "\"healthy\"" ]; then
+              echo "whatsss_app is healthy after restart!"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Verify Transaction Persisted Across Teardown
+        run: |
+          echo "Re-logging in..."
+          curl -s -i -c cookie_post.txt -X POST http://localhost:8080/api/auth/login \
+            -H "Content-Type: application/json" \
+            -H "Origin: http://localhost:8080" \
+            -d '{"username":"user_demo","password":"CiDemoPassword2026!"}' | grep "HTTP/1.1 200 OK"
+
+          echo "Fetching transactions..."
+          TX_LIST=$(curl -s -b cookie_post.txt http://localhost:8080/api/transactions)
+          echo "$TX_LIST"
+          echo "$TX_LIST" | grep "CI C-03 Clean Clone Verification Transaction" || (echo "FATAL: Test record did not persist across compose down!" && exit 1)
+          echo "VERIFIED: Test transaction persisted successfully across container teardown!"
+
+      - name: Clean up Docker Compose Stack
+        if: always()
+        working-directory: ../clean-clone-test
+        run: |
+          docker compose down -v || true

@@ -69,6 +69,24 @@ export function validateDatabaseUrl(databaseUrl: string | undefined, isProductio
   return databaseUrl;
 }
 
+export const INSECURE_JWT_PLACEHOLDERS = [
+  'replace_with_a_long_random_secret_at_least_32_characters_for_production',
+  'replace_with_a_long_random_secret',
+  'your_jwt_secret_must_be_at_least_32_characters_long'
+];
+
+export function isPlaceholderSecret(secret: string): boolean {
+  const lower = secret.toLowerCase();
+  return (
+    lower.includes('replace_with') ||
+    lower.includes('placeholder') ||
+    lower.includes('changeme') ||
+    lower.includes('your_secret') ||
+    lower.includes('example_secret') ||
+    INSECURE_JWT_PLACEHOLDERS.some((p) => lower.includes(p.toLowerCase()))
+  );
+}
+
 export function validateJwtSecret(secret: string | undefined, nodeEnv: string): string {
   if (!secret || secret.trim() === '') {
     if (nodeEnv === 'test') {
@@ -79,6 +97,13 @@ export function validateJwtSecret(secret: string | undefined, nodeEnv: string): 
 
   if (secret.length < 32) {
     throw new Error('FATAL: JWT_SECRET must be at least 32 characters long for cryptographic security.');
+  }
+
+  if (nodeEnv !== 'test' && isPlaceholderSecret(secret)) {
+    throw new Error(
+      'FATAL: JWT_SECRET contains an insecure template placeholder from .env.example. ' +
+      'You must generate and configure a unique, cryptographically random secret of at least 32 characters.'
+    );
   }
 
   return secret;

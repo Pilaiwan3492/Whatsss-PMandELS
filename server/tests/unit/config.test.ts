@@ -27,6 +27,12 @@ describe('Unit Test: Environment Configuration & Security Validation (Section 2.
       expect(() => validateJwtSecret(shortSecret, 'development')).toThrow(/FATAL: JWT_SECRET must be at least 32 characters long/);
     });
 
+    it('throws a fatal error if JWT_SECRET contains an insecure template placeholder from .env.example in production or development', () => {
+      const placeholderSecret = 'replace_with_a_long_random_secret_at_least_32_characters_for_production';
+      expect(() => validateJwtSecret(placeholderSecret, 'production')).toThrow(/FATAL: JWT_SECRET contains an insecure template placeholder/);
+      expect(() => validateJwtSecret(placeholderSecret, 'development')).toThrow(/FATAL: JWT_SECRET contains an insecure template placeholder/);
+    });
+
     it('accepts and initializes successfully when a valid secret (>= 32 chars) is provided', () => {
       const result = validateJwtSecret(validSecret, 'production');
       expect(result).toBe(validSecret);
