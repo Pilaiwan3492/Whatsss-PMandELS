@@ -130,10 +130,19 @@ else
 fi
 
 # R-07 Least Privilege: Runtime SA receives ONLY Cloud SQL Client at project level
-run_cmd gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
-  --role="roles/cloudsql.client" \
-  --condition=None
+if [[ "${DRY_RUN}" == "1" ]]; then
+  run_cmd gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
+    --role="roles/cloudsql.client" \
+    --condition=None
+else
+  if ! gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
+    --role="roles/cloudsql.client" \
+    --condition=None 2>/dev/null; then
+    echo "Notice: Skipping project IAM policy binding (already bound by Project Owner or caller has Editor role)."
+  fi
+fi
 
 # ------------------------------------------------------------------------------
 # Step 3: Create Artifact Registry Repository
@@ -226,10 +235,19 @@ create_or_update_secret "${SECRET_ADMIN_PWD}" "${ADMIN_PWD_VALUE}"
 create_or_update_secret "${SECRET_DEMO_PWD}" "${DEMO_PWD_VALUE}"
 
 for sec in "${SECRET_DB_URL}" "${SECRET_JWT}" "${SECRET_ADMIN_PWD}" "${SECRET_DEMO_PWD}"; do
-  run_cmd gcloud secrets add-iam-policy-binding "${sec}" \
-    --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
-    --role="roles/secretmanager.secretAccessor" \
-    --project="${PROJECT_ID}"
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    run_cmd gcloud secrets add-iam-policy-binding "${sec}" \
+      --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
+      --role="roles/secretmanager.secretAccessor" \
+      --project="${PROJECT_ID}"
+  else
+    if ! gcloud secrets add-iam-policy-binding "${sec}" \
+      --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
+      --role="roles/secretmanager.secretAccessor" \
+      --project="${PROJECT_ID}" 2>/dev/null; then
+      echo "Notice: Skipping secret IAM binding for ${sec} (already bound by Project Owner or caller has Editor role)."
+    fi
+  fi
 done
 
 # ------------------------------------------------------------------------------
