@@ -156,4 +156,65 @@ describe('Integration Test: PostgreSQL Live Database Password Persistence (TEST-
       }
     }
   });
+
+  it('connects Prisma to live PostgreSQL using URL-encoded DATABASE_URL across all special-character password cases (@, #, /, :, %)', async (ctx) => {
+    if (!isDbConnected) {
+      ctx.skip();
+      return;
+    }
+
+    const baseDbUrl = process.env.DATABASE_URL;
+    if (!baseDbUrl) {
+      ctx.skip();
+      return;
+    }
+
+    const parsedBase = new URL(baseDbUrl);
+    const dbHost = parsedBase.hostname || 'localhost';
+    const dbPort = parsedBase.port || '5432';
+    const dbName = parsedBase.pathname.replace(/^\//, '') || 'whatsss_test';
+
+    const passwordCases: Array<{ raw: string; expectedEncoded: string }> = [
+      { raw: 'NormalPass123', expectedEncoded: 'NormalPass123' },
+      { raw: 'Pass@123', expectedEncoded: 'Pass%40123' },
+      { raw: 'Pass#123', expectedEncoded: 'Pass%23123' },
+      { raw: 'Pass/123', expectedEncoded: 'Pass%2F123' },
+      { raw: 'Pass:123', expectedEncoded: 'Pass%3A123' },
+      { raw: 'Pass%123', expectedEncoded: 'Pass%25123' }
+    ];
+
+    const roleName = `whatsss_url_test_${crypto.randomBytes(4).toString('hex')}`;
+
+    try {
+      await prisma.$executeRawUnsafe(`CREATE ROLE "${roleName}" WITH LOGIN PASSWORD 'NormalPass123'`);
+      await prisma.$executeRawUnsafe(`GRANT CONNECT ON DATABASE "${dbName}" TO "${roleName}"`);
+      await prisma.$executeRawUnsafe(`GRANT USAGE ON SCHEMA public TO "${roleName}"`);
+
+      for (const { raw, expectedEncoded } of passwordCases) {
+        const escapedSqlLiteral = raw.replace(/'/g, "''");
+        await prisma.$executeRawUnsafe(`ALTER ROLE "${roleName}" WITH PASSWORD '${escapedSqlLiteral}'`);
+
+        const encodedUser = encodeURIComponent(roleName);
+        const encodedPassword = encodeURIComponent(raw);
+        expect(encodedPassword).toBe(expectedEncoded);
+
+        const candidateUrl = `postgresql://${encodedUser}:${encodedPassword}@${dbHost}:${dbPort}/${dbName}?schema=public`;
+        const roleClient = new PrismaClient({
+          datasources: { db: { url: candidateUrl } }
+        });
+
+        try {
+          await roleClient.$connect();
+          const rows = await roleClient.$queryRaw<Array<{ ok: number }>>`SELECT 1 AS ok`;
+          expect(rows[0]?.ok).toBe(1);
+        } finally {
+          await roleClient.$disconnect();
+        }
+      }
+    } finally {
+      await prisma.$executeRawUnsafe(`REVOKE ALL PRIVILEGES ON SCHEMA public FROM "${roleName}"`).catch(() => {});
+      await prisma.$executeRawUnsafe(`REVOKE ALL PRIVILEGES ON DATABASE "${dbName}" FROM "${roleName}"`).catch(() => {});
+      await prisma.$executeRawUnsafe(`DROP ROLE IF EXISTS "${roleName}"`).catch(() => {});
+    }
+  });
 });

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# deploy/tests/mocks/curl — Mock curl CLI for Post-Release Probe Verification
+# ==============================================================================
+
+set -euo pipefail
+
+LOG_FILE="${MOCK_LOG_FILE:?MOCK_LOG_FILE must be set by test runner}"
+echo "curl $*" >> "${LOG_FILE}"
+
+target_url=""
+for arg in "$@"; do
+  case "${arg}" in
+    http://*|https://*) target_url="${arg}" ;;
+  esac
+done
+
+case "${target_url}" in
+  */api/health)
+    if [[ "${MOCK_FAIL_HEALTH_PROBE:-0}" == "1" ]]; then
+      exit 22
+    fi
+    echo '{"status":"ok","timestamp":"2026-11-14T00:00:00.000Z","commitSha":"testsha"}'
+    exit 0
+    ;;
+  */api/ready)
+    if [[ "${MOCK_FAIL_READY_PROBE:-0}" == "1" ]]; then
+      echo '{"status":"not_ready","database":"disconnected"}'
+      exit 0
+    fi
+    echo '{"status":"ready","database":"connected","timestamp":"2026-11-14T00:00:00.000Z","commitSha":"testsha"}'
+    exit 0
+    ;;
+  *)
+    echo '{}'
+    exit 0
+    ;;
+esac

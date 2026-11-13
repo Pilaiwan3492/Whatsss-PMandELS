@@ -298,11 +298,30 @@ When configuring service probes, operational semantics are decoupled between pro
 ### 6.1 Automated Infrastructure & Release Scripts (`deploy/deploy.sh` & `deploy/release.sh`)
 Two repeatable deployment scripts in `deploy/` automate first-time infrastructure provisioning and subsequent releases:
 1. **`deploy/deploy.sh` (First-Time Provisioning + Build + Release):**
-   - Supports dry-run inspection (`DRY_RUN=1 GCP_PROJECT_ID="cpe334-whatsss-pmandels" bash deploy/deploy.sh`) to verify all `gcloud` and `docker` commands before mutating cloud state.
-   - Enables required GCP APIs, creates the `whatsss-runner` runtime service account, provisions the `whatsss` Artifact Registry repository and `whatsss-sql` Cloud SQL PostgreSQL 16 instance with mandatory `--no-storage-auto-increase` credit protection, creates/preserves Secret Manager secrets, builds and pushes the production image by commit SHA/digest, and invokes `deploy/release.sh`.
-2. **`deploy/release.sh` (Decoupled Migration Job + Cloud Run Service Rollout):**
-   - Deploys and executes the `whatsss-migrate` Cloud Run Job with `--wait` (`sh -c "npx prisma migrate deploy && npm run prisma:seed"`).
-   - Deploys the `whatsss` Cloud Run Service (`--min-instances=0 --max-instances=3 --allow-unauthenticated`) and automatically synchronizes `CLIENT_URL` with the live Cloud Run HTTPS URL.
+   - Verifies required CLI dependencies (`gcloud`, `docker`, `python3`, `git`, `openssl`) and requires an explicit `GCP_PROJECT_ID` (with active-project mismatch protection).
+   - Supports dry-run inspection (`DRY_RUN=1 GCP_PROJECT_ID="cpe334-whatsss-pmandels" bash deploy/deploy.sh`) to verify all commands without mutating GCP state or leaking secret values.
+   - URL-encodes both `DB_USER` and `DB_PASSWORD` via RFC 3986 `urllib.parse.quote(val, safe="")` before constructing `DATABASE_URL_VALUE` (`postgresql://${DB_USER_ENCODED}:${DB_PASSWORD_ENCODED}@localhost:5432/...`), preserving URI delimiters while safely encoding `@`, `#`, `/`, `:`, and `%`.
+   - Enforces fail-fast IAM binding and post-provisioning verification (`gcloud projects get-iam-policy` and `gcloud secrets get-iam-policy`), confirming `whatsss-runner` holds `roles/cloudsql.client` and per-secret `roles/secretmanager.secretAccessor` while rejecting `roles/owner`, `roles/editor`, or project-wide `roles/secretmanager.secretAccessor`.
+   - Implements idempotent credential management: preserves existing synchronized Cloud SQL user passwords and Secret Manager versions when `ROTATE_DB_PASSWORD=0` (default), and atomically rotates both Cloud SQL and `whatsss-database-url` when `ROTATE_DB_PASSWORD=1` (aborting before migration or service rollout if secret update fails).
+2. **`deploy/release.sh` (Decoupled Migration Job + Cloud Run Service Rollout — Issue #19 & Issue #21 CD Contract):**
+   - Designed to be invoked both by `deploy/deploy.sh` (Episode 5) and by the GitHub Actions Continuous Deployment workflow (`.github/workflows/deploy.yml` in Episode 7 / Issue #21) using the immutable Docker image built from the verified commit SHA without rebuilding.
+
+| Input Variable | Purpose / Contract Responsibility |
+|---|---|
+| `GCP_PROJECT_ID` | Target GCP Project ID (`cpe334-whatsss-pmandels`; required, fails fast if omitted) |
+| `GCP_REGION` | Deployment Region (default: `asia-southeast1`) |
+| `IMAGE_REF` | Immutable Docker image URI or `@sha256:...` digest to release |
+| `RUNTIME_SA_EMAIL` | Least-privilege runtime service account (`whatsss-runner@cpe334-whatsss-pmandels.iam.gserviceaccount.com`) |
+| `CLOUDSQL_CONNECTION_NAME` | Cloud SQL instance connection name (`cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql`) |
+| `SECRET_*` | Secret Manager secret names and verified `ENABLED` version numbers (`SECRET_DB_URL`, `SECRET_JWT`, `SECRET_ADMIN_PWD`, `SECRET_DEMO_PWD`) |
+| `MIGRATE_JOB_NAME` | Decoupled Cloud Run Job (`whatsss-migrate`) |
+| `CLOUD_RUN_SERVICE` | Cloud Run Service (`whatsss`) |
+| `DRY_RUN` | Dry-run mode (`1` = log commands only with zero GCP mutations; `0` = live execution) |
+
+**`deploy/release.sh` Execution Guarantees:**
+- **Migration Gate:** Deploys `whatsss-migrate`, verifies its `serviceAccountName` equals `RUNTIME_SA_EMAIL`, executes `gcloud run jobs execute --wait`, and inspects the execution record (`succeededCount >= 1`). If migration or seeding fails, `release.sh` exits non-zero immediately without deploying the Cloud Run service or shifting traffic.
+- **Real Cloud Run HTTPS URL Synchronization:** Reads the actual `status.url` from `gcloud run services describe` (using safe `https://bootstrap-pending.invalid` only during initial creation before a service URL exists), validates that the URL begins with `https://`, updates `CLIENT_URL` on the service, and verifies both post-update `CLIENT_URL` and `serviceAccountName`.
+- **Post-Release Smoke Verification:** Probes live `${SERVICE_URL}/api/health` (`200 OK`) and `${SERVICE_URL}/api/ready` (`200 OK`, `"database":"connected"`) before reporting success.
 
 ### 6.2 Creating Secrets in GCP Secret Manager
 Never commit database credentials or JWT secrets to Git, Dockerfiles, or environment files. Manage all production secrets via Google Cloud Secret Manager:
@@ -823,11 +842,42 @@ flowchart TD
 | **Frontend Test** | **PASSED** — 7 test suites (55 tests) + Vite production bundle build (`npm test` & `npm run build` on Node.js 24 LTS) |
 | **Docker Build** | **PASSED** — Multi-stage `node:24-alpine` production image built, layer/filesystem secret inspection clean, `/api/health` (200), `/api/ready` (200), and `/` SPA verified |
 | **C-03 Clean Clone** | **PASSED** — Verified in both `test-and-docker` ([CI Run #10 Job `132001551007`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43459279046/job/132001551007)) and `c03-clean-clone-verification` ([Job `132001966691`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43459265389/job/132001966691)): clean clone, special-char DB password, `docker compose config -q`, migration failure gate, 200/503/200 probes, 25,000 THB transaction, and volume persistence across restart |
-| **Cloud Deploy (C-04)** | **COMPLETED** — Live on Google Cloud Run at `https://whatsss-sipqw4logq-as.a.run.app` (`https://whatsss-1086708130644.asia-southeast1.run.app`), Revision `whatsss-00002-7k4`, Image digest `asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781`, connected to Cloud SQL `whatsss-sql` (`POSTGRES_16`, `db-f1-micro`, `--no-storage-auto-increase`); `/api/health` (200), `/api/ready` (200, `"database":"connected"`), E2E workflow (`27,000.00 THB` Bank / `0.00 THB` Debt), and rule rejections (`BR-04` unbalanced split & `BR-10` Admin `403`) verified |
+| **Cloud Deploy (C-04)** | **COMPLETED / RETEST** — Initial live deployment verified on Google Cloud Run at `https://whatsss-sipqw4logq-as.a.run.app` (`https://whatsss-1086708130644.asia-southeast1.run.app`), Revision `whatsss-00002-7k4`, Image digest `asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781`, connected to Cloud SQL `whatsss-sql` (`POSTGRES_16`, `db-f1-micro`, `--no-storage-auto-increase`); `/api/health` (200), `/api/ready` (200, `"database":"connected"`), E2E workflow (`27,000.00 THB` Bank / `0.00 THB` Debt), and rule rejections (`BR-04` unbalanced split & `BR-10` Admin `403`) verified; hardened `deploy/deploy.sh` & `deploy/release.sh` verified via automated CI test suites (`deploy/tests/`) |
 
 ---
 
-## 11. Peer Review Acceptance Criteria Checklist (16/16 Completed)
+## Deployment Script Verification
+
+- **URL encoding test:** Verified in `deploy/tests/test-deploy.sh` (Test 3), `server/tests/unit/config.test.ts` (`P1-07`), and live PostgreSQL Prisma integration test in `server/tests/integration/db-password.test.ts` across all 6 mandatory password cases (`NormalPass123` $\rightarrow$ `NormalPass123`, `Pass@123` $\rightarrow$ `Pass%40123`, `Pass#123` $\rightarrow$ `Pass%23123`, `Pass/123` $\rightarrow$ `Pass%2F123`, `Pass:123` $\rightarrow$ `Pass%3A123`, `Pass%123` $\rightarrow$ `Pass%25123`) and special-character usernames (`whatsss@app` $\rightarrow$ `whatsss%40app`) while preserving `postgresql://`, `?host=/cloudsql/...`, and `&schema=public` delimiters and leaking zero secret values in logs.
+- **IAM failure handling:** Verified in `deploy/tests/test-deploy.sh` (Tests 8, 9, 10) — `deploy.sh` checks existing IAM bindings first via `get-iam-policy`, fails fast (`exit 1`) immediately when `gcloud projects add-iam-policy-binding` or `gcloud secrets add-iam-policy-binding` fails, and verifies post-provisioning IAM policy to ensure `whatsss-runner` holds `roles/cloudsql.client` and per-secret `roles/secretmanager.secretAccessor` while rejecting `roles/owner`, `roles/editor`, or project-wide `roles/secretmanager.secretAccessor`.
+- **Secret rotation test:** Verified in `deploy/tests/test-deploy.sh` (Tests 4, 5, 6, 7) — first deploy creates version `1`; repeat deploy (`ROTATE_DB_PASSWORD=0`) preserves existing Cloud SQL password and Secret Manager version without unintended mutation; explicit rotation (`ROTATE_DB_PASSWORD=1`) atomically updates both Cloud SQL user password and `whatsss-database-url` version `2` with verified `ENABLED` version pinning; simulated secret update failure aborts before migration job or Cloud Run service deployment.
+- **Migration failure test:** Verified in `deploy/tests/test-release.sh` (Tests 5, 6) — when `gcloud run jobs execute` returns non-zero or when the execution record reports `succeededCount < 1`, `release.sh` aborts immediately (`exit 1`) and never invokes `gcloud run deploy`.
+- **Cloud Run URL synchronization:** Verified in `deploy/tests/test-release.sh` (Tests 3, 4, 7, 8, 9, 10, 11) — first-time deploy uses safe `https://bootstrap-pending.invalid` before reading the real `status.url` from `gcloud run services describe`, rejects empty or non-`https://` URLs, updates `CLIENT_URL` to the exact live HTTPS URL, and verifies both post-update `CLIENT_URL` and `serviceAccountName` (`whatsss-runner@cpe334-whatsss-pmandels.iam.gserviceaccount.com`) on the Job and Service.
+- **DRY_RUN verification:** Verified in `deploy/tests/test-deploy.sh` (Test 2) and `deploy/tests/test-release.sh` (Test 2) — running `DRY_RUN=1` records zero invocations in the stateful mock command log (`0` mutations to Cloud SQL, Service Accounts, IAM, Secret Manager, Docker push, or Cloud Run) and leaks zero password/JWT/secret values in terminal output.
+- **ShellCheck:** Enforced in `.github/workflows/ci-docker.yml` and `.github/workflows/ci.yml` (`shellcheck deploy/*.sh deploy/tests/*.sh deploy/tests/mocks/*`) alongside `bash -n` syntax validation.
+- **Automated test run:** Executed automatically on every PR and push in GitHub Actions (`bash deploy/tests/test-deploy.sh` — 10/10 passed; `bash deploy/tests/test-release.sh` — 11/11 passed; Date: `2026-11-14`; PR #28 `chore/19-first-gcp-deploy-c04 -> staging-lab5`).
+
+---
+
+## 11. Issue #19 & Lab 5 Acceptance Criteria Checklist
+
+### 11.1 Issue #19 (Episode 5 — First GCP Deployment & Check C-04) Acceptance Criteria
+
+| Acceptance Criteria | Status | Evidence |
+|---|---|---|
+| **GCP APIs enabled** | **Completed** | GCP Console (`artifactregistry`, `run`, `sqladmin`, `secretmanager`, `iamcredentials`, `cloudbuild` enabled in project `cpe334-whatsss-pmandels`) |
+| **Cloud SQL PostgreSQL 16** | **Completed** | Cloud SQL Instance `whatsss-sql` (`POSTGRES_16`, `Enterprise` edition, `db-f1-micro`, `10GB SSD`, database `whatsss_db`, dedicated user `whatsss_app`) |
+| **Storage Auto-increase disabled** | **Completed** | SQL Configuration (`gcloud sql instances patch whatsss-sql --no-storage-auto-increase` enforced in `deploy/deploy.sh` and verified on `whatsss-sql`) |
+| **Secret Manager** | **Completed** | Secret Metadata (`whatsss-database-url`, `whatsss-jwt-secret`, `whatsss-admin-password`, `whatsss-demo-password`; zero secret values committed to Git) |
+| **Runtime SA Least Privilege** | **Pending verification** | IAM Policy (`whatsss-runner@cpe334-whatsss-pmandels.iam.gserviceaccount.com` bound to project `roles/cloudsql.client` and per-secret `roles/secretmanager.secretAccessor`; verified by `verify_runtime_sa_project_iam` in `deploy/deploy.sh` and `release.sh` SA checks) |
+| **Migration Job** | **Completed / Retest** | Job Execution (`whatsss-migrate` execution `whatsss-migrate-rmqkv` succeeded on Cloud Run; migration failure gate & execution status check verified in `deploy/tests/test-release.sh`) |
+| **Cloud Run Service** | **Completed / Retest** | Service URL (`https://whatsss-sipqw4logq-as.a.run.app`, Revision `whatsss-00002-7k4` serving 100% traffic) |
+| **CLIENT_URL exact HTTPS** | **Pending retest** | Service Configuration (`CLIENT_URL=https://whatsss-sipqw4logq-as.a.run.app` active on Revision `whatsss-00002-7k4`; post-update `CLIENT_URL` verification enforced in `deploy/release.sh`) |
+| **C-04 E2E** | **Completed / Retest** | Screenshots & Probe Logs (`/api/health` 200, `/api/ready` 200 `"database":"connected"`, `user_demo` E2E workflow `27,000.00 THB` Bank / `0.00 THB` Debt, `BR-04` unbalanced split rejection & `BR-10` Admin `403`) |
+| **Deploy Script Tests** | **Completed (CI Verified)** | CI Run (`deploy/tests/test-deploy.sh` 10 tests, `deploy/tests/test-release.sh` 11 tests, `shellcheck`, and Prisma special-char DB URL integration test in `ci-docker.yml` & `ci.yml`) |
+| **PR Review** | **Pending** | [PR #28 Review](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/28) (`chore/19-first-gcp-deploy-c04 -> staging-lab5`, awaiting review and approval by `@Pilaiwan3492`) |
+
+### 11.2 Cumulative Lab 5 Baseline Acceptance Criteria (Episodes 1–4)
 
 | # | Acceptance Criterion | Status | Verification Evidence / Artifact |
 |---|---|:---:|---|
@@ -842,10 +892,9 @@ flowchart TD
 | 9 | **Secret Management Isolation** (Zero secrets in Image or Git) | **COMPLETED** | Enforced by `.dockerignore`, `.gitignore`, Gitleaks CI scan, `::add-mask::` in workflows, Docker image layer/filesystem inspection (`P2-12`), and GCP Secret Manager (`whatsss-database-url`, `whatsss-jwt-secret`, `whatsss-admin-password`, `whatsss-demo-password`) |
 | 10 | **Readiness Probe State Discrimination & In-Flight Deduplication** | **COMPLETED** | Verified in `server/src/app.ts` & `server/tests/unit/health.test.ts` (11 unit tests) + `server/tests/integration/health.test.ts` (20 integration tests): 3s timeout, in-flight query deduplication (`activeReadyProbe` cleared only when DB query settles), and 200/503/200 state transition |
 | 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci-docker.yml` and `.github/workflows/ci.yml` execute on Node.js 24 LTS across PRs and branch pushes with minimal `contents: read` permissions and full 40-char Action SHA pinning |
-| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | Verified on Feature PR #26 (approved by `@Pilaiwan3492` in Review `5891356921` and merged in `b113cdf`) and Release PR #27 (`staging-lab5 -> main`, CI Run #10 `43459279046` & Run #9 `43454153068`); the unified `test-and-docker` job completes all backend, frontend, Docker, and C-03 checks |
+| 12 | **Check C-01: PR Automated Test & Docker Build (`test-and-docker`)** | **COMPLETED** | Verified on Feature PR #26 (approved by `@Pilaiwan3492` in Review `5891356921` and merged in `b113cdf`) and Release PR #27 (`staging-lab5 -> main`, CI Run #10 `43459279046` & Run #9 `43454153068`, merged in `015d9c0`) |
 | 13 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md`, `deploy/deploy.sh`, and `deploy/release.sh` updated with exact verified GCP resource names, Node.js 24 LTS runtime, configuration runbooks, and diagrams |
-| 14 | **Traceable Verification Evidence & Commit SHA** | **COMPLETED** | Feature PR #26 approved and merged (`b113cdf`); Release PR #27 (`staging-lab5 -> main`) approved and merged by `@Pilaiwan3492` (`015d9c0`); Cloud Run revision `whatsss-00002-7k4` deployed and verified with live `commitSha` |
+| 14 | **Traceable Verification Evidence & Commit SHA** | **PARTIALLY COMPLETED** | Feature PR #26 (`b113cdf`) and Release PR #27 (`015d9c0`) approved and merged by `@Pilaiwan3492`; PR #28 (`chore/19-first-gcp-deploy-c04 -> staging-lab5`) awaiting peer review approval by `@Pilaiwan3492` |
 | 15 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Automated in both `ci-docker.yml` (PRs, Job `132001551007`) and `ci.yml` (pushes, Job `132001966691`): fresh clone, `.env.example` with special-char DB password & URL-encoded `DOCKER_DATABASE_URL`, migration failure gate, 200/503/200 probes, 25,000 THB transaction creation, and volume persistence across teardown |
-| 16 | **Check C-04: Public Cloud Run Deployment & End-to-End Verification (Issue #19)** | **COMPLETED** | Live at `https://whatsss-sipqw4logq-as.a.run.app` (Section 8.3): `/api/health` (200), `/api/ready` (200, `"database":"connected"`), `user_demo` E2E workflow (Opening `10,000 THB` $\rightarrow$ Income `+20,000 THB` $\rightarrow$ Split Expense `-3,000 THB` $\rightarrow$ Repayment `-3,000 THB` $\rightarrow$ `27,000 THB` Bank / `0 THB` Debt), and rule rejections (`BR-04` unbalanced split & `BR-10` Admin `403`) verified |
 
 

@@ -176,18 +176,19 @@ describe('Unit Test: Environment Configuration & Security Validation (Section 2.
     });
 
     it('P1-07: encodes special-character passwords safely via buildDatabaseUrl and validates without leaking passwords in errors', () => {
-      const passwordCases = [
-        'normal123',
-        'p@ssword',
-        'p#ssword',
-        'p/ssword',
-        'p:ssword'
+      const passwordExpectations: Array<{ raw: string; encoded: string }> = [
+        { raw: 'NormalPass123', encoded: 'NormalPass123' },
+        { raw: 'Pass@123', encoded: 'Pass%40123' },
+        { raw: 'Pass#123', encoded: 'Pass%23123' },
+        { raw: 'Pass/123', encoded: 'Pass%2F123' },
+        { raw: 'Pass:123', encoded: 'Pass%3A123' },
+        { raw: 'Pass%123', encoded: 'Pass%25123' }
       ];
 
-      for (const rawPassword of passwordCases) {
+      for (const { raw, encoded } of passwordExpectations) {
         const constructedUrl = buildDatabaseUrl({
-          user: 'postgres',
-          password: rawPassword,
+          user: 'whatsss_app',
+          password: raw,
           host: 'localhost',
           port: 5432,
           database: 'whatsss_db',
@@ -195,21 +196,22 @@ describe('Unit Test: Environment Configuration & Security Validation (Section 2.
         });
 
         // Must preserve URI separators while encoding only credentials
-        expect(constructedUrl.startsWith('postgresql://postgres:')).toBe(true);
-        expect(constructedUrl.endsWith('@localhost:5432/whatsss_db?schema=public')).toBe(true);
+        expect(constructedUrl).toBe(
+          `postgresql://whatsss_app:${encoded}@localhost:5432/whatsss_db?schema=public`
+        );
         expect(validateDatabaseUrl(constructedUrl, true)).toBe(constructedUrl);
       }
 
       // Also verify Cloud SQL Unix socket construction preserves ?host=/cloudsql/...
       const cloudSqlUrl = buildDatabaseUrl({
-        user: 'postgres',
-        password: 'p@ss#word/1:2',
-        database: 'whatsss_prod',
+        user: 'whatsss_app',
+        password: 'p@ss#word/1:2%',
+        database: 'whatsss_db',
         schema: 'public',
-        cloudSqlInstance: 'proj:asia-southeast1:inst'
+        cloudSqlInstance: 'cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql'
       });
       expect(cloudSqlUrl).toBe(
-        'postgresql://postgres:p%40ss%23word%2F1%3A2@localhost/whatsss_prod?host=/cloudsql/proj:asia-southeast1:inst&schema=public'
+        'postgresql://whatsss_app:p%40ss%23word%2F1%3A2%25@localhost/whatsss_db?host=/cloudsql/cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql&schema=public'
       );
       expect(validateDatabaseUrl(cloudSqlUrl, true)).toBe(cloudSqlUrl);
 

@@ -110,7 +110,7 @@ jobs:
         run: npm run build
 
       # ------------------------------------------------------------------------
-      # 3. Docker Build & Probe
+      # 3. Deployment Script Verification & Docker Build / Probe
       # ------------------------------------------------------------------------
       - name: Lint Deployment Scripts (if present)
         run: |
@@ -119,6 +119,23 @@ jobs:
             find deploy -name "*.sh" -exec bash -n {} +
           else
             echo "No deploy/ directory present yet, skipping script lint."
+          fi
+
+      - name: ShellCheck Deployment Scripts
+        run: |
+          if [ -d "deploy" ]; then
+            if ! command -v shellcheck >/dev/null 2>&1; then
+              sudo apt-get update && sudo apt-get install -y shellcheck
+            fi
+            shellcheck --version
+            shellcheck deploy/*.sh deploy/tests/*.sh deploy/tests/mocks/*
+          fi
+
+      - name: Run Deployment Script Tests
+        run: |
+          if [ -d "deploy/tests" ]; then
+            bash deploy/tests/test-deploy.sh
+            bash deploy/tests/test-release.sh
           fi
 
       - name: Set up Docker Buildx
