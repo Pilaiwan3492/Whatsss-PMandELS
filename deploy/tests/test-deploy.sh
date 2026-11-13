@@ -388,6 +388,9 @@ printf 'postgresql://whatsss_app:StagedSecret456@localhost:5432/whatsss_db' > "$
 gcloud secrets versions add whatsss-database-url --data-file="${TMP_SECRET_OK}" >/dev/null
 rm -f "${TMP_SECRET_OK}"
 staged_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
+if [[ -z "${staged_ver}" || "${staged_ver}" -le "${original_ver}" ]]; then
+  fail_test "Expected staged secret version to be greater than original version ${original_ver}"
+fi
 
 if output="$(
   MOCK_FAIL_SQL_SET_PASSWORD=1 \
