@@ -10,6 +10,10 @@
 FROM node:20-alpine AS client-builder
 WORKDIR /app/client
 
+# Build-time API Base URL for Vite SPA (defaults to relative /api in single-container deployment)
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
 COPY client/package*.json ./
 RUN npm ci
 
@@ -38,10 +42,14 @@ WORKDIR /app/server
 # Install runtime system packages for Prisma query engine, signal handling, and health probes
 RUN apk add --no-cache openssl libc6-compat dumb-init curl
 
+# Git commit SHA passed during CI/CD build for observability & health probe
+ARG APP_COMMIT_SHA=development
+
 # Default production runtime environment variables
 ENV NODE_ENV=production \
     PORT=8080 \
-    HOST=0.0.0.0
+    HOST=0.0.0.0 \
+    APP_COMMIT_SHA=${APP_COMMIT_SHA}
 
 # Install production runtime dependencies (prisma and tsx are included for release migrations & seed)
 COPY server/package*.json ./
@@ -49,6 +57,7 @@ COPY server/prisma ./prisma
 RUN npm ci --omit=dev && npx prisma generate
 
 # Copy compiled backend application
+# Node.js 20-alpine ES module distribution
 COPY --from=server-builder /app/server/dist ./dist
 
 # Copy compiled frontend distribution to both /app/client/dist and ./client/dist

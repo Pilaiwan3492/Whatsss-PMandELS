@@ -139,6 +139,15 @@ describe('Unit Test: Production Seed Admin Provisioning & Conflict Handling (TAS
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('configure SEED_ADMIN_PASSWORD (min 12 chars)'));
   });
 
+  it('Case 7: Throws error when SEED_ADMIN_PASSWORD contains an insecure template placeholder', async () => {
+    process.env.SEED_ADMIN_PASSWORD = 'replace_with_secure_admin_password_min_12_chars';
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+
+    await expect(seed(mockPrisma)).rejects.toThrow(
+      /FATAL: SEED_ADMIN_PASSWORD contains an insecure template placeholder/
+    );
+  });
+
   it('Case 7: Proves that plaintext password is never passed to database create operation', async () => {
     mockPrisma.user.findFirst.mockResolvedValue(null);
     mockPrisma.user.findUnique.mockResolvedValue(null);
@@ -462,5 +471,14 @@ describe('Unit Test: User Demo Provisioning, Conflict Handling & Role Protection
     // Initial administrator is created, but ZERO financial accounts must be created for ADMIN
     expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
     expect(mockPrisma.account.upsert).not.toHaveBeenCalled();
+  });
+
+  it('11. Throws error when SEED_DEMO_PASSWORD contains an insecure template placeholder', async () => {
+    process.env.SEED_DEMO_PASSWORD = 'replace_with_secure_demo_password_min_12_chars';
+    mockPrisma.user.findUnique.mockResolvedValue(null);
+
+    await expect(seed(mockPrisma)).rejects.toThrow(
+      /FATAL: SEED_DEMO_PASSWORD contains an insecure template placeholder/
+    );
   });
 });

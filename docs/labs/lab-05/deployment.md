@@ -80,6 +80,8 @@ In preparation for cloud containerization and continuous deployment on GCP Cloud
 ### Point 5: Dynamic Port & Host Interface Binding & Environment Validation
 * The Express server binds to `process.env.HOST || '0.0.0.0'` and `process.env.PORT || 5000`.
 * In `server/src/config/env.ts`, strict startup validation guarantees that `PORT` is an integer between 1 and 65535, `CLIENT_URL` is a valid URL and required in production, and `DATABASE_URL` uses `postgresql://` or `postgres://` and is required in production. All error messages sanitize sensitive credentials.
+* **Template Placeholder Rejection (CWE-1188 / Security Baseline):** Both the runtime server (`validateJwtSecret`) and seed process (`isPlaceholderPassword`) actively detect and reject `.env.example` placeholder strings (e.g. `replace_with_*`, `changeme`). If an operator copies `.env.example` without substituting real cryptographic secrets, the application immediately aborts startup with an explicit fatal error rather than running insecurely with known secrets.
+* **Docker Compose Required Interpolation:** `docker-compose.yml` does not provide hardcoded default secret fallbacks. Secrets use required interpolation syntax (e.g. `${JWT_SECRET:?JWT_SECRET must be configured in .env}` and `${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD must be configured in .env}`), failing fast before container startup if secrets are omitted.
 
 ### Point 6: Observability, Health & Readiness Probes
 * **Reverse Proxy Trust:** Configured `app.set('trust proxy', 1)` in `server/src/app.ts` so Express accurately detects client protocols, client IP addresses, and secure HTTPS headers passed from Google Front End (GFE).
@@ -238,17 +240,24 @@ Host: whatsss.example.com
 ```
 *(Any underlying database connection errors, such as socket terminations or connection strings, are sanitized via `sanitizeLogMessage()` and logged securely to the server console/Cloud Logging to protect sensitive credentials).*
 
-### 5.3 Operational Distinction for Cloud Run Probe Configuration
+### 5.3 Operational Distinction for Cloud Run Probe Configuration vs Docker Compose
 
-When configuring Cloud Run service probes, configure endpoints strictly according to their intended operational role:
+When configuring service probes, operational semantics are decoupled between process liveness and dependency readiness:
 
-* **Liveness Probe $\rightarrow$ Configure `/api/health`:**
-  - Verifies that the Node.js/Express process is responsive and event loops are unblocked.
-  - Does **NOT** query PostgreSQL.
-  - **Critical Failure Mode Avoided:** If a database experiences transient connection limits or network blips, the liveness probe continues returning HTTP 200. If liveness were mistakenly tied to the database, Cloud Run would kill and restart healthy container instances in a destructive cascading loop ("restart storm"), exacerbating the outage.
-* **Startup / Readiness Probe $\rightarrow$ Configure `/api/ready`:**
-  - Verifies active database connectivity (`SELECT 1`) during container initialization.
-  - In Cloud Run, startup probes allow instances to warm up and establish database connection pools before receiving ingress traffic.
+* **Docker Compose Container Healthcheck (`docker-compose.yml`):**
+  - Uses `curl -f http://localhost:8080/api/health || exit 1`.
+  - Verifies that the Node.js application process and HTTP event loop are alive and answering requests.
+  - Does **not** include `/api/ready` in the container-level healthcheck: this ensures that if PostgreSQL is stopped or restarted, Docker does not prematurely mark the application container unhealthy or trigger unwanted restarts, giving database connections the opportunity to recover cleanly.
+
+* **Database Readiness Inspection (`/api/ready`):**
+  - Serves as the dedicated endpoint for database connectivity verification (`SELECT 1`).
+  - Returns **HTTP 200 OK** (`database: connected`) when PostgreSQL is healthy.
+  - Returns **HTTP 503 Service Unavailable** (`database: disconnected`) when PostgreSQL is unavailable or failing.
+  - Tested continuously in CI: simulates database outage (`docker compose stop postgres` $\rightarrow$ 503 while liveness remains 200) followed by database recovery (`docker compose start postgres` $\rightarrow$ 200).
+
+* **Google Cloud Run Decoupled Probes (Production Architecture):**
+  - **Liveness Probe $\rightarrow$ Configure `/api/health`:** Verifies that the Node.js process and Express event loop are alive. Does **NOT** query PostgreSQL. **Critical Failure Mode Avoided:** If Cloud SQL undergoes transient maintenance, connection limit spikes, or failover, the liveness probe remains HTTP 200. If liveness were tied to the database, Cloud Run would kill and restart healthy container instances in a destructive cascading loop ("restart storm"), exacerbating the outage.
+  - **Startup / Readiness Probe $\rightarrow$ Configure `/api/ready`:** Verifies active database connectivity (`SELECT 1`). Allows Cloud Run instances to complete initialization before GFE routes public ingress traffic.
 
 ---
 
@@ -346,7 +355,7 @@ docker run -d --name whatsss-test-instance \
   -e NODE_ENV=production \
   -e PORT=8080 \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET="replace-with-a-valid-secret-at-least-32-chars" \
+  -e JWT_SECRET="test_only_cryptographically_secure_jwt_secret_32_chars" \
   -e CLIENT_URL="http://localhost:8080" \
   -e DATABASE_URL="postgresql://test:test@127.0.0.1:5432/test" \
   -p 8080:8080 \
@@ -362,44 +371,304 @@ docker run -d --name whatsss-test-instance \
 ### 7.3 Run Container Connected to PostgreSQL (Live Migration, Seed & Readiness 200)
 ```bash
 # 1. Ensure PostgreSQL is active via docker compose
-docker compose up -d
+docker compose up -d postgres
 
-# 2. Run Prisma migration inside container against PostgreSQL
+# 2. Extract database connection URL from .env (matching configured POSTGRES_PASSWORD)
+# Format: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+source .env && DOCKER_DB_URL="postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public"
+
+# 3. Run Prisma migration inside container against PostgreSQL
 docker run --rm --network whatsss-pmandels_default \
-  -e DATABASE_URL="postgresql://postgres:postgres@whatsss_postgres:5432/whatsss_db?schema=public" \
+  -e DATABASE_URL="${DOCKER_DB_URL}" \
   whatsss:test npx prisma migrate deploy
 # Output: 3 migrations found. No pending migrations to apply. Database schema is up to date!
 
-# 3. Run Prisma seed inside container
+# 4. Run Prisma seed inside container
 docker run --rm --network whatsss-pmandels_default \
-  -e DATABASE_URL="postgresql://postgres:postgres@whatsss_postgres:5432/whatsss_db?schema=public" \
-  -e SEED_ADMIN_PASSWORD="AdminSecurePassword123!" \
+  -e DATABASE_URL="${DOCKER_DB_URL}" \
+  -e SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-AdminSecurePassword123!}" \
   -e SEED_DEMO_DATA="true" \
-  -e SEED_DEMO_PASSWORD="DemoSecurePassword123!" \
+  -e SEED_DEMO_PASSWORD="${SEED_DEMO_PASSWORD:-DemoSecurePassword123!}" \
   whatsss:test npm run prisma:seed
 # Output: Production admin preserved. user_demo preserved. Accounts upserted idempotently.
 
-# 4. Start live container connected to PostgreSQL
+# 5. Start live container connected to PostgreSQL
 docker run -d --name whatsss-live-instance --network whatsss-pmandels_default \
   -e NODE_ENV=production \
   -e PORT=8080 \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET="replace-with-a-valid-secret-at-least-32-chars" \
+  -e JWT_SECRET="test_only_cryptographically_secure_jwt_secret_32_chars" \
   -e CLIENT_URL="http://localhost:8080" \
-  -e DATABASE_URL="postgresql://postgres:postgres@whatsss_postgres:5432/whatsss_db?schema=public" \
+  -e DATABASE_URL="${DOCKER_DB_URL}" \
   -p 8080:8080 \
   whatsss:test
 
-# 5. Verify live readiness probe
+# 6. Verify live readiness probe
 curl -i http://localhost:8080/api/ready
 # Output: HTTP 200 OK {"status":"ready","database":"connected","timestamp":"...","commitSha":"development"}
 ```
 
+### 7.4 Single-Command Local Full-Stack Deployment (`docker compose`)
+
+`docker-compose.yml` orchestrates the complete stack locally in a single command, running PostgreSQL, applying schema migrations, running idempotent seed, and serving the full-stack container. Dynamic container naming is managed automatically by Compose without static `container_name` to prevent collisions across multiple workspaces or developer projects.
+
+```bash
+# 1. Initialize environment file from template
+cp .env.example .env
+
+# 2. Generate local-only test secrets
+JWT_SECRET=$(openssl rand -hex 32)
+ADMIN_PASSWORD=$(openssl rand -hex 16)
+POSTGRES_PASSWORD=$(openssl rand -hex 16)
+
+# 3. Write configured secrets to .env (ensuring matching database credentials)
+# NOTE: POSTGRES_USER=postgres is for local development/testing only.
+# In GCP Cloud SQL or production, configure dedicated application database users.
+cat <<EOF > .env
+# Server Network & Host Configuration
+PORT=8080
+HOST=0.0.0.0
+CLIENT_URL=http://localhost:8080
+NODE_ENV=production
+
+# Local PostgreSQL Configuration (Local only; do not use in Cloud SQL)
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_DB=whatsss_db
+POSTGRES_PORT=5432
+
+# Database Connection String (Credentials synchronized with POSTGRES_USER & POSTGRES_PASSWORD)
+DATABASE_URL="postgresql://postgres:${POSTGRES_PASSWORD}@localhost:5432/whatsss_db?schema=public"
+
+# Authentication & JWT Security
+JWT_SECRET=${JWT_SECRET}
+JWT_EXPIRES_IN=24h
+APP_COMMIT_SHA=development
+
+# Initial Seed Configuration
+SEED_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+SEED_ADMIN_EMAIL=admin@whatsss.local
+SEED_DEMO_DATA=false
+SEED_DEMO_PASSWORD=
+SEED_DEMO_EMAIL=user_demo@whatsss.local
+EOF
+
+# Note on Demo User:
+# SEED_DEMO_DATA is false by default. If you need a pre-seeded demo user (user_demo)
+# for evaluation, set SEED_DEMO_DATA=true and assign a secure SEED_DEMO_PASSWORD (min 12 chars).
+
+# 4. Verify Compose configuration and variable interpolation
+docker compose config
+
+# 5. Start PostgreSQL, apply migrations, seed admin account, and launch application
+docker compose up -d --build
+
+# 6. Verify all services are healthy and running
+docker compose ps
+# Expected output:
+# NAME                       IMAGE           STATUS         PORTS
+# <project>-app-1            whatsss:local   Up (healthy)   0.0.0.0:8080->8080/tcp
+# <project>-migrate-1        whatsss:local   Exited (0)     (migrations & seed completed)
+# <project>-postgres-1       postgres:16     Up (healthy)   0.0.0.0:5432->5432/tcp
+
+# 7. View logs using compose service names
+docker compose logs migrate
+docker compose logs app
+
+# 8. Probe application health (liveness) & readiness
+curl -i http://localhost:8080/api/health
+curl -i http://localhost:8080/api/ready
+```
+
+#### Required Configuration Reference Table
+
+| Key | Purpose | Required Format / Value | Scope |
+|---|---|---|---|
+| `POSTGRES_USER` | Local DB username | `postgres` | Local / Sandbox only |
+| `POSTGRES_PASSWORD` | Local DB password | Unique random string (e.g. 16+ hex chars) | Local / Sandbox only |
+| `POSTGRES_DB` | Database schema name | `whatsss_db` | Local / Sandbox only |
+| `DATABASE_URL` | Local DB connection URI | `postgresql://postgres:<matching-password>@localhost:5432/whatsss_db?schema=public` | Local host / runner |
+| `JWT_SECRET` | Token signing secret | Unique cryptographically random key (min 32 chars) | All environments |
+| `SEED_ADMIN_PASSWORD` | Initial admin password | Unique secure password (min 12 chars) | All environments |
+| `SEED_DEMO_DATA` | Flag for demo account | `false` (default) or `true` | Testing only |
+| `SEED_DEMO_PASSWORD` | Password for `user_demo` | Required only when `SEED_DEMO_DATA=true` (min 12 chars) | Testing only |
+
+> [!WARNING]
+> **PostgreSQL Password with Existing Docker Volumes:**
+> If an existing PostgreSQL data volume (`whatsss_pgdata`) has already been initialized, changing `POSTGRES_PASSWORD` in `.env` alone will **not** alter the database password stored inside the volume. In that case, you must update the password directly in PostgreSQL (`ALTER USER postgres WITH PASSWORD '...';`) or retain the existing password in `.env`. Do **not** arbitrarily run `docker compose down -v` on persistent environments, as that will destroy stored business data.
+
 ---
 
-## 8. Rollback & Disaster Recovery Runbook
+## 8. Check C-03: Clean-Clone Build & Run Verification Report
 
-### 8.1 Cloud Run Instant Revision Rollback
+**Requirement:** The project must build and run cleanly from a fresh `git clone` using only environment variables copied from `.env.example` (with zero committed secrets). Data must persist across container teardowns (`docker compose down` then `docker compose up -d`).
+
+> [!IMPORTANT]
+> **Template Clarification:** `.env.example` is an environment template containing configuration keys and safe placeholder strings (`replace_with_*`). It is intentionally **not** a runnable configuration as-is. In accordance with security controls (CWE-1188), the application strictly detects and rejects template placeholders upon startup and database seed execution. Operators and CI runners must generate real cryptographic secrets (`openssl rand -hex 32`) and set passwords before launching services.
+
+### 8.1 Verification Procedure & Execution Log
+
+#### Step 1: Fresh Git Clone & Environment Initialization
+Executed inside a clean, isolated scratch directory:
+```bash
+git clone -b feat/docker-clean-clone-c03 <repository-url> clean-clone-dir
+cd clean-clone-dir
+cp .env.example .env
+```
+Populated valid local testing secrets in `.env` (substituting template placeholders):
+* `POSTGRES_PASSWORD` (min 12 chars, generated local database password)
+* `DATABASE_URL` (synchronized with `POSTGRES_PASSWORD`)
+* `SEED_ADMIN_PASSWORD` (min 12 chars, e.g. generated secure password)
+* `SEED_DEMO_DATA="true"` (explicitly enabled for test evaluation)
+* `SEED_DEMO_PASSWORD` (min 12 chars, e.g. generated secure password)
+* `JWT_SECRET` (min 32 chars, generated via `openssl rand -hex 32`)
+
+> [!WARNING]
+> **PostgreSQL Password with Existing Docker Volumes:**
+> If an existing PostgreSQL data volume (`whatsss_pgdata`) has already been initialized, changing `POSTGRES_PASSWORD` in `.env` alone will **not** alter the database password stored inside the volume. In that case, you must update the password directly in PostgreSQL (`ALTER USER postgres WITH PASSWORD '...';`) or retain the existing password in `.env`. Do **not** arbitrarily run `docker compose down -v` on persistent environments, as that will destroy stored business data.
+
+#### Step 2: Build & Start Full-Stack Services
+```bash
+docker compose up -d --build
+```
+**Sanitized Execution Output:**
+```text
+✔ Network clean-clone-dir_default              Created
+✔ Volume clean-clone-dir_whatsss_pgdata        Created
+✔ Container clean-clone-dir-postgres-1         Started (healthy)
+✔ Container clean-clone-dir-migrate-1          Started (healthy -> Exited 0)
+✔ Container clean-clone-dir-app-1              Started (healthy)
+```
+
+**Migration & Seed Log (`docker compose logs migrate`):**
+```text
+Prisma schema loaded from prisma/schema.prisma
+Datasource "db": PostgreSQL database "whatsss_db", schema "public" at "postgres:5432"
+
+3 migrations found in prisma/migrations
+Applying migration `20261107000000_init_users`
+Applying migration `20261107120000_create_accounts_table`
+Applying migration `20261107150000_create_transactions_and_allocations`
+All migrations have been successfully applied.
+
+> whatsss-server@0.1.0 prisma:seed
+> tsx prisma/seed.ts
+
+Production initial administrator account provisioned securely.
+Production demo user (user_demo) provisioned securely.
+```
+
+#### Step 3: Health & Readiness Probe Verification
+```bash
+curl -i http://localhost:8080/api/health
+# HTTP/1.1 200 OK
+# {"status":"ok","timestamp":"2026-11-13T04:42:12.399Z","commitSha":"development"}
+
+curl -i http://localhost:8080/api/ready
+# HTTP/1.1 200 OK
+# {"status":"ready","database":"connected","timestamp":"2026-11-13T04:42:12.558Z","commitSha":"development"}
+```
+
+#### Step 4: End-to-End Authentication & Record Creation
+1. **User Authentication (`POST /api/auth/login`):**
+   ```bash
+   curl -i -c cookie.txt -X POST http://localhost:8080/api/auth/login \
+     -H "Content-Type: application/json" \
+     -H "Origin: http://localhost:8080" \
+     -d '{"username":"user_demo","password":"DemoSecurePassword123!"}'
+   # HTTP/1.1 200 OK
+   # Set-Cookie: token=...; HttpOnly; Secure; SameSite=Lax
+   # {"success":true,"data":{"user":{"id":"749831da-2f6f-4c1a-897d-1e20a394e65b","username":"user_demo","role":"USER"}}}
+   ```
+
+2. **Retrieve Baseline Accounts (`GET /api/accounts`):**
+   Returned 5 provisioned accounts (`Checking Bank` CASH ID `ba318feb-9564-4464-b656-8d4cc7a63cd1`, `Salary` INCOME ID `2f2d3c8d-916b-4601-9739-4c4b64bd5913`).
+
+3. **Record Test Income Transaction (`POST /api/transactions/income`):**
+   ```bash
+   curl -i -b cookie.txt -X POST http://localhost:8080/api/transactions/income \
+     -H "Content-Type: application/json" \
+     -H "Origin: http://localhost:8080" \
+     -d '{
+       "primary_account_id":"ba318feb-9564-4464-b656-8d4cc7a63cd1",
+       "income_account_id":"2f2d3c8d-916b-4601-9739-4c4b64bd5913",
+       "total_amount":"15000.00",
+       "transaction_date":"2026-11-13",
+       "description":"C-03 Clean Clone Initial Salary Deposit"
+     }'
+   # HTTP/1.1 201 Created
+   # {"success":true,"data":{"transaction":{"id":"8ae70038-8827-40df-b8d1-c88f23913bee",...},"updated_balance":{"current_balance":"15000.00"}}}
+   ```
+
+#### Step 5: Container Teardown & Re-launch (Persistence Proof)
+1. **Tear Down Running Containers (preserving named volume):**
+   ```bash
+   docker compose down
+   # Output:
+   # Container clean-clone-dir-app-1 Stopped & Removed
+   # Container clean-clone-dir-migrate-1 Stopped & Removed
+   # Container clean-clone-dir-postgres-1 Stopped & Removed
+   # Network removed (Volume whatsss_pgdata preserved)
+   ```
+
+2. **Re-launch Containers:**
+   ```bash
+   docker compose up -d
+   # Output:
+   # Container clean-clone-dir-postgres-1 Started (healthy)
+   # Container clean-clone-dir-migrate-1 Started -> Idempotent seed preserved -> Exited 0
+   # Container clean-clone-dir-app-1 Started (healthy)
+   ```
+
+3. **Verify Data Persistence:**
+   ```bash
+   curl -i -b cookie.txt http://localhost:8080/api/transactions
+   # HTTP/1.1 200 OK
+   # Record found:
+   # {
+   #   "id": "8ae70038-8827-40df-b8d1-c88f23913bee",
+   #   "description": "C-03 Clean Clone Initial Salary Deposit",
+   #   "total_amount": 15000,
+   #   "transaction_date": "2026-11-13"
+   # }
+
+   curl -i -b cookie.txt http://localhost:8080/api/accounts
+   # HTTP/1.1 200 OK
+   # Checking Bank balance preserved: 15000.00 THB, is_opening_locked: true
+   ```
+
+**Conclusion:** Check **C-03** is fully satisfied. The application builds, seeds, and executes cleanly from a fresh clone with `.env.example` placeholders, and data persists across container lifecycles in the PostgreSQL volume.
+
+### 8.2 Automated Clean-Clone CI Pipeline Verification (`.github/workflows/ci.yml`)
+
+To provide continuously verifiable, traceable proof that the application adheres to Check **C-03** on every code revision, the GitHub Actions CI pipeline executes an automated end-to-end job: `c03-clean-clone-verification`:
+
+1. **Authentic Clean Git Clone:** Clones the repository afresh from the current workspace into an isolated runner directory (`../clean-clone-test`) and checks out the exact PR commit SHA (`git checkout "${{ github.sha }}"`), ensuring no untracked files or cached build artifacts leak into the test.
+2. **Template Secret Interpolation:** Copies `.env.example` to `.env` and generates dynamic, ephemeral random credentials (`openssl rand -hex 32` for `JWT_SECRET`, unique passwords for `POSTGRES_PASSWORD`, `SEED_ADMIN_PASSWORD`, and `SEED_DEMO_PASSWORD`), strictly validating that the application runs with real secrets and rejects placeholders.
+3. **Single-Command Stack Startup:** Executes `docker compose -p whatsss_c03_ci up -d --build`. Polling logic enforces a strict timeout: if the app container fails to report `healthy` within 30 cycles (60s), CI dumps container logs and immediately exits with failure (`exit 1`).
+4. **Health (Liveness) Verification:** Confirms `GET /api/health` returns HTTP 200 OK with `{"status":"ok"}`.
+5. **Readiness Probe State Discrimination (DB Healthy vs Outage vs Recovery):**
+   - Asserts `GET /api/ready` returns **HTTP 200 OK** (`database: connected`).
+   - Simulates database outage by stopping the PostgreSQL container (`docker compose -p whatsss_c03_ci stop postgres`).
+   - Asserts `GET /api/ready` returns **HTTP 503 Service Unavailable** (`database: disconnected`).
+   - Asserts `GET /api/health` still returns **HTTP 200 OK**, confirming process liveness is not tied to database availability.
+   - Restarts PostgreSQL (`docker compose -p whatsss_c03_ci start postgres`), actively verifies that PostgreSQL recovers to `healthy` within 20 cycles (or exits immediately with `exit 1` and container logs), and confirms `GET /api/ready` recovers to **HTTP 200 OK**.
+   - A shell `trap` guarantees that PostgreSQL is revived even if any intermediate assertion fails.
+6. **Robust End-to-End API Transaction Processing:**
+   - Authenticates as `user_demo` via `POST /api/auth/login` and captures the session cookie.
+   - Queries `GET /api/accounts` and uses `jq` to parse the exact UUIDs for `Checking Bank` and `Salary`.
+   - Records an income transaction of 25,000.00 THB (`POST /api/transactions/income`), receiving HTTP 201 Created.
+7. **Volume Persistence Verification Across Teardown:**
+   - Executes `docker compose -p whatsss_c03_ci down` (retaining volume `whatsss_c03_ci_whatsss_pgdata`).
+   - Re-launches the stack via `docker compose -p whatsss_c03_ci up -d`, with health timeout validation.
+   - Re-authenticates and calls `GET /api/transactions` to confirm that the recorded transaction and updated balance persisted intact across container destruction.
+8. **Scoped Project Cleanup:** Teardown is scoped strictly to project `-p whatsss_c03_ci` (`docker compose -p whatsss_c03_ci down -v`), ensuring that test volume removal is strictly isolated to CI and never impacts developer or production data.
+
+---
+
+## 9. Rollback & Disaster Recovery Runbook
+
+### 9.1 Cloud Run Instant Revision Rollback
 If a newly deployed revision encounters unexpected errors or failed health probes:
 
 ```bash
@@ -413,7 +682,7 @@ gcloud run services update-traffic whatsss \
 ```
 This takes effect in $< 2$ seconds at the Google Front End proxy level without rebuilding or redeploying images.
 
-### 8.2 Database Schema Forward-Compatibility
+### 9.2 Database Schema Forward-Compatibility
 To support zero-downtime rollbacks, schema migrations follow expand-and-contract patterns:
 * Columns are added as nullable or with defaults.
 * Column removals or renames occur in phased releases (Phase 1: add new column and sync; Phase 2: switch reads; Phase 3: drop old column).
@@ -421,7 +690,7 @@ To support zero-downtime rollbacks, schema migrations follow expand-and-contract
 
 ---
 
-## 9. CI/CD Pipeline Automation (`.github/workflows/ci.yml`)
+## 10. CI/CD Pipeline Automation (`.github/workflows/ci.yml`)
 
 The repository CI workflow enforces rigorous quality gates on every push and pull request targeting `staging-lab5` and `main`:
 
@@ -433,26 +702,30 @@ flowchart LR
         BackendJob["Backend Test & Build<br/>(PostgreSQL 16, Vitest, tsc)"]
         FrontendJob["Frontend Test & Build<br/>(Vitest, Vite build)"]
         DockerJob["Docker Build & Probe<br/>(Multi-stage build, health curl)"]
+        CleanCloneJob["Clean Clone C-03 Verification<br/>(docker-compose up, e2e API, persistence)"]
         SecurityJob["Secret & Credential Scan<br/>(Detect .env, keys, pem)"]
     end
     
     PushOrPR --> BackendJob
     PushOrPR --> FrontendJob
     PushOrPR --> DockerJob
+    DockerJob --> CleanCloneJob
     PushOrPR --> SecurityJob
 ```
 
-* **Branch Protection:** All four jobs must report Success before any PR targeting `staging-lab5` can be reviewed and approved.
+* **Branch Protection:** All five jobs must report Success before any PR targeting `staging-lab5` can be reviewed and approved.
 * **No Bypass:** Neither `continue-on-error` nor bypass mechanisms are permitted.
+* **Supply-Chain Security:** All third-party GitHub Actions are pinned to full, immutable 40-character commit SHAs (`actions/checkout`, `actions/setup-node`, `docker/setup-buildx-action`, `gitleaks/gitleaks-action`) with version comments to prevent supply-chain attacks.
+* **Secret Detection & Prevention:** The `security-scan` job scans for forbidden credential files (`.env`, `.pem`, `.key`, service accounts) and executes Gitleaks (`gitleaks/gitleaks-action`) across full Git history and the working tree using `.gitleaks.toml` with targeted allowlists for explicit unit test fixtures and documentation template placeholders (no broad directory exclusions). Repositories should additionally enforce GitHub Secret Scanning and Push Protection.
 
 ---
 
-## 10. Peer Review Acceptance Criteria Checklist (13/13)
+## 11. Peer Review Acceptance Criteria Checklist (14/14)
 
 | # | Acceptance Criterion | Status | Verification Evidence / Artifact |
 |---|---|:---:|---|
 | 1 | **CSRF Integration Tests** covering all mutating & safe HTTP methods across trusted, untrusted, and missing origins | **COMPLETED** | `server/tests/integration/health.test.ts` (20 integration tests passed) verifying POST/PUT/PATCH/DELETE rejections (403), valid CLIENT_URL passage, and safe GET exemptions |
-| 2 | **Multi-stage Dockerfile** building full-stack production image cleanly | **COMPLETED** | Root `Dockerfile` with stages `client-builder`, `server-builder`, and `runner` (alpine-based, non-root `node:node`, ~179MB) |
+| 2 | **Multi-stage Dockerfile** building full-stack production image cleanly | **COMPLETED** | Root `Dockerfile` with stages `client-builder` (`VITE_API_BASE_URL=/api`), `server-builder`, and `runner` (alpine-based, non-root `node:node`, ~179MB, accepting `APP_COMMIT_SHA`) |
 | 3 | **Docker Image Artifact Integrity** containing frontend dist, backend dist, and Prisma migrations | **COMPLETED** | Verified inside container: `/app/client/dist` (HTML, JS, CSS), `/app/server/dist`, `/app/server/prisma` (`schema.prisma`, `migrations/`, `seed.ts`) |
 | 4 | **Docker Container Startup & Liveness Probe** answering HTTP 200 | **COMPLETED** | Verified locally: `curl -i http://localhost:8080/api/health` returned HTTP 200 OK |
 | 5 | **Single-Container SPA & Backend API Routing** via `/api` | **COMPLETED** | Verified locally: `/` returns full SPA HTML; API routes (`/api/auth/*`, `/api/*`) operate through Express pipeline |
@@ -464,4 +737,6 @@ flowchart LR
 | 11 | **GitHub Actions CI Pipeline Automation** | **COMPLETED** | `.github/workflows/ci.yml` triggers on PRs to `staging-lab5`; executes Backend, Frontend, Docker Build & Probe, and Secret Scan |
 | 12 | **Deployment Guide Accuracy** matching tested commands and architecture | **COMPLETED** | `docs/labs/lab-05/deployment.md` updated with exact verified commands, configuration runbooks, and diagrams |
 | 13 | **Traceable Verification Evidence & Commit SHA** | **COMPLETED** | Commit history, command outputs, and test logs recorded for peer review |
+| 14 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Fresh clone from branch with `.env.example` only; started via `docker compose up -d --build`; health probes 200 OK; transaction created; data persisted across `docker compose down` and restart |
+
 
