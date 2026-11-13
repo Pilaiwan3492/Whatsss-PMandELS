@@ -242,12 +242,18 @@ Host: whatsss.example.com
 
 ### 5.3 Operational Distinction for Cloud Run Probe Configuration vs Docker Compose
 
-When configuring service probes, operational semantics differ between local orchestration and cloud deployment:
+When configuring service probes, operational semantics are decoupled between process liveness and dependency readiness:
 
-* **Local Docker Compose Combined Healthcheck (`docker-compose.yml`):**
-  - Uses `curl -f http://localhost:8080/api/health && curl -f http://localhost:8080/api/ready`.
-  - In local development, Docker Compose needs to know when the single-container stack is fully ready to receive developer queries (both Express is running and PostgreSQL is ready).
-  - A combined probe ensures dependent tools and developers do not send requests before the database connection pool warms up.
+* **Docker Compose Container Healthcheck (`docker-compose.yml`):**
+  - Uses `curl -f http://localhost:8080/api/health || exit 1`.
+  - Verifies that the Node.js application process and HTTP event loop are alive and answering requests.
+  - Does **not** include `/api/ready` in the container-level healthcheck: this ensures that if PostgreSQL is stopped or restarted, Docker does not prematurely mark the application container unhealthy or trigger unwanted restarts, giving database connections the opportunity to recover cleanly.
+
+* **Database Readiness Inspection (`/api/ready`):**
+  - Serves as the dedicated endpoint for database connectivity verification (`SELECT 1`).
+  - Returns **HTTP 200 OK** (`database: connected`) when PostgreSQL is healthy.
+  - Returns **HTTP 503 Service Unavailable** (`database: disconnected`) when PostgreSQL is unavailable or failing.
+  - Tested continuously in CI: simulates database outage (`docker compose stop postgres` $\rightarrow$ 503 while liveness remains 200) followed by database recovery (`docker compose start postgres` $\rightarrow$ 200).
 
 * **Google Cloud Run Decoupled Probes (Production Architecture):**
   - **Liveness Probe $\rightarrow$ Configure `/api/health`:** Verifies that the Node.js process and Express event loop are alive. Does **NOT** query PostgreSQL. **Critical Failure Mode Avoided:** If Cloud SQL undergoes transient maintenance, connection limit spikes, or failover, the liveness probe remains HTTP 200. If liveness were tied to the database, Cloud Run would kill and restart healthy container instances in a destructive cascading loop ("restart storm"), exacerbating the outage.
@@ -365,35 +371,39 @@ docker run -d --name whatsss-test-instance \
 ### 7.3 Run Container Connected to PostgreSQL (Live Migration, Seed & Readiness 200)
 ```bash
 # 1. Ensure PostgreSQL is active via docker compose
-docker compose up -d
+docker compose up -d postgres
 
-# 2. Run Prisma migration inside container against PostgreSQL
+# 2. Extract database connection URL from .env (matching configured POSTGRES_PASSWORD)
+# Format: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+source .env && DOCKER_DB_URL="postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-whatsss_db}?schema=public"
+
+# 3. Run Prisma migration inside container against PostgreSQL
 docker run --rm --network whatsss-pmandels_default \
-  -e DATABASE_URL="postgresql://postgres:postgres@postgres:5432/whatsss_db?schema=public" \
+  -e DATABASE_URL="${DOCKER_DB_URL}" \
   whatsss:test npx prisma migrate deploy
 # Output: 3 migrations found. No pending migrations to apply. Database schema is up to date!
 
-# 3. Run Prisma seed inside container
+# 4. Run Prisma seed inside container
 docker run --rm --network whatsss-pmandels_default \
-  -e DATABASE_URL="postgresql://postgres:postgres@postgres:5432/whatsss_db?schema=public" \
-  -e SEED_ADMIN_PASSWORD="AdminSecurePassword123!" \
+  -e DATABASE_URL="${DOCKER_DB_URL}" \
+  -e SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-AdminSecurePassword123!}" \
   -e SEED_DEMO_DATA="true" \
-  -e SEED_DEMO_PASSWORD="DemoSecurePassword123!" \
+  -e SEED_DEMO_PASSWORD="${SEED_DEMO_PASSWORD:-DemoSecurePassword123!}" \
   whatsss:test npm run prisma:seed
 # Output: Production admin preserved. user_demo preserved. Accounts upserted idempotently.
 
-# 4. Start live container connected to PostgreSQL
+# 5. Start live container connected to PostgreSQL
 docker run -d --name whatsss-live-instance --network whatsss-pmandels_default \
   -e NODE_ENV=production \
   -e PORT=8080 \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET="test_only_cryptographically_secure_jwt_secret_32_chars" \
   -e CLIENT_URL="http://localhost:8080" \
-  -e DATABASE_URL="postgresql://postgres:postgres@postgres:5432/whatsss_db?schema=public" \
+  -e DATABASE_URL="${DOCKER_DB_URL}" \
   -p 8080:8080 \
   whatsss:test
 
-# 5. Verify live readiness probe
+# 6. Verify live readiness probe
 curl -i http://localhost:8080/api/ready
 # Output: HTTP 200 OK {"status":"ready","database":"connected","timestamp":"...","commitSha":"development"}
 ```
