@@ -356,7 +356,7 @@ fi
 pass_test "Active gcloud project mismatch guard prevents accidental cross-project deployment"
 
 # ------------------------------------------------------------------------------
-# Test 15: Manual Maintenance Rotation Procedure Simulation with Safe Rollback
+# Test 15: Manual Maintenance Rotation Procedure Simulation with Failure Guards & Rollback
 # ------------------------------------------------------------------------------
 new_test_env "test15_manual_rotation_rollback"
 # Initialize baseline deployment
@@ -367,41 +367,81 @@ bash "${DEPLOY_SCRIPT}" >/dev/null 2>&1
 original_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
 original_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
 
-# Execute simulated manual maintenance rotation:
-# Step 1: Add new secret version 2 before touching DB
+# 15a: Failure Guard — Adding Secret Version Fails (Cloud SQL must NOT be modified)
+TMP_SECRET_FAIL="${MOCK_STATE_DIR}/tmp_fail_secret.txt"
+printf 'postgresql://whatsss_app:TestFail123@localhost:5432/whatsss_db' > "${TMP_SECRET_FAIL}"
+if output="$(
+  MOCK_FAIL_SECRET_UPDATE=1 \
+  gcloud secrets versions add whatsss-database-url --data-file="${TMP_SECRET_FAIL}" 2>&1
+)"; then
+  fail_test "Expected secret version add to fail under MOCK_FAIL_SECRET_UPDATE"
+fi
+rm -f "${TMP_SECRET_FAIL}"
+current_sql_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
+if [[ "${current_sql_pwd}" != "${original_pwd}" ]]; then
+  fail_test "Cloud SQL password was modified even though secret version creation failed"
+fi
+
+# 15b: Failure Guard — Changing Cloud SQL Password Fails (Release must NOT proceed)
+TMP_SECRET_OK="${MOCK_STATE_DIR}/tmp_stage_secret.txt"
+printf 'postgresql://whatsss_app:StagedSecret456@localhost:5432/whatsss_db' > "${TMP_SECRET_OK}"
+gcloud secrets versions add whatsss-database-url --data-file="${TMP_SECRET_OK}" >/dev/null
+rm -f "${TMP_SECRET_OK}"
+staged_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
+
+if output="$(
+  MOCK_FAIL_SQL_SET_PASSWORD=1 \
+  gcloud sql users set-password whatsss_app --instance=whatsss-sql --password="StagedSecret456" --project=cpe334-whatsss-pmandels 2>&1
+)"; then
+  fail_test "Expected sql users set-password to fail under MOCK_FAIL_SQL_SET_PASSWORD"
+fi
+current_sql_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
+if [[ "${current_sql_pwd}" != "${original_pwd}" ]]; then
+  fail_test "Cloud SQL password was corrupted despite set-password failure"
+fi
+
+# 15c: Full Manual Rotation with Rollback Simulation (Release Failure triggers Rollback)
 NEW_ROTATED_PWD="NewRotatedPassword456!"
 NEW_URL="postgresql://whatsss_app:${NEW_ROTATED_PWD}@localhost:5432/whatsss_db?host=/cloudsql/cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql&schema=public"
-printf '%s' "${NEW_URL}" > "${MOCK_STATE_DIR}/tmp_new_secret.txt"
-gcloud secrets versions add whatsss-database-url --data-file="${MOCK_STATE_DIR}/tmp_new_secret.txt" >/dev/null
+TMP_ROTATE="${MOCK_STATE_DIR}/tmp_new_secret.txt"
+printf '%s' "${NEW_URL}" > "${TMP_ROTATE}"
+gcloud secrets versions add whatsss-database-url --data-file="${TMP_ROTATE}" >/dev/null
+rm -f "${TMP_ROTATE}"
 new_ver="$(cat "${MOCK_STATE_DIR}/secret_ver_whatsss-database-url")"
 
-# Step 2: Update Cloud SQL password
+# Update Cloud SQL password to new password
 gcloud sql users set-password whatsss_app --instance=whatsss-sql --password="${NEW_ROTATED_PWD}" --project=cpe334-whatsss-pmandels >/dev/null
 
-# Step 3: Trigger release.sh with new secret version (simulating release failure)
+# Trigger release.sh with new secret version (simulating release failure)
 export MOCK_FAIL_RUN_DEPLOY=1
 if GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
   APP_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
   IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781" \
-  SECRET_DB_URL_VERSION="${new_ver}" \
+  DB_URL_VERSION="${new_ver}" \
+  JWT_SECRET_VERSION="1" \
+  ADMIN_PASSWORD_VERSION="1" \
+  DEMO_PASSWORD_VERSION="1" \
   bash "${DEPLOY_DIR}/release.sh" >/dev/null 2>&1; then
   fail_test "Expected release.sh to fail under simulated release failure"
 fi
 
-# Step 4: Perform Rollback — restore original Cloud SQL password & redeploy previous secret version
+# Perform Rollback — restore original Cloud SQL password & redeploy previous secret version
 gcloud sql users set-password whatsss_app --instance=whatsss-sql --password="${original_pwd}" --project=cpe334-whatsss-pmandels >/dev/null
 export MOCK_FAIL_RUN_DEPLOY=0
 GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
 APP_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
 IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781" \
-SECRET_DB_URL_VERSION="${original_ver}" \
+DB_URL_VERSION="${original_ver}" \
+JWT_SECRET_VERSION="1" \
+ADMIN_PASSWORD_VERSION="1" \
+DEMO_PASSWORD_VERSION="1" \
 bash "${DEPLOY_DIR}/release.sh" >/dev/null 2>&1
 
 rolled_back_pwd="$(cat "${MOCK_STATE_DIR}/sql_user_pwd_whatsss_app")"
 if [[ "${rolled_back_pwd}" != "${original_pwd}" ]]; then
   fail_test "Rollback failed to restore original Cloud SQL password"
 fi
-pass_test "Manual maintenance rotation procedure with safe rollback restores original credentials and operational service"
+pass_test "Manual maintenance rotation procedure with safe rollback and failure guards restores original credentials and operational service"
 
 echo "=============================================================================="
 echo " ALL ${PASS_COUNT} DEPLOY SCRIPT TESTS PASSED!"

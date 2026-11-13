@@ -357,29 +357,52 @@ The Whatsss deployment workflow deliberately employs `docker build` + `docker pu
 #### Manual Maintenance Database Password Rotation Procedure (with Safe Rollback)
 
 > [!CAUTION]
-> **Potential Service Downtime Warning:** Changing the database password on an active single-user Cloud SQL account (`whatsss_app`) creates a temporary credential mismatch during propagation. Existing Cloud Run container instances will continue attempting database queries using the previous password until the new revision is fully deployed and the old instances are drained. **Never refer to this procedure as "atomic" or "zero-downtime".** Perform this maintenance during a scheduled maintenance window.
+> **Potential Service Downtime Warning:** Changing the database password on an active single-user Cloud SQL account (`whatsss_app`) creates a temporary credential mismatch during propagation. Existing Cloud Run container instances will continue attempting database queries using the previous password until the new revision is fully deployed and old instances are drained. **Never refer to this procedure as "atomic" or "zero-downtime".** Perform this maintenance strictly during a scheduled maintenance window.
 
-When business or security policies require rotating the Cloud SQL password:
+When business or security policies require rotating the Cloud SQL password, execute this hardened runbook. It includes `set -euo pipefail`, automatic cleanup via shell `trap`, explicit numeric Secret Manager version arguments, and deterministic failure recovery:
 
 ```bash
-# ------------------------------------------------------------------------------
-# Phase 1: Preparation & Backup of Current State
-# ------------------------------------------------------------------------------
+#!/usr/bin/env bash
+# ==============================================================================
+# Hardened Manual Cloud SQL Password Rotation Runbook (with Automated Rollback)
+# ==============================================================================
+set -euo pipefail
+
 PROJECT_ID="cpe334-whatsss-pmandels"
 REGION="asia-southeast1"
 INSTANCE="whatsss-sql"
 DB_USER="whatsss_app"
 SECRET_NAME="whatsss-database-url"
 
-# 1. Read current active secret version number (e.g., version 1)
+# Automatic cleanup trap: ensures temporary secret files are shredded upon exit, error, or interruption
+TMP_BACKUP=""
+TMP_NEW_SECRET=""
+cleanup_temp_files() {
+  if [[ -n "${TMP_NEW_SECRET:-}" && -f "${TMP_NEW_SECRET}" ]]; then
+    shred -u "${TMP_NEW_SECRET}" 2>/dev/null || rm -f "${TMP_NEW_SECRET}"
+  fi
+  if [[ -n "${TMP_BACKUP:-}" && -f "${TMP_BACKUP}" ]]; then
+    shred -u "${TMP_BACKUP}" 2>/dev/null || rm -f "${TMP_BACKUP}"
+  fi
+}
+trap cleanup_temp_files EXIT INT TERM
+
+# ------------------------------------------------------------------------------
+# Phase 1: Preparation & Backup of Current State
+# ------------------------------------------------------------------------------
+echo "=== Phase 1: Resolving current active secret version & backing up payload ==="
 CURRENT_VER="$(gcloud secrets versions list "${SECRET_NAME}" \
   --project="${PROJECT_ID}" \
   --filter="state:ENABLED" \
   --format="value(name)" \
   --sort-by="~create_time" | head -n 1)"
+
+if [[ -z "${CURRENT_VER}" || ! "${CURRENT_VER}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: Unable to resolve numeric active version for secret '${SECRET_NAME}'." >&2
+  exit 1
+fi
 echo "Current active database secret version: ${CURRENT_VER}"
 
-# 2. Back up current secret payload to an access-restricted temporary file
 TMP_BACKUP="$(mktemp)"
 chmod 600 "${TMP_BACKUP}"
 gcloud secrets versions access "${CURRENT_VER}" --secret="${SECRET_NAME}" --project="${PROJECT_ID}" > "${TMP_BACKUP}"
@@ -387,6 +410,7 @@ gcloud secrets versions access "${CURRENT_VER}" --secret="${SECRET_NAME}" --proj
 # ------------------------------------------------------------------------------
 # Phase 2: Generate New Credentials & Add Secret Manager Version (BEFORE modifying DB)
 # ------------------------------------------------------------------------------
+echo "=== Phase 2: Staging new secret version in Secret Manager ==="
 NEW_PASSWORD="$(openssl rand -base64 24 | tr -d '\n+/=' | head -c 24)"
 NEW_PASSWORD_ENCODED="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${NEW_PASSWORD}")"
 NEW_DB_URL="postgresql://${DB_USER}:${NEW_PASSWORD_ENCODED}@localhost:5432/whatsss_db?host=/cloudsql/${PROJECT_ID}:${REGION}:${INSTANCE}&schema=public"
@@ -395,84 +419,119 @@ TMP_NEW_SECRET="$(mktemp)"
 chmod 600 "${TMP_NEW_SECRET}"
 printf '%s' "${NEW_DB_URL}" > "${TMP_NEW_SECRET}"
 
-# Add new version in Secret Manager first (becomes version N+1, e.g., version 2)
-gcloud secrets versions add "${SECRET_NAME}" \
+# [FAILURE GUARD 1]: If adding secret version fails, abort immediately BEFORE modifying Cloud SQL
+if ! gcloud secrets versions add "${SECRET_NAME}" \
   --data-file="${TMP_NEW_SECRET}" \
-  --project="${PROJECT_ID}"
+  --project="${PROJECT_ID}"; then
+  echo "ERROR: Failed to add new version to Secret Manager '${SECRET_NAME}'." >&2
+  echo "Cloud SQL password remains untouched. No service disruption occurred." >&2
+  exit 1
+fi
 shred -u "${TMP_NEW_SECRET}" 2>/dev/null || rm -f "${TMP_NEW_SECRET}"
+TMP_NEW_SECRET=""
 
 NEW_VER="$(gcloud secrets versions list "${SECRET_NAME}" \
   --project="${PROJECT_ID}" \
   --filter="state:ENABLED" \
   --format="value(name)" \
   --sort-by="~create_time" | head -n 1)"
+
+if [[ -z "${NEW_VER}" || ! "${NEW_VER}" =~ ^[0-9]+$ || "${NEW_VER}" -le "${CURRENT_VER}" ]]; then
+  echo "ERROR: New secret version staging failed verification. Expected numeric version > ${CURRENT_VER}." >&2
+  exit 1
+fi
 echo "New database secret version staged: ${NEW_VER}"
 
 # ------------------------------------------------------------------------------
 # Phase 3: Update Cloud SQL User Password
 # ------------------------------------------------------------------------------
-gcloud sql users set-password "${DB_USER}" \
+echo "=== Phase 3: Updating Cloud SQL user '${DB_USER}' password ==="
+# [FAILURE GUARD 2]: If setting Cloud SQL password fails, abort before triggering release.sh
+if ! gcloud sql users set-password "${DB_USER}" \
   --instance="${INSTANCE}" \
   --password="${NEW_PASSWORD}" \
-  --project="${PROJECT_ID}"
+  --project="${PROJECT_ID}"; then
+  echo "ERROR: Failed to update password for Cloud SQL user '${DB_USER}'." >&2
+  echo "Cloud Run service is still referencing active secret version ${CURRENT_VER}." >&2
+  echo "Destroying unused staged secret version ${NEW_VER}..." >&2
+  gcloud secrets versions destroy "${NEW_VER}" --secret="${SECRET_NAME}" --project="${PROJECT_ID}" --quiet || true
+  exit 1
+fi
 unset NEW_PASSWORD NEW_PASSWORD_ENCODED NEW_DB_URL
 
 # ------------------------------------------------------------------------------
-# Phase 4: Deploy Cloud Run Revision with Pinned New Secret Version
+# Phase 4: Deploy Cloud Run Revision with Explicit Numeric Secret Versions
 # ------------------------------------------------------------------------------
-# Get current image digest from active Cloud Run service
+echo "=== Phase 4: Releasing Cloud Run service with new secret version ${NEW_VER} ==="
 IMAGE_DIGEST="$(gcloud run services describe whatsss --region="${REGION}" --project="${PROJECT_ID}" --format='value(spec.template.spec.containers[0].image)')"
 COMMIT_SHA="$(gcloud run services describe whatsss --region="${REGION}" --project="${PROJECT_ID}" --format='value(spec.template.spec.containers[0].env[?(@.name=="APP_COMMIT_SHA")].value)')"
 
-GCP_PROJECT_ID="${PROJECT_ID}" \
-GCP_REGION="${REGION}" \
-APP_COMMIT_SHA="${COMMIT_SHA}" \
-IMAGE_REF="${IMAGE_DIGEST}" \
-SECRET_DB_URL_VERSION="${NEW_VER}" \
-bash deploy/release.sh
+DEPLOY_SUCCESS=0
+if GCP_PROJECT_ID="${PROJECT_ID}" \
+   GCP_REGION="${REGION}" \
+   APP_COMMIT_SHA="${COMMIT_SHA}" \
+   IMAGE_REF="${IMAGE_DIGEST}" \
+   DB_URL_VERSION="${NEW_VER}" \
+   JWT_SECRET_VERSION="1" \
+   ADMIN_PASSWORD_VERSION="1" \
+   DEMO_PASSWORD_VERSION="1" \
+   bash deploy/release.sh; then
+  DEPLOY_SUCCESS=1
+fi
 
 # ------------------------------------------------------------------------------
-# Phase 5: Verification
+# Phase 5: Verification of Health and Readiness Probes
 # ------------------------------------------------------------------------------
 SERVICE_URL="$(gcloud run services describe whatsss --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')"
-HEALTH_STATUS="$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/api/health")"
-READY_STATUS="$(curl -s "${SERVICE_URL}/api/ready")"
+HEALTH_STATUS="000"
+READY_STATUS=""
 
-if [[ "${HEALTH_STATUS}" == "200" && "${READY_STATUS}" == *'"database":"connected"'* ]]; then
-  echo "Password rotation verified successfully! Active secret version: ${NEW_VER}"
-  shred -u "${TMP_BACKUP}" 2>/dev/null || rm -f "${TMP_BACKUP}"
-else
-  echo "ERROR: Post-rotation verification failed. Initiating rollback..." >&2
+if [[ "${DEPLOY_SUCCESS}" -eq 1 && -n "${SERVICE_URL}" ]]; then
+  echo "=== Phase 5: Verifying /api/health and /api/ready probes ==="
+  HEALTH_STATUS="$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/api/health" || echo "000")"
+  READY_STATUS="$(curl -s "${SERVICE_URL}/api/ready" || echo "")"
+fi
 
-  # ----------------------------------------------------------------------------
-  # Phase 6: Rollback Procedure (Executed automatically or manually upon failure)
-  # ----------------------------------------------------------------------------
-  # 1. Restore previous database user password from backup
-  PREV_PASSWORD="$(python3 -c '
+if [[ "${DEPLOY_SUCCESS}" -eq 1 && "${HEALTH_STATUS}" == "200" && "${READY_STATUS}" == *'"database":"connected"'* ]]; then
+  echo "SUCCESS: Password rotation verified! Active secret version: ${NEW_VER}"
+  exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# Phase 6: Automated Rollback Procedure [FAILURE GUARD 3]
+# ------------------------------------------------------------------------------
+echo "CRITICAL: Post-rotation release or health verification failed!" >&2
+echo "Initiating immediate rollback to restore operational service..." >&2
+
+# Step 1: Extract and restore original password in Cloud SQL
+PREV_PASSWORD="$(python3 -c '
 import sys, urllib.parse
 raw = open(sys.argv[1]).read().strip()
 parsed = urllib.parse.urlsplit(raw)
 print(urllib.parse.unquote(parsed.password or ""))
 ' "${TMP_BACKUP}")"
 
-  gcloud sql users set-password "${DB_USER}" \
-    --instance="${INSTANCE}" \
-    --password="${PREV_PASSWORD}" \
-    --project="${PROJECT_ID}"
-  unset PREV_PASSWORD
-  shred -u "${TMP_BACKUP}" 2>/dev/null || rm -f "${TMP_BACKUP}"
+echo "Restoring Cloud SQL user '${DB_USER}' password to previous credentials..." >&2
+gcloud sql users set-password "${DB_USER}" \
+  --instance="${INSTANCE}" \
+  --password="${PREV_PASSWORD}" \
+  --project="${PROJECT_ID}"
+unset PREV_PASSWORD
 
-  # 2. Redeploy previous revision pinned to previous secret version
-  GCP_PROJECT_ID="${PROJECT_ID}" \
-  GCP_REGION="${REGION}" \
-  APP_COMMIT_SHA="${COMMIT_SHA}" \
-  IMAGE_REF="${IMAGE_DIGEST}" \
-  SECRET_DB_URL_VERSION="${CURRENT_VER}" \
-  bash deploy/release.sh
+# Step 2: Redeploy previous revision with original numeric secret version
+echo "Redeploying Cloud Run service pinned to original secret version ${CURRENT_VER}..." >&2
+GCP_PROJECT_ID="${PROJECT_ID}" \
+GCP_REGION="${REGION}" \
+APP_COMMIT_SHA="${COMMIT_SHA}" \
+IMAGE_REF="${IMAGE_DIGEST}" \
+DB_URL_VERSION="${CURRENT_VER}" \
+JWT_SECRET_VERSION="1" \
+ADMIN_PASSWORD_VERSION="1" \
+DEMO_PASSWORD_VERSION="1" \
+bash deploy/release.sh
 
-  echo "Rollback completed. Restored to secret version ${CURRENT_VER}."
-  exit 1
-fi
+echo "Rollback completed. Restored operational service on secret version ${CURRENT_VER}." >&2
+exit 1
 ```
 
 ### 6.2 Creating Secrets in GCP Secret Manager
@@ -931,16 +990,68 @@ Executed on `https://whatsss-sipqw4logq-as.a.run.app` as the seeded evaluator ac
 
 #### 4. Visual Verification Artifacts & Screenshot Evidence (Check C-04)
 
-The deployment and end-to-end user workflows have been verified with complete photographic evidence from Cloud Shell and live browser sessions:
+The deployment and end-to-end user workflows have been verified with complete photographic evidence stored in [`docs/labs/lab-05/evidence/`](evidence/) captured from Cloud Shell and live browser sessions:
 
-| Artifact Description | Verified Verification Scope | Verified Evidence & State |
-|---|---|---|
-| **Live Revision & Probes** | Cloud Run revision `whatsss-00006-9jl` serving 100% traffic, `/api/health` 200 OK, `/api/ready` 200 OK (`"database":"connected"`) | `HTTP/2 200 OK`, `commitSha: "2a7c4c7343e6426cfca713d3288d495dfed5f92d"`, `x-cloud-trace-context`, server `Google Frontend` |
-| **Least-Privilege IAM** | Runtime SA `whatsss-runner` holds only `roles/cloudsql.client` at project level and secret-level `roles/secretmanager.secretAccessor` | `gcloud projects get-iam-policy` confirmed single role `ROLE: roles/cloudsql.client`; zero `Owner`/`Editor`/`Storage.Admin` roles |
-| **Service Configuration** | Live Cloud Run container environment and Secret Manager version pinning | `spec.template.spec.containers[0].env`: `NODE_ENV=production`, `HOST=0.0.0.0`, `CLIENT_URL=https://whatsss-sipqw4logq-as.a.run.app`, secrets pinned to version `1` |
-| **E2E Golden Journey UI** | Seeded evaluator `user_demo` dashboard at `https://whatsss-sipqw4logq-as.a.run.app/dashboard` | **Bank Balance: ฿27,000.00**, **Credit Card Debt: ฿0.00**, **Monthly Income: ฿26,000.00**, 5 active financial accounts |
-| **BR-04 Rule Rejection** | Unbalanced split purchase allocation blocked in React UI and Express backend | Allocation Summary flags incomplete allocation (`฿2,500.00 / ฿3,000.00`), `Record Purchase` submit button strictly disabled |
-| **BR-10 Rule Rejection** | Administrative role financial ledger segregation enforcement | `admin` user login redirected to `/access-denied` with **Access Forbidden (403)** banner and policy explanation |
+| Artifact ID | Artifact Description & Scope | Visual Evidence File | Verified Operational State |
+|:---:|---|---|---|
+| **EVD-01** | **Live Cloud Run Landing Page** | [`evidence/c04-01-public-cloud-run-landing.png`](evidence/c04-01-public-cloud-run-landing.png) | Public HTTPS entry point (`https://whatsss-sipqw4logq-as.a.run.app/login`) serving SPA bundle over Google Front End proxy |
+| **EVD-02** | **Evaluator Sign-in (`user_demo`)** | [`evidence/c04-02-user-login.png`](evidence/c04-02-user-login.png) | Successful login as `user_demo` via `POST /api/auth/login` receiving `HttpOnly; Secure; SameSite=Lax` session cookie |
+| **EVD-03** | **Transaction Creation & Ledger Recording** | [`evidence/c04-03-transaction-creation-recorded.png`](evidence/c04-03-transaction-creation-recorded.png) | Recorded Salary deposit (`20,000.00 THB`), split expense (`3,000.00 THB`), and credit card repayment (`3,000.00 THB`) into Cloud SQL |
+| **EVD-04** | **BR-04 Split Sum Mismatch Rejection** | [`evidence/c04-04-br04-unbalanced-split-rejection.png`](evidence/c04-04-br04-unbalanced-split-rejection.png) | Warning `⚠ Allocate the remaining ฿500.00 to continue.` with `Record Purchase` submit button strictly disabled |
+| **EVD-05** | **BR-10 Admin Ledger Access Denied (403)** | [`evidence/c04-05-br10-admin-access-denied-403.png`](evidence/c04-05-br10-admin-access-denied-403.png) | `admin` user redirected to `/access-denied` with **Access Forbidden (403)** banner protecting tenant financial ledger privacy |
+| **EVD-06** | **Cloud Run Health & Ready Probes** | [`evidence/c04-06-api-health-ready-probes.png`](evidence/c04-06-api-health-ready-probes.png) | `/api/health` 200 OK and `/api/ready` 200 OK (`"database":"connected"`) on public Cloud Run service URL |
+| **EVD-07** | **Cloud SQL Instance Configuration** | [`evidence/c04-07-cloud-sql-configuration.png`](evidence/c04-07-cloud-sql-configuration.png) | Cloud SQL instance `whatsss-sql` (`POSTGRES_16`, `db-f1-micro`, `--no-storage-auto-increase`) in `asia-southeast1` |
+| **EVD-08** | **Runtime Service Account & IAM Roles** | [`evidence/c04-08-runtime-sa-and-iam.png`](evidence/c04-08-runtime-sa-and-iam.png) | Dedicated least-privilege service account `whatsss-runner` with `roles/cloudsql.client` and secret-level `roles/secretmanager.secretAccessor` |
+| **EVD-09** | **Evaluator Final Financial Dashboard** | [`evidence/c04-09-user-demo-dashboard-final.png`](evidence/c04-09-user-demo-dashboard-final.png) | Final ledger state: **Checking Bank: ฿27,000.00**, **Credit Card Debt: ฿0.00**, Total Income: ฿20,000.00, Total Expenses: ฿3,000.00 |
+| **EVD-10** | **Cloud Shell SA Project IAM Policy** | [`evidence/c04-10-cloudshell-iam-cloudsql-client.jpg`](evidence/c04-10-cloudshell-iam-cloudsql-client.jpg) | `gcloud projects get-iam-policy` output confirming runtime SA holds strictly `ROLE: roles/cloudsql.client` (zero Owner/Editor roles) |
+| **EVD-11** | **Cloud Shell Secret Accessor & Container Spec** | [`evidence/c04-11-cloudshell-secretmanager-and-spec.png`](evidence/c04-11-cloudshell-secretmanager-and-spec.png) | `gcloud secrets get-iam-policy` confirming `roles/secretmanager.secretAccessor` + Cloud Run spec with `NODE_ENV=production` & `CLIENT_URL` |
+| **EVD-12** | **Credential Mismatch Caught by Startup Probe** | [`evidence/c04-12-rotation-probe-failure-credential-mismatch.png`](evidence/c04-12-rotation-probe-failure-credential-mismatch.png) | Cloud Run startup probe check failing on credential mismatch, preventing traffic routing to unauthenticated revision |
+| **EVD-13** | **Cloud Logging Prisma Initialization Error** | [`evidence/c04-13-cloud-logging-prisma-auth-failed.png`](evidence/c04-13-cloud-logging-prisma-auth-failed.png) | Cloud Logging trace proving Prisma authentication failure against Cloud SQL Unix socket proxy when credentials mismatch |
+| **EVD-14** | **Revision 00006 Deployed & Probes Verified** | [`evidence/c04-14-cloudshell-successful-revision-00006-probes.png`](evidence/c04-14-cloudshell-successful-revision-00006-probes.png) | Revision `whatsss-00006-9j1` serving 100% traffic with HTTP/2 200 OK on both `/api/health` and `/api/ready` (`database: connected`) |
+
+##### Visual Evidence Gallery
+
+**Figure 8.1 — Public Cloud Run Landing & Sign-in**
+![C-04 Public Cloud Run Landing Page](evidence/c04-01-public-cloud-run-landing.png)
+
+**Figure 8.2 — Evaluator Authentication (`user_demo`)**
+![C-04 Evaluator Sign-in](evidence/c04-02-user-login.png)
+
+**Figure 8.3 — Transaction Creation & Ledger Persistence**
+![C-04 Transaction Creation](evidence/c04-03-transaction-creation-recorded.png)
+
+**Figure 8.4 — BR-04 Domain Rule Rejection (Unbalanced Split Expense Blocked)**
+![C-04 BR-04 Unbalanced Split Rejection](evidence/c04-04-br04-unbalanced-split-rejection.png)
+
+**Figure 8.5 — BR-10 Security Rule Rejection (Administrator Ledger Segregation 403 Forbidden)**
+![C-04 BR-10 Admin Access Denied](evidence/c04-05-br10-admin-access-denied-403.png)
+
+**Figure 8.6 — Live Cloud Run Service Health and Readiness Probes**
+![C-04 API Health and Ready Probes](evidence/c04-06-api-health-ready-probes.png)
+
+**Figure 8.7 — Cloud SQL Instance Configuration (`whatsss-sql`)**
+![C-04 Cloud SQL Configuration](evidence/c04-07-cloud-sql-configuration.png)
+
+**Figure 8.8 — Least-Privilege Runtime Service Account (`whatsss-runner`)**
+![C-04 Runtime SA and IAM](evidence/c04-08-runtime-sa-and-iam.png)
+
+**Figure 8.9 — Evaluator Dashboard Final Balanced Ledger (`27,000.00 THB`)**
+![C-04 Evaluator Dashboard Final](evidence/c04-09-user-demo-dashboard-final.png)
+
+**Figure 8.10 — Cloud Shell Project IAM Policy Verification (`roles/cloudsql.client`)**
+![C-04 Cloud Shell Project IAM](evidence/c04-10-cloudshell-iam-cloudsql-client.jpg)
+
+**Figure 8.11 — Cloud Shell Secret Manager Binding & Cloud Run Container Spec**
+![C-04 Cloud Shell Secret Accessor and Spec](evidence/c04-11-cloudshell-secretmanager-and-spec.png)
+
+**Figure 8.12 — Rotation Safety: Startup Probe Failure on Mismatched Secret Version**
+![C-04 Rotation Startup Probe Failure](evidence/c04-12-rotation-probe-failure-credential-mismatch.png)
+
+**Figure 8.13 — Cloud Logging: Prisma Authentication Error on Mismatched Credentials**
+![C-04 Cloud Logging Prisma Auth Failure](evidence/c04-13-cloud-logging-prisma-auth-failed.png)
+
+**Figure 8.14 — Operational Verification: Revision 00006 Serving 100% Traffic with 200 Probes**
+![C-04 Revision 00006 Healthy Probes](evidence/c04-14-cloudshell-successful-revision-00006-probes.png)
 
 ---
 
@@ -1000,8 +1111,9 @@ flowchart TD
 |---|---|
 | **Feature PR (C-01)** | [PR #26 (`feat/ci-docker-c01 -> staging-lab5`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/26) — Approved by `@Pilaiwan3492` ([Review `5891356921`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/26#pullrequestreview-5891356921) on `52d19ba`) and merged into `staging-lab5` in commit `b113cdf` (CI Run #3 [`43401398693`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43401398693)) |
 | **Release PR** | [PR #27 (`staging-lab5 -> main`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/27) — Reviewed, approved, and merged by `@Pilaiwan3492` into `main` in commit `015d9c0` |
-| **Verified PR Head SHA** | `0f574e760004a77dd4e1246a68d2137d5a8fc7c8` (`0f574e7` on [PR #28](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/28); `main` release `e86ee2a` / `015d9c0`; Cloud Run C-04 deployed from `2a7c4c7343e6426cfca713d3288d495dfed5f92d`) |
-| **CI Run (PR `ci-docker.yml`)** | [PR #28 CI Run (`43484582047`, Job `132089524739` `test-and-docker`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43484582047/job/132089524739) & [Release PR #27 Run #10 (`43459279046`, Job `132001551007`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43459279046/job/132001551007) — **PASSED** |
+| **Verified PR Head SHA** | PR #28 Working Branch Head SHA: `bf9464e461e2e0aef1e7fde271f809d6c4fdd55` (subject to new commit upon push); `main` release `e86ee2a` / `015d9c0` |
+| **Deployed Cloud Run Commit SHA** | **`2a7c4c7343e6426cfca713d3288d495dfed5f92d`** (Active deployed image `whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781` in revision `whatsss-00006-9j1` on Google Cloud Run serving 100% traffic) |
+| **CI Run (PR `ci-docker.yml`)** | [PR #28 CI Run (`43495620797`, Job `test-and-docker`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43495620797) & [Release PR #27 Run #10 (`43459279046`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43459279046) — **PASSED** |
 | **CI Run (Push `ci.yml`)** | [Run `43459265389` (`Backend`, `Frontend`, `Docker`, `Secret Scan`, `Check C-03`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43459265389) — **PASSED** |
 | **Backend Test** | **PASSED** — 9 unit test suites (145 tests including `P1-07` 6-case URL encoding) + 12 integration & E2E suites (including live PostgreSQL special-char password Prisma connection test in `db-password.test.ts` on Node.js 24 LTS) |
 | **Frontend Test** | **PASSED** — 7 test suites (55 tests) + Vite production bundle build (`npm test` & `npm run build` on Node.js 24 LTS) |

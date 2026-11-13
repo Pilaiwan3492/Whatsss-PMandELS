@@ -51,6 +51,12 @@ echo "==========================================================================
 VALID_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567"
 VALID_IMAGE_REF="asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781"
 
+# Standard valid secret versions required by release contract
+export DB_URL_VERSION="1"
+export JWT_SECRET_VERSION="1"
+export ADMIN_PASSWORD_VERSION="1"
+export DEMO_PASSWORD_VERSION="1"
+
 # ------------------------------------------------------------------------------
 # Test 1: Missing GCP_PROJECT_ID fails fast
 # ------------------------------------------------------------------------------
@@ -107,15 +113,95 @@ fi
 pass_test "Missing or tag-based IMAGE_REF fails fast and enforces immutable sha256 digest"
 
 # ------------------------------------------------------------------------------
-# Test 4: Secret Version Missing or Disabled Fails Fast
+# Test 4: Enforce Explicit Secret Versions & Forbid Automatic Selection
 # ------------------------------------------------------------------------------
+# 4a: Missing DB_URL_VERSION
+new_test_env "rel4_missing_db_url_ver"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  DB_URL_VERSION="" \
+  SECRET_DB_URL_VERSION="" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail when DB_URL_VERSION is missing"
+fi
+if [[ "${output}" != *"DB_URL_VERSION is required"* || "${output}" != *"Automatic secret version selection"* ]]; then
+  fail_test "Expected DB_URL_VERSION required error, got: ${output}"
+fi
+
+# 4b: Missing JWT_SECRET_VERSION
+new_test_env "rel4_missing_jwt_ver"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  JWT_SECRET_VERSION="" \
+  SECRET_JWT_VERSION="" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail when JWT_SECRET_VERSION is missing"
+fi
+if [[ "${output}" != *"JWT_SECRET_VERSION is required"* ]]; then
+  fail_test "Expected JWT_SECRET_VERSION required error, got: ${output}"
+fi
+
+# 4c: Missing ADMIN_PASSWORD_VERSION
+new_test_env "rel4_missing_admin_ver"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  ADMIN_PASSWORD_VERSION="" \
+  SECRET_ADMIN_PWD_VERSION="" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail when ADMIN_PASSWORD_VERSION is missing"
+fi
+if [[ "${output}" != *"ADMIN_PASSWORD_VERSION is required"* ]]; then
+  fail_test "Expected ADMIN_PASSWORD_VERSION required error, got: ${output}"
+fi
+
+# 4d: Missing DEMO_PASSWORD_VERSION
+new_test_env "rel4_missing_demo_ver"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  DEMO_PASSWORD_VERSION="" \
+  SECRET_DEMO_PWD_VERSION="" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail when DEMO_PASSWORD_VERSION is missing"
+fi
+if [[ "${output}" != *"DEMO_PASSWORD_VERSION is required"* ]]; then
+  fail_test "Expected DEMO_PASSWORD_VERSION required error, got: ${output}"
+fi
+
+# 4e: Non-numeric secret version rejected
+new_test_env "rel4_non_numeric_ver"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  DB_URL_VERSION="latest" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to reject non-numeric secret version 'latest'"
+fi
+if [[ "${output}" != *"must be a numeric version"* ]]; then
+  fail_test "Expected numeric version error message, got: ${output}"
+fi
+
+# 4f: Disabled secret version fails fast
 new_test_env "rel4_secret_disabled"
 if output="$(
   GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
   APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
   IMAGE_REF="${VALID_IMAGE_REF}" \
   MOCK_SECRET_VERSION_DISABLED=1 \
-  SECRET_DB_URL_VERSION="2" \
+  DB_URL_VERSION="2" \
   bash "${RELEASE_SCRIPT}" 2>&1
 )"; then
   fail_test "Expected release.sh to fail when secret version is not ENABLED"
@@ -123,7 +209,7 @@ fi
 if [[ "${output}" != *"is missing or not ENABLED"* ]]; then
   fail_test "Expected secret version ENABLED check error, got: ${output}"
 fi
-pass_test "Disabled or missing Secret Manager version aborts release before job execution"
+pass_test "Explicit numeric Secret Manager versions enforced across all 4 secrets and verified in ENABLED state"
 
 # ------------------------------------------------------------------------------
 # Test 5: DRY_RUN=1 executes zero real gcloud/curl commands

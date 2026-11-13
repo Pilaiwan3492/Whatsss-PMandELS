@@ -85,51 +85,46 @@ run_cmd() {
 resolve_secret_version() {
   local secret_name="$1"
   local explicit_version="${2:-}"
+  local var_name="$3"
 
-  if [[ "${DRY_RUN}" == "1" ]]; then
-    echo "${explicit_version:-1}"
-    return 0
-  fi
-
-  local ver="${explicit_version:-}"
-  if [[ -z "${ver}" ]]; then
-    local version_name
-    version_name="$(gcloud secrets versions list "${secret_name}" \
-      --project="${PROJECT_ID}" \
-      --filter="state=ENABLED" \
-      --limit=1 \
-      --format="value(name)" 2>/dev/null || true)"
-
-    if [[ -z "${version_name}" ]]; then
-      echo "ERROR: Secret ${secret_name} has no ENABLED version in Secret Manager." >&2
-      exit 1
-    fi
-    ver="${version_name##*/}"
-  fi
-
-  if [[ ! "${ver}" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: Secret ${secret_name} version must be a numeric version, got '${ver}'." >&2
+  if [[ -z "${explicit_version}" ]]; then
+    echo "ERROR: ${var_name} is required. Automatic secret version selection (--limit=1) is strictly forbidden." >&2
     exit 1
   fi
 
+  if [[ ! "${explicit_version}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: ${var_name} must be a numeric version for secret '${secret_name}', got '${explicit_version}'." >&2
+    exit 1
+  fi
+
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    echo "${explicit_version}"
+    return 0
+  fi
+
   local ver_state
-  ver_state="$(gcloud secrets versions describe "${ver}" \
+  ver_state="$(gcloud secrets versions describe "${explicit_version}" \
     --secret="${secret_name}" \
     --project="${PROJECT_ID}" \
     --format="value(state)" 2>/dev/null || true)"
 
   if [[ "${ver_state}" != "ENABLED" ]]; then
-    echo "ERROR: Secret ${secret_name} version ${ver} is missing or not ENABLED (state: '${ver_state}')." >&2
+    echo "ERROR: Secret '${secret_name}' version ${explicit_version} is missing or not ENABLED (state: '${ver_state:-NOT_FOUND}')." >&2
     exit 1
   fi
 
-  echo "${ver}"
+  echo "${explicit_version}"
 }
 
-DB_URL_VER="$(resolve_secret_version "${SECRET_DB_URL}" "${SECRET_DB_URL_VERSION:-}")"
-JWT_VER="$(resolve_secret_version "${SECRET_JWT}" "${SECRET_JWT_VERSION:-}")"
-ADMIN_PWD_VER="$(resolve_secret_version "${SECRET_ADMIN_PWD}" "${SECRET_ADMIN_PWD_VERSION:-}")"
-DEMO_PWD_VER="$(resolve_secret_version "${SECRET_DEMO_PWD}" "${SECRET_DEMO_PWD_VERSION:-}")"
+RAW_DB_URL_VER="${DB_URL_VERSION:-${SECRET_DB_URL_VERSION:-}}"
+RAW_JWT_VER="${JWT_SECRET_VERSION:-${SECRET_JWT_VERSION:-}}"
+RAW_ADMIN_PWD_VER="${ADMIN_PASSWORD_VERSION:-${SECRET_ADMIN_PWD_VERSION:-}}"
+RAW_DEMO_PWD_VER="${DEMO_PASSWORD_VERSION:-${SECRET_DEMO_PWD_VERSION:-}}"
+
+DB_URL_VER="$(resolve_secret_version "${SECRET_DB_URL}" "${RAW_DB_URL_VER}" "DB_URL_VERSION")"
+JWT_VER="$(resolve_secret_version "${SECRET_JWT}" "${RAW_JWT_VER}" "JWT_SECRET_VERSION")"
+ADMIN_PWD_VER="$(resolve_secret_version "${SECRET_ADMIN_PWD}" "${RAW_ADMIN_PWD_VER}" "ADMIN_PASSWORD_VERSION")"
+DEMO_PWD_VER="$(resolve_secret_version "${SECRET_DEMO_PWD}" "${RAW_DEMO_PWD_VER}" "DEMO_PASSWORD_VERSION")"
 
 echo "------------------------------------------------------------------------------"
 echo " Whatsss Release Rollout (DRY_RUN=${DRY_RUN})"
