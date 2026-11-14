@@ -174,19 +174,10 @@ jobs:
             --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
             --format=json | python3 deploy/extract_revision_sha.py --expected-sha "$EXPECTED_SHA")"
 
-          TRAFFIC_PERCENT="$(gcloud run services describe whatsss \
+          TRAFFIC_STATUS="$(gcloud run services describe whatsss \
             --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
-            --format='value(status.traffic[0].percent)')"
-          TRAFFIC_REVISION="$(gcloud run services describe whatsss \
-            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
-            --format='value(status.traffic[0].revisionName)')"
+            --format=json | python3 deploy/verify_traffic.py --target-revision "$READY_REVISION")"
 
-          if [ "$TRAFFIC_PERCENT" != "100" ] || [ "$TRAFFIC_REVISION" != "$READY_REVISION" ]; then
-            echo "ERROR: Intended traffic allocation not satisfied (expected 100% to ${READY_REVISION}, got ${TRAFFIC_PERCENT:-0}% to ${TRAFFIC_REVISION:-unknown})." >&2
-            exit 1
-          fi
-
-          TRAFFIC_STATUS="100% -> ${READY_REVISION}"
           {
             echo "revision_name=${READY_REVISION}"
             echo "actual_image=${ACTUAL_IMAGE}"

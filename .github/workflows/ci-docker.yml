@@ -155,7 +155,7 @@ jobs:
 
       - name: Validate Smoke Test Python Syntax & Run Unit Tests
         run: |
-          python3 -m py_compile deploy/smoke_test.py deploy/extract_revision_sha.py
+          python3 -m py_compile deploy/smoke_test.py deploy/extract_revision_sha.py deploy/verify_traffic.py
           python3 -m unittest discover -s deploy/tests -p "test_*.py" -v
 
       - name: Set up Docker Buildx
