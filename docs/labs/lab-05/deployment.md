@@ -1046,63 +1046,63 @@ The deployment and end-to-end user workflows have been verified with complete ph
 
 | Artifact ID | Artifact Description & Scope | Visual Evidence File | Verified Operational State |
 |:---:|---|---|---|
-| **EVD-01** | **Live Cloud Run Landing Page** | [`evidence/c04-01-public-cloud-run-landing.png`](evidence/c04-01-public-cloud-run-landing.png) | Public HTTPS entry point (`https://whatsss-sipqw4logq-as.a.run.app/login`) serving SPA bundle over Google Front End proxy |
-| **EVD-02** | **Evaluator Sign-in (`user_demo`)** | [`evidence/c04-02-user-login.png`](evidence/c04-02-user-login.png) | Successful login as `user_demo` via `POST /api/auth/login` receiving `HttpOnly; Secure; SameSite=Lax` session cookie |
-| **EVD-03** | **Transaction Creation & Ledger Recording** | [`evidence/c04-03-transaction-creation-recorded.png`](evidence/c04-03-transaction-creation-recorded.png) | Recorded Salary deposit (`20,000.00 THB`), split expense (`3,000.00 THB`), and credit card repayment (`3,000.00 THB`) into Cloud SQL |
-| **EVD-04** | **BR-04 Split Sum Mismatch Rejection** | [`evidence/c04-04-br04-unbalanced-split-rejection.png`](evidence/c04-04-br04-unbalanced-split-rejection.png) | Warning `⚠ Allocate the remaining ฿500.00 to continue.` with `Record Purchase` submit button strictly disabled |
-| **EVD-05** | **BR-10 Admin Ledger Access Denied (403)** | [`evidence/c04-05-br10-admin-access-denied-403.png`](evidence/c04-05-br10-admin-access-denied-403.png) | `admin` user redirected to `/access-denied` with **Access Forbidden (403)** banner protecting tenant financial ledger privacy |
-| **EVD-06** | **Cloud Run Health & Ready Probes** | [`evidence/c04-06-api-health-ready-probes.png`](evidence/c04-06-api-health-ready-probes.png) | `/api/health` 200 OK and `/api/ready` 200 OK (`"database":"connected"`) on public Cloud Run service URL |
-| **EVD-07** | **Cloud SQL Instance Configuration** | [`evidence/c04-07-cloud-sql-configuration.png`](evidence/c04-07-cloud-sql-configuration.png) | Cloud SQL instance `whatsss-sql` (`POSTGRES_16`, `db-f1-micro`, `--no-storage-auto-increase`) in `asia-southeast1` |
-| **EVD-08** | **Runtime Service Account & IAM Roles** | [`evidence/c04-08-runtime-sa-and-iam.png`](evidence/c04-08-runtime-sa-and-iam.png) | Dedicated least-privilege service account `whatsss-runner` with `roles/cloudsql.client` and secret-level `roles/secretmanager.secretAccessor` |
-| **EVD-09** | **Evaluator Final Financial Dashboard** | [`evidence/c04-09-user-demo-dashboard-final.png`](evidence/c04-09-user-demo-dashboard-final.png) | Final ledger state: **Checking Bank: ฿27,000.00**, **Credit Card Debt: ฿0.00**, Total Income: ฿20,000.00, Total Expenses: ฿3,000.00 |
-| **EVD-10** | **Cloud Shell SA Project IAM Policy** | [`evidence/c04-10-cloudshell-iam-cloudsql-client.jpg`](evidence/c04-10-cloudshell-iam-cloudsql-client.jpg) | `gcloud projects get-iam-policy` output confirming runtime SA holds strictly `ROLE: roles/cloudsql.client` (zero Owner/Editor roles) |
-| **EVD-11** | **Cloud Shell Secret Accessor & Container Spec** | [`evidence/c04-11-cloudshell-secretmanager-and-spec.png`](evidence/c04-11-cloudshell-secretmanager-and-spec.png) | `gcloud secrets get-iam-policy` confirming `roles/secretmanager.secretAccessor` + Cloud Run spec with `NODE_ENV=production` & `CLIENT_URL` |
-| **EVD-12** | **Credential Mismatch Caught by Startup Probe** | [`evidence/c04-12-rotation-probe-failure-credential-mismatch.png`](evidence/c04-12-rotation-probe-failure-credential-mismatch.png) | Cloud Run startup probe check failing on credential mismatch, preventing traffic routing to unauthenticated revision |
-| **EVD-13** | **Cloud Logging Prisma Initialization Error** | [`evidence/c04-13-cloud-logging-prisma-auth-failed.png`](evidence/c04-13-cloud-logging-prisma-auth-failed.png) | Cloud Logging trace proving Prisma authentication failure against Cloud SQL Unix socket proxy when credentials mismatch |
-| **EVD-14** | **Revision 00006 Deployed & Probes Verified** | [`evidence/c04-14-cloudshell-successful-revision-00006-probes.png`](evidence/c04-14-cloudshell-successful-revision-00006-probes.png) | Revision `whatsss-00006-9j1` serving 100% traffic with HTTP/2 200 OK on both `/api/health` and `/api/ready` (`database: connected`) |
+| **EVD-01** | **Live Cloud Run Landing Page** | [`evidence/c04-01-public-cloud-run-landing.png`](evidence/c04-01-public-cloud-run-landing.png) | **Pending Manual UI Capture** (Current file captures Google Cloud Console Billing page with Cloud Shell prompt; live UI screenshot of `https://whatsss-sipqw4logq-as.a.run.app/login` pending manual capture) |
+| **EVD-02** | **Evaluator Sign-in (`user_demo`)** | [`evidence/c04-02-user-login.png`](evidence/c04-02-user-login.png) | **Pending Manual UI Capture** (Current file captures historical Cloud Shell setup script log; UI screenshot of `POST /api/auth/login` session establishment as `user_demo` pending manual capture) |
+| **EVD-03** | **Transaction Creation & Ledger Recording** | [`evidence/c04-03-transaction-creation-recorded.png`](evidence/c04-03-transaction-creation-recorded.png) | **Pending Manual UI Capture** (Current file captures historical Artifact Registry provisioning log; UI screenshot of transaction creation input form pending manual capture) |
+| **EVD-04** | **BR-04 Split Sum Mismatch Rejection** | [`evidence/c04-04-br04-unbalanced-split-rejection.png`](evidence/c04-04-br04-unbalanced-split-rejection.png) | **Pending Manual UI Capture** (Current file captures historical Cloud SQL instance creation command; UI screenshot of warning `Allocate the remaining ฿500.00 to continue` with submit button disabled pending manual capture) |
+| **EVD-05** | **BR-10 Admin Ledger Access Denied (403)** | [`evidence/c04-05-br10-admin-access-denied-403.png`](evidence/c04-05-br10-admin-access-denied-403.png) | **VERIFIED** — Live browser screenshot at `/access-denied` displaying **`Access Forbidden (403)`** with Security Policy (BR-10) administrative segregation banner |
+| **EVD-06** | **Cloud Run Health & Ready Probes** | [`evidence/c04-06-api-health-ready-probes.png`](evidence/c04-06-api-health-ready-probes.png) | **VERIFIED** — Cloud Shell terminal probe log returning HTTP/2 200 OK on public Cloud Run URL for `/api/health` and `/api/ready` (`"database":"connected"`) on revision `whatsss-00006-9j1` (Consolidated execution session with EVD-14) |
+| **EVD-07** | **Cloud SQL Instance Configuration** | [`evidence/c04-07-cloud-sql-configuration.png`](evidence/c04-07-cloud-sql-configuration.png) | **Partially Verified via CLI / Pending Console Capture** (Configuration parameters `POSTGRES_16`, `db-f1-micro`, `--no-storage-auto-increase` verified via historical provisioning commands; Google Cloud Console instance overview UI pending manual capture) |
+| **EVD-08** | **Runtime Service Account & IAM Roles** | [`evidence/c04-08-runtime-sa-and-iam.png`](evidence/c04-08-runtime-sa-and-iam.png) | **VERIFIED** — Google Cloud Console IAM Principals table confirming dedicated runtime service account `whatsss-runtime` holds `roles/cloudsql.client` |
+| **EVD-09** | **Evaluator Final Financial Dashboard** | [`evidence/c04-09-user-demo-dashboard-final.png`](evidence/c04-09-user-demo-dashboard-final.png) | **VERIFIED** — Genuine live user dashboard for `user_demo` verifying final ledger state: **Checking Bank: ฿27,000.00**, **Credit Card Debt: ฿0.00**, Total Income: ฿20,000.00, Total Expenses: ฿3,000.00, and all 3 recorded C-04 transactions |
+| **EVD-10** | **Cloud Shell SA Project IAM Policy** | [`evidence/c04-10-cloudshell-iam-cloudsql-client.jpg`](evidence/c04-10-cloudshell-iam-cloudsql-client.jpg) | **VERIFIED** — `gcloud projects get-iam-policy` output confirming runtime SA holds strictly `ROLE: roles/cloudsql.client` + Cloud Run container spec |
+| **EVD-11** | **Cloud Shell Secret Accessor & Container Spec** | [`evidence/c04-11-cloudshell-secretmanager-and-spec.png`](evidence/c04-11-cloudshell-secretmanager-and-spec.png) | **VERIFIED** — `gcloud secrets get-iam-policy` confirming `roles/secretmanager.secretAccessor` + Cloud Run container spec with secret environment references |
+| **EVD-12** | **Credential Mismatch Caught by Startup Probe** | [`evidence/c04-12-rotation-probe-failure-credential-mismatch.png`](evidence/c04-12-rotation-probe-failure-credential-mismatch.png) | **VERIFIED** — Cloud Run deployment failed on startup probe checks during credential rotation test, preventing traffic routing to revision `whatsss-00005-4w7` |
+| **EVD-13** | **Cloud Logging Prisma Initialization Error** | [`evidence/c04-13-cloud-logging-prisma-auth-failed.png`](evidence/c04-13-cloud-logging-prisma-auth-failed.png) | **VERIFIED** — Cloud Logging trace confirming Prisma authentication failure against Cloud SQL Unix socket proxy during credential mismatch |
+| **EVD-14** | **Revision 00006 Deployed & Probes Verified** | [`evidence/c04-14-cloudshell-successful-revision-00006-probes.png`](evidence/c04-14-cloudshell-successful-revision-00006-probes.png) | **VERIFIED** — Cloud Run revision `whatsss-00006-9j1` deployed and serving 100 percent of traffic with HTTP/2 200 OK health and readiness probes (Shares unified deployment terminal output with EVD-06) |
 
 ##### Visual Evidence Gallery
 
-**Figure 8.1 — Public Cloud Run Landing & Sign-in**
+**Figure 8.1 — Public Cloud Run Landing & Sign-in (Pending Manual UI Capture; Current: Cloud Shell Billing Prompt)**
 ![C-04 Public Cloud Run Landing Page](evidence/c04-01-public-cloud-run-landing.png)
 
-**Figure 8.2 — Evaluator Authentication (`user_demo`)**
+**Figure 8.2 — Evaluator Authentication (Pending Manual UI Capture; Current: Cloud Shell Setup Log)**
 ![C-04 Evaluator Sign-in](evidence/c04-02-user-login.png)
 
-**Figure 8.3 — Transaction Creation & Ledger Persistence**
+**Figure 8.3 — Transaction Creation & Ledger Persistence (Pending Manual UI Capture; Current: Cloud Shell Provisioning Log)**
 ![C-04 Transaction Creation](evidence/c04-03-transaction-creation-recorded.png)
 
-**Figure 8.4 — BR-04 Domain Rule Rejection (Unbalanced Split Expense Blocked)**
+**Figure 8.4 — BR-04 Domain Rule Rejection (Pending Manual UI Capture; Current: Cloud Shell SQL Instance Command)**
 ![C-04 BR-04 Unbalanced Split Rejection](evidence/c04-04-br04-unbalanced-split-rejection.png)
 
-**Figure 8.5 — BR-10 Security Rule Rejection (Administrator Ledger Segregation 403 Forbidden)**
+**Figure 8.5 — BR-10 Security Rule Rejection: Administrator Ledger Segregation 403 Forbidden (Verified)**
 ![C-04 BR-10 Admin Access Denied](evidence/c04-05-br10-admin-access-denied-403.png)
 
-**Figure 8.6 — Live Cloud Run Service Health and Readiness Probes**
+**Figure 8.6 — Live Cloud Run Service Health and Readiness Probes (Verified; Consolidated Session with EVD-14)**
 ![C-04 API Health and Ready Probes](evidence/c04-06-api-health-ready-probes.png)
 
-**Figure 8.7 — Cloud SQL Instance Configuration (`whatsss-sql`)**
+**Figure 8.7 — Cloud SQL Instance Configuration (Pending Console Capture; Current: CLI Secret Provisioning Log)**
 ![C-04 Cloud SQL Configuration](evidence/c04-07-cloud-sql-configuration.png)
 
-**Figure 8.8 — Least-Privilege Runtime Service Account (`whatsss-runner`)**
+**Figure 8.8 — Least-Privilege Runtime Service Account in GCP Console (Verified)**
 ![C-04 Runtime SA and IAM](evidence/c04-08-runtime-sa-and-iam.png)
 
-**Figure 8.9 — Evaluator Dashboard Final Balanced Ledger (`27,000.00 THB`)**
+**Figure 8.9 — Evaluator Dashboard Final Balanced Ledger: 27,000.00 THB (Verified)**
 ![C-04 Evaluator Dashboard Final](evidence/c04-09-user-demo-dashboard-final.png)
 
-**Figure 8.10 — Cloud Shell Project IAM Policy Verification (`roles/cloudsql.client`)**
+**Figure 8.10 — Cloud Shell Project IAM Policy Verification: roles/cloudsql.client (Verified)**
 ![C-04 Cloud Shell Project IAM](evidence/c04-10-cloudshell-iam-cloudsql-client.jpg)
 
-**Figure 8.11 — Cloud Shell Secret Manager Binding & Cloud Run Container Spec**
+**Figure 8.11 — Cloud Shell Secret Manager Binding & Cloud Run Container Spec (Verified)**
 ![C-04 Cloud Shell Secret Accessor and Spec](evidence/c04-11-cloudshell-secretmanager-and-spec.png)
 
-**Figure 8.12 — Rotation Safety: Startup Probe Failure on Mismatched Secret Version**
+**Figure 8.12 — Rotation Safety: Startup Probe Failure on Mismatched Secret Version (Verified)**
 ![C-04 Rotation Startup Probe Failure](evidence/c04-12-rotation-probe-failure-credential-mismatch.png)
 
-**Figure 8.13 — Cloud Logging: Prisma Authentication Error on Mismatched Credentials**
+**Figure 8.13 — Cloud Logging: Prisma Authentication Error on Mismatched Credentials (Verified)**
 ![C-04 Cloud Logging Prisma Auth Failure](evidence/c04-13-cloud-logging-prisma-auth-failed.png)
 
-**Figure 8.14 — Operational Verification: Revision 00006 Serving 100% Traffic with 200 Probes**
+**Figure 8.14 — Operational Verification: Revision 00006 Serving 100% Traffic with 200 Probes (Verified; Consolidated Session with EVD-06)**
 ![C-04 Revision 00006 Healthy Probes](evidence/c04-14-cloudshell-successful-revision-00006-probes.png)
 
 ---
@@ -1171,7 +1171,7 @@ flowchart TD
 | **Frontend Test** | **PASSED** — 7 test suites (55 tests) + Vite production bundle build (`npm test` & `npm run build` on Node.js 24 LTS) |
 | **Docker Build** | **PASSED** — Multi-stage `node:24-alpine` production image built, layer/filesystem secret inspection clean, `/api/health` (200), `/api/ready` (200), and `/` SPA verified |
 | **C-03 Clean Clone** | **PASSED** — Verified in both `test-and-docker` ([Job `132089524739`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43484582047/job/132089524739)) and `c03-clean-clone-verification` ([Job `132001966691`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43459265389/job/132001966691)): clean clone, special-char DB password, `docker compose config -q`, migration failure gate, 200/503/200 probes, 25,000 THB transaction, and volume persistence across restart |
-| **Cloud Deploy (C-04)** | **VERIFIED** — Live deployment verified on Google Cloud Run at `https://whatsss-sipqw4logq-as.a.run.app` (`https://whatsss-1086708130644.asia-southeast1.run.app`), Revision `whatsss-00006-9jl` (pinned secrets: `whatsss-database-url:1`, `whatsss-jwt-secret:1`, `whatsss-admin-password:1`, `whatsss-demo-password:1`), Image digest `asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781`, connected to Cloud SQL `whatsss-sql` (`POSTGRES_16`, `db-f1-micro`, `--no-storage-auto-increase`); least-privilege IAM (`roles/cloudsql.client` only at project level + per-secret `roles/secretmanager.secretAccessor`), `/api/health` (200), `/api/ready` (200, `"database":"connected"`), E2E workflow (`27,000.00 THB` Bank / `0.00 THB` Debt), rule rejections (`BR-04` & `BR-10`), and hardened `deploy/deploy.sh` & `deploy/release.sh` verified via CI |
+| **Cloud Deploy (C-04)** | **PARTIALLY VERIFIED** — Live deployment verified on Google Cloud Run at `https://whatsss-sipqw4logq-as.a.run.app` (`https://whatsss-1086708130644.asia-southeast1.run.app`), Revision `whatsss-00006-9j1` (pinned secrets: `whatsss-database-url:1`, `whatsss-jwt-secret:1`, `whatsss-admin-password:1`, `whatsss-demo-password:1`), Image digest `asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:88f46652bba63097603d47108f39403d317b40bb122eaea0ea31d6f0914b8781`, connected to Cloud SQL `whatsss-sql` (`POSTGRES_16`, `db-f1-micro`, `--no-storage-auto-increase`); least-privilege IAM (`roles/cloudsql.client` verified in GCP Console & Cloud Shell + per-secret `roles/secretmanager.secretAccessor`), `/api/health` (200), `/api/ready` (200, `"database":"connected"`), BR-10 security segregation (`403 Forbidden`), and final balanced ledger (`27,000.00 THB` Bank / `0.00 THB` Debt) verified. Intermediate UI walkthrough screenshots (EVD-01..EVD-04) and Cloud SQL console overview (EVD-07) pending manual capture. |
 
 ---
 
@@ -1202,7 +1202,7 @@ flowchart TD
 | **Migration Job** | **Verified** | Job Execution (`whatsss-migrate` execution `whatsss-migrate-rmqkv` succeeded on Cloud Run with `whatsss-runner` SA; migration failure gate & execution status check verified in `deploy/tests/test-release.sh`) |
 | **Cloud Run Service** | **Verified** | Service URL (`https://whatsss-sipqw4logq-as.a.run.app`, Revision `whatsss-00006-9jl` serving 100% traffic with pinned secret versions `1` and `whatsss-runner` SA) |
 | **CLIENT_URL exact HTTPS** | **Verified** | Service Configuration (`gcloud run services describe whatsss` confirmed `CLIENT_URL: https://whatsss-sipqw4logq-as.a.run.app` matches `status.url: https://whatsss-sipqw4logq-as.a.run.app`) |
-| **C-04 E2E** | **Verified** | Screenshots & Probe Logs (`/api/health` 200, `/api/ready` 200 `"database":"connected"`, `user_demo` E2E workflow `27,000.00 THB` Bank / `0.00 THB` Debt, `BR-04` unbalanced split rejection & `BR-10` Admin `403`) |
+| **C-04 E2E** | **Partially Verified** | Infrastructure, backend probes, BR-10 Admin 403, and final user demo dashboard (27,000.00 THB Bank / 0.00 THB Debt) verified; intermediate UI flow screenshots and Cloud SQL console overview pending manual capture |
 | **Deploy Script Tests** | **Verified** | Automated unit test suites (`deploy/tests/test-deploy.sh` 14/14 passed, `deploy/tests/test-release.sh` 14/14 passed, ShellCheck clean, and Prisma special-char DB URL integration tests passing in CI) |
 | **PR Review** | **Merged** | [PR #28](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/28) (`chore/19-first-gcp-deploy-c04 -> staging-lab5`) reviewed, approved, and merged into `staging-lab5` at `2026-11-13T21:46:34Z` (merge commit `2b2f47403bb3192262842c9bc0e83f2b222223f9`) |
 
@@ -1498,7 +1498,7 @@ To maintain absolute technical precision and transparency regarding the deployme
 | **C-01** | PR Automated Test & Docker Build (`test-and-docker`) | **VERIFIED** | Feature PR #26 & Release PR #27; automated CI gate executes all 31 checks on every PR |
 | **C-02** | Failed CI Check Blocks Merging (`protect-main`) | **VERIFIED** | Branch protection requires `test-and-docker` passing check and 1 approving review; direct push and failing PRs strictly blocked |
 | **C-03** | Clean-Clone Build, Run & Data Persistence | **VERIFIED** | Automated in `test-and-docker` and `ci.yml` (clean clone, `.env.example`, special-char DB password, migration failure gate, 200/503/200 probes, 25,000 THB transaction, volume persistence across teardown) |
-| **C-04** | Public Cloud Run Deployment & End-to-End Verification | **VERIFIED** | Live service at `https://whatsss-sipqw4logq-as.a.run.app`, Cloud SQL PostgreSQL 16 (`whatsss-sql`), Secret Manager, least-privilege SA, E2E workflow (`27,000 THB` Bank / `0 THB` Debt), rule rejections (`BR-04` & `BR-10`) |
+| **C-04** | Public Cloud Run Deployment & End-to-End Verification | **PARTIALLY VERIFIED** | **Core infrastructure & backend verification:** **VERIFIED** on live service `https://whatsss-sipqw4logq-as.a.run.app` with Cloud SQL PostgreSQL 16 (`whatsss-sql`), Secret Manager, least-privilege SA (`whatsss-runtime` / `roles/cloudsql.client`), 200 OK health/readiness probes (Revision `whatsss-00006-9j1`), BR-10 security segregation (`403 Forbidden`), and final balanced ledger (`27,000.00 THB` Bank / `0.00 THB` Debt). <br>**UI Walkthrough Evidence:** **PENDING MANUAL CAPTURE** for intermediate user flows (EVD-01 Landing, EVD-02 Sign-in, EVD-03 Transaction Form, EVD-04 BR-04 Rejection) and Cloud SQL console overview (EVD-07). |
 | **C-05** | Data Persistence Across Revision Redeployment & Container Replacement | **PARTIALLY VERIFIED** | **Container replacement & data persistence:** **VERIFIED** via Run `43599307331` (Revision `whatsss-00020-65k`) with `32,000.00 THB` balance and `C-05 Persistence Test Deposit` preserved. <br>**Rollback workflow dispatch:** **VERIFIED** via Run `43598016213`. <br>**Three-step B → A → B deployment drill across two distinct release versions:** **PENDING** (requires two distinct image releases). |
 | **C-06** | Continuous Deployment Pipeline & Automated Rollback | **PARTIALLY VERIFIED** | **Auto-deployment on `main` push:** **VERIFIED** via Run [`43597142988`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43597142988) (all 31 checks, WIF, migration job, 100% traffic, smoke test). <br>**Rollback-mode workflow dispatch:** **VERIFIED** as a workflow execution path via Run [`43598016213`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43598016213). <br>**Actual Rollback to Previous Release:** **PENDING** (requires deploying a distinct previous release image version). |
 
@@ -1508,20 +1508,20 @@ To maintain absolute technical precision and transparency regarding the deployme
 
 | ID | Checkpoint / Requirement | Evidence File | Description |
 |:---:|:---:|---|---|
-| **EVD-01** | C-04 / Public Cloud Run | [`evidence/c04-01-public-cloud-run-landing.png`](evidence/c04-01-public-cloud-run-landing.png) | Public HTTPS entry point (`https://whatsss-sipqw4logq-as.a.run.app/login`) |
-| **EVD-02** | C-04 / Authentication | [`evidence/c04-02-user-login.png`](evidence/c04-02-user-login.png) | Successful login as `user_demo` receiving HttpOnly session cookie |
-| **EVD-03** | C-04 / Transactions | [`evidence/c04-03-transaction-creation-recorded.png`](evidence/c04-03-transaction-creation-recorded.png) | Recorded Salary deposit (`20,000 THB`), split expense (`3,000 THB`), and repayment (`3,000 THB`) |
-| **EVD-04** | C-04 / BR-04 Split Validation | [`evidence/c04-04-br04-unbalanced-split-rejection.png`](evidence/c04-04-br04-unbalanced-split-rejection.png) | Warning `Allocate the remaining ฿500.00 to continue` with submit button strictly disabled |
-| **EVD-05** | C-04 / BR-10 Admin Segregation | [`evidence/c04-05-br10-admin-access-denied-403.png`](evidence/c04-05-br10-admin-access-denied-403.png) | Access Forbidden (403) when administrator attempts financial ledger operations |
-| **EVD-06** | C-04 / Health Probes | [`evidence/c04-06-api-health-ready-probes.png`](evidence/c04-06-api-health-ready-probes.png) | `/api/health` 200 OK and `/api/ready` 200 OK (`database: connected`) on live public URL |
-| **EVD-07** | C-04 / Cloud SQL Config | [`evidence/c04-07-cloud-sql-configuration.png`](evidence/c04-07-cloud-sql-configuration.png) | Cloud SQL instance `whatsss-sql` (`POSTGRES_16`, `db-f1-micro`, storage auto-increase disabled) |
-| **EVD-08** | C-04 / Least-Privilege SA | [`evidence/c04-08-runtime-sa-and-iam.png`](evidence/c04-08-runtime-sa-and-iam.png) | Runtime SA `whatsss-runner` holding only `roles/cloudsql.client` and per-secret accessor |
-| **EVD-09** | C-04 / Financial Dashboard | [`evidence/c04-09-user-demo-dashboard-final.png`](evidence/c04-09-user-demo-dashboard-final.png) | Final C-04 dashboard state with 27,000.00 THB balance and settled credit debt |
-| **EVD-10** | C-04 / CloudShell IAM | [`evidence/c04-10-cloudshell-iam-cloudsql-client.jpg`](evidence/c04-10-cloudshell-iam-cloudsql-client.jpg) | IAM role binding for `roles/cloudsql.client` |
-| **EVD-11** | C-04 / Secret Manager | [`evidence/c04-11-cloudshell-secretmanager-and-spec.png`](evidence/c04-11-cloudshell-secretmanager-and-spec.png) | Secret Manager configuration and Cloud Run revision environment specification |
-| **EVD-12** | C-04 / Rotation Safety | [`evidence/c04-12-rotation-probe-failure-credential-mismatch.png`](evidence/c04-12-rotation-probe-failure-credential-mismatch.png) | Fail-closed behavior on password mismatch |
-| **EVD-13** | C-04 / Logging Audit | [`evidence/c04-13-cloud-logging-prisma-auth-failed.png`](evidence/c04-13-cloud-logging-prisma-auth-failed.png) | Cloud Logging trace for authentication validation |
-| **EVD-14** | C-04 / Healthy Revision Probes | [`evidence/c04-14-cloudshell-successful-revision-00006-probes.png`](evidence/c04-14-cloudshell-successful-revision-00006-probes.png) | Revision `whatsss-00006-9j1` serving 100% traffic with 200 OK probes |
+| **EVD-01** | C-04 / Public Cloud Run | [`evidence/c04-01-public-cloud-run-landing.png`](evidence/c04-01-public-cloud-run-landing.png) | **Pending Manual UI Capture** (Current file captures Google Cloud Console Billing page with Cloud Shell prompt; live UI screenshot of `https://whatsss-sipqw4logq-as.a.run.app/login` pending manual capture) |
+| **EVD-02** | C-04 / Authentication | [`evidence/c04-02-user-login.png`](evidence/c04-02-user-login.png) | **Pending Manual UI Capture** (Current file captures historical Cloud Shell setup script log; UI screenshot of `POST /api/auth/login` session establishment as `user_demo` pending manual capture) |
+| **EVD-03** | C-04 / Transactions | [`evidence/c04-03-transaction-creation-recorded.png`](evidence/c04-03-transaction-creation-recorded.png) | **Pending Manual UI Capture** (Current file captures historical Artifact Registry provisioning log; UI screenshot of transaction creation input form pending manual capture) |
+| **EVD-04** | C-04 / BR-04 Split Validation | [`evidence/c04-04-br04-unbalanced-split-rejection.png`](evidence/c04-04-br04-unbalanced-split-rejection.png) | **Pending Manual UI Capture** (Current file captures historical Cloud SQL instance creation command; UI screenshot of warning `Allocate the remaining ฿500.00 to continue` with submit button disabled pending manual capture) |
+| **EVD-05** | C-04 / BR-10 Admin Segregation | [`evidence/c04-05-br10-admin-access-denied-403.png`](evidence/c04-05-br10-admin-access-denied-403.png) | **VERIFIED** — Live browser screenshot at `/access-denied` displaying **Access Forbidden (403)** and Security Policy (BR-10) administrative segregation banner |
+| **EVD-06** | C-04 / Health Probes | [`evidence/c04-06-api-health-ready-probes.png`](evidence/c04-06-api-health-ready-probes.png) | **VERIFIED** — Cloud Shell terminal probe log returning HTTP/2 200 OK on public Cloud Run URL for `/api/health` and `/api/ready` (`database: connected`) on revision `whatsss-00006-9j1` (Consolidated execution session with EVD-14) |
+| **EVD-07** | C-04 / Cloud SQL Config | [`evidence/c04-07-cloud-sql-configuration.png`](evidence/c04-07-cloud-sql-configuration.png) | **Partially Verified via CLI / Pending Console Capture** (Configuration parameters `POSTGRES_16`, `db-f1-micro`, `--no-storage-auto-increase` verified via historical provisioning commands; Google Cloud Console instance overview UI pending manual capture) |
+| **EVD-08** | C-04 / Least-Privilege SA | [`evidence/c04-08-runtime-sa-and-iam.png`](evidence/c04-08-runtime-sa-and-iam.png) | **VERIFIED** — Google Cloud Console IAM Principals table confirming dedicated runtime service account `whatsss-runtime` holds `roles/cloudsql.client` |
+| **EVD-09** | C-04 / Financial Dashboard | [`evidence/c04-09-user-demo-dashboard-final.png`](evidence/c04-09-user-demo-dashboard-final.png) | **VERIFIED** — Genuine live user dashboard for `user_demo` verifying final ledger state: **Checking Bank: ฿27,000.00**, **Credit Card Debt: ฿0.00**, Total Income: ฿20,000.00, Total Expenses: ฿3,000.00, and all 3 recorded C-04 transactions |
+| **EVD-10** | C-04 / CloudShell IAM | [`evidence/c04-10-cloudshell-iam-cloudsql-client.jpg`](evidence/c04-10-cloudshell-iam-cloudsql-client.jpg) | **VERIFIED** — `gcloud projects get-iam-policy` output confirming runtime SA holds strictly `ROLE: roles/cloudsql.client` + Cloud Run container spec |
+| **EVD-11** | C-04 / Secret Manager | [`evidence/c04-11-cloudshell-secretmanager-and-spec.png`](evidence/c04-11-cloudshell-secretmanager-and-spec.png) | **VERIFIED** — `gcloud secrets get-iam-policy` confirming `roles/secretmanager.secretAccessor` + Cloud Run container spec with secret environment references |
+| **EVD-12** | C-04 / Rotation Safety | [`evidence/c04-12-rotation-probe-failure-credential-mismatch.png`](evidence/c04-12-rotation-probe-failure-credential-mismatch.png) | **VERIFIED** — Cloud Run deployment failed on startup probe checks during credential rotation test, preventing traffic routing to revision `whatsss-00005-4w7` |
+| **EVD-13** | C-04 / Logging Audit | [`evidence/c04-13-cloud-logging-prisma-auth-failed.png`](evidence/c04-13-cloud-logging-prisma-auth-failed.png) | **VERIFIED** — Cloud Logging trace confirming Prisma authentication failure against Cloud SQL Unix socket proxy during credential mismatch |
+| **EVD-14** | C-04 / Healthy Revision Probes | [`evidence/c04-14-cloudshell-successful-revision-00006-probes.png`](evidence/c04-14-cloudshell-successful-revision-00006-probes.png) | **VERIFIED** — Cloud Run revision `whatsss-00006-9j1` deployed and serving 100 percent of traffic with HTTP/2 200 OK health and readiness probes (Shares unified deployment terminal output with EVD-06) |
 | **EVD-15** | C-05 / Data Persistence Before Redeploy | [`evidence/c05-01-before-restart.png`](evidence/c05-01-before-restart.png) | Baseline financial ledger state before revision redeployment: record `C-05 Persistence Test Deposit` (`+5,000.00 THB`) created, Checking Bank balance `32,000.00 THB` on live URL |
 | **EVD-16** | C-05 / Data Persistence After Redeploy | [`evidence/c05-02-after-restart.png`](evidence/c05-02-after-restart.png) | Zero data loss verified after Cloud Run revision redeployment / container replacement (Run ID `43599307331`, Revision `whatsss-00020-65k`): `32,000.00 THB` balance and test record intact |
 | **EVD-17** | C-06 / Automated Deployment | [`Run #43597142988`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43597142988) | Automated CD workflow on `main` push (Commit `f160f25`): **VERIFIED** (all 31 checks, migration job, rollout, smoke tests) |
