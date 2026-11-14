@@ -131,6 +131,16 @@ jobs:
             shellcheck deploy/*.sh deploy/tests/*.sh deploy/tests/mocks/*
           fi
 
+      - name: Validate GitHub Actions Workflow Files (actionlint)
+        run: |
+          ACTIONLINT_VERSION="1.7.4"
+          ACTIONLINT_SHA256="fc0a6886bbb9a23a39eeec4b176193cadb54ddbe77cdbb19b637933919545395"
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -o actionlint.tar.gz
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+          chmod +x actionlint
+          ./actionlint .github/workflows/ci-docker.yml .github/workflows/deploy.yml
+
       - name: Run Deployment Script Tests
         run: |
           if [ -d "deploy/tests" ]; then

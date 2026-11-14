@@ -422,6 +422,122 @@ if [[ "${output}" != *"ERROR: Cloud Run service account mismatch"* ]]; then
 fi
 pass_test "Runtime SA verification rejects Default Compute SA on both Migration Job and Cloud Run Service"
 
+# ------------------------------------------------------------------------------
+# Test 15: SKIP_MIGRATIONS=true skips migration job deploy & execute but deploys service
+# ------------------------------------------------------------------------------
+new_test_env "rel15_skip_migrations_true"
+output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="true" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"
+if [[ "${output}" != *"SKIP_MIGRATIONS=true — skipping Migration Job"* ]]; then
+  fail_test "Expected SKIP_MIGRATIONS skip message, got: ${output}"
+fi
+if grep -q "gcloud run jobs deploy" "${MOCK_LOG_FILE}"; then
+  fail_test "Expected 'gcloud run jobs deploy' NOT to be called when SKIP_MIGRATIONS=true"
+fi
+if grep -q "gcloud run jobs execute" "${MOCK_LOG_FILE}"; then
+  fail_test "Expected 'gcloud run jobs execute' NOT to be called when SKIP_MIGRATIONS=true"
+fi
+if ! grep -q "gcloud run deploy whatsss" "${MOCK_LOG_FILE}"; then
+  fail_test "Expected 'gcloud run deploy whatsss' to be called when SKIP_MIGRATIONS=true"
+fi
+pass_test "SKIP_MIGRATIONS=true skips Migration Job deploy and execute while completing Service deploy"
+
+# ------------------------------------------------------------------------------
+# Test 16: SKIP_MIGRATIONS=false explicitly executes migration job normally
+# ------------------------------------------------------------------------------
+new_test_env "rel16_skip_migrations_false"
+output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="false" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"
+if ! grep -q "gcloud run jobs deploy" "${MOCK_LOG_FILE}"; then
+  fail_test "Expected 'gcloud run jobs deploy' to be called when SKIP_MIGRATIONS=false"
+fi
+if ! grep -q "gcloud run jobs execute" "${MOCK_LOG_FILE}"; then
+  fail_test "Expected 'gcloud run jobs execute' to be called when SKIP_MIGRATIONS=false"
+fi
+pass_test "SKIP_MIGRATIONS=false explicitly configures and executes Migration Job"
+
+# ------------------------------------------------------------------------------
+# Test 17: SKIP_MIGRATIONS with invalid value fails fast
+# ------------------------------------------------------------------------------
+new_test_env "rel17_skip_migrations_invalid"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="not_a_boolean" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail on invalid SKIP_MIGRATIONS value"
+fi
+if [[ "${output}" != *"ERROR: SKIP_MIGRATIONS must be 'true' or 'false'"* ]]; then
+  fail_test "Expected SKIP_MIGRATIONS validation error, got: ${output}"
+fi
+if [[ -s "${MOCK_LOG_FILE}" ]]; then
+  fail_test "Expected zero gcloud commands when SKIP_MIGRATIONS validation fails"
+fi
+pass_test "Invalid SKIP_MIGRATIONS value fails fast before any GCP mutation"
+
+# ------------------------------------------------------------------------------
+# Test 18: Normal migration failure (SKIP_MIGRATIONS=false) still aborts release
+# ------------------------------------------------------------------------------
+new_test_env "rel18_migration_failure_aborts"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="false" \
+  MOCK_FAIL_MIGRATE_EXECUTE=1 \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail when Migration Job execution fails"
+fi
+if grep -q "gcloud run deploy whatsss" "${MOCK_LOG_FILE}"; then
+  fail_test "Expected 'gcloud run deploy whatsss' NOT to be called when migration fails"
+fi
+pass_test "Migration failure with SKIP_MIGRATIONS=false reliably blocks service deployment"
+
+# ------------------------------------------------------------------------------
+# Test 19: SKIP_MIGRATIONS=true verifies service probes [4/4]
+# ------------------------------------------------------------------------------
+new_test_env "rel19_skip_migrations_probes"
+output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="true" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"
+if [[ "${output}" != *"[4/4] Verifying live health and readiness probes"* ]]; then
+  fail_test "Expected probe verification to run when SKIP_MIGRATIONS=true, got: ${output}"
+fi
+pass_test "SKIP_MIGRATIONS=true preserves end-to-end service probe verification"
+
+# ------------------------------------------------------------------------------
+# Test 20: SKIP_MIGRATIONS=true verifies and synchronizes CLIENT_URL [3/4]
+# ------------------------------------------------------------------------------
+new_test_env "rel20_skip_migrations_client_url"
+output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="true" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"
+if [[ "${output}" != *"[3/4] Resolving live Cloud Run HTTPS URL and synchronizing CLIENT_URL"* ]]; then
+  fail_test "Expected CLIENT_URL sync to run when SKIP_MIGRATIONS=true, got: ${output}"
+fi
+pass_test "SKIP_MIGRATIONS=true preserves CLIENT_URL synchronization and verification"
+
 echo "=============================================================================="
 echo " ALL ${PASS_COUNT} RELEASE SCRIPT TESTS PASSED!"
 echo "=============================================================================="

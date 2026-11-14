@@ -10,6 +10,7 @@ Optionally verifies authenticated user flow if SMOKE_EMAIL and SMOKE_PASSWORD ex
 
 import os
 import sys
+import re
 import json
 import urllib.request
 import urllib.error
@@ -47,16 +48,27 @@ def make_request(url, method="GET", data=None, headers=None, opener=None):
         print(f"FAIL: Network error requesting {url}: {e}", file=sys.stderr)
         raise
 
-def run_smoke_test(base_url, smoke_email="", smoke_password="", opener=None):
+def run_smoke_test(base_url, smoke_email="", smoke_password="", expected_commit_sha="", opener=None):
     base_url = base_url.rstrip("/")
     if not base_url.startswith("https://") and not base_url.startswith("http://"):
         print(f"FAIL: Service URL must start with http:// or https:// (got: '{base_url}')", file=sys.stderr)
+        return False
+
+    # Validate EXPECTED_COMMIT_SHA before making any network requests
+    if not expected_commit_sha or not re.match(r"^[0-9a-f]{40}$", expected_commit_sha):
+        print(f"FAIL: EXPECTED_COMMIT_SHA must be exactly 40 lowercase hexadecimal characters (got: '{expected_commit_sha}')", file=sys.stderr)
         return False
 
     # Validate credentials before making any network requests
     if bool(smoke_email) != bool(smoke_password):
         print("FAIL: Both SMOKE_EMAIL and SMOKE_PASSWORD must be configured together.", file=sys.stderr)
         return False
+
+    # Enforce HTTPS for authenticated smoke test flow
+    if smoke_email and smoke_password:
+        if not base_url.startswith("https://"):
+            print("FAIL: Authenticated smoke test requires HTTPS. HTTP is not allowed when credentials are configured.", file=sys.stderr)
+            return False
 
     print(f"Running automated smoke test on: {base_url}")
 
@@ -75,10 +87,14 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", opener=None):
         if health_json.get("status") != "ok":
             print(f"FAIL /api/health: Expected status 'ok', got {health_json}", file=sys.stderr)
             return False
+        health_sha = health_json.get("commitSha")
+        if health_sha != expected_commit_sha:
+            print(f"FAIL /api/health: Commit SHA mismatch (expected: {expected_commit_sha}, got: {health_sha})", file=sys.stderr)
+            return False
     except Exception as e:
-        print(f"FAIL /api/health: Invalid JSON response: {e}", file=sys.stderr)
+        print(f"FAIL /api/health: Invalid JSON response or validation error: {e}", file=sys.stderr)
         return False
-    print("PASS /api/health")
+    print(f"PASS /api/health (commitSha: {expected_commit_sha})")
 
     # 2. Check Database Readiness Probe: GET /api/ready
     ready_url = f"{base_url}/api/ready"
@@ -95,10 +111,14 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", opener=None):
         if ready_json.get("status") != "ready" or ready_json.get("database") != "connected":
             print(f"FAIL /api/ready: Expected ready/connected, got {ready_json}", file=sys.stderr)
             return False
+        ready_sha = ready_json.get("commitSha")
+        if ready_sha != expected_commit_sha:
+            print(f"FAIL /api/ready: Commit SHA mismatch (expected: {expected_commit_sha}, got: {ready_sha})", file=sys.stderr)
+            return False
     except Exception as e:
-        print(f"FAIL /api/ready: Invalid JSON response: {e}", file=sys.stderr)
+        print(f"FAIL /api/ready: Invalid JSON response or validation error: {e}", file=sys.stderr)
         return False
-    print("PASS /api/ready")
+    print(f"PASS /api/ready (commitSha: {expected_commit_sha})")
 
     # 3. Check Web UI Single-Page App: GET /
     try:
@@ -201,8 +221,14 @@ def main():
     base_url = sys.argv[1]
     smoke_email = os.environ.get("SMOKE_EMAIL", "").strip()
     smoke_password = os.environ.get("SMOKE_PASSWORD", "").strip()
+    expected_commit_sha = os.environ.get("EXPECTED_COMMIT_SHA", "").strip()
 
-    success = run_smoke_test(base_url, smoke_email, smoke_password)
+    success = run_smoke_test(
+        base_url,
+        smoke_email=smoke_email,
+        smoke_password=smoke_password,
+        expected_commit_sha=expected_commit_sha
+    )
     if not success:
         sys.exit(1)
 

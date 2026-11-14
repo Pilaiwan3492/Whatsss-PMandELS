@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: deploy-demo
@@ -30,6 +29,9 @@ jobs:
     if: ${{ always() && github.ref == 'refs/heads/main' && (needs.test.result == 'success' || (needs.test.result == 'skipped' && github.event.inputs.image_tag != '')) }}
     runs-on: ubuntu-latest
     environment: demo
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -111,6 +113,7 @@ jobs:
           GCP_REGION: ${{ vars.GCP_REGION }}
           APP_COMMIT_SHA: ${{ steps.meta.outputs.image_tag }}
           IMAGE_REF: ${{ steps.digest.outputs.image_ref }}
+          SKIP_MIGRATIONS: ${{ steps.meta.outputs.is_rollback }}
           DB_URL_VERSION: ${{ vars.DB_URL_VERSION }}
           JWT_SECRET_VERSION: ${{ vars.JWT_SECRET_VERSION }}
           ADMIN_PASSWORD_VERSION: ${{ vars.ADMIN_PASSWORD_VERSION }}
@@ -130,6 +133,51 @@ jobs:
           SERVICE_URL="$(gcloud run services describe whatsss --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" --format='value(status.url)')"
           echo "service_url=${SERVICE_URL}" >> "$GITHUB_OUTPUT"
 
+      - name: Verify Cloud Run Revision Digest & Commit SHA
+        id: verify_revision
+        run: |
+          READY_REVISION="$(gcloud run services describe whatsss \
+            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format='value(status.latestReadyRevisionName)')"
+          if [ -z "$READY_REVISION" ]; then
+            echo "ERROR: No ready revision found on Cloud Run service." >&2
+            exit 1
+          fi
+          echo "revision_name=${READY_REVISION}" >> "$GITHUB_OUTPUT"
+
+          ACTUAL_IMAGE="$(gcloud run revisions describe "$READY_REVISION" \
+            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format='value(spec.containers[0].image)')"
+          echo "actual_image=${ACTUAL_IMAGE}" >> "$GITHUB_OUTPUT"
+
+          EXPECTED_REF="${{ steps.digest.outputs.image_ref }}"
+          if [ "$ACTUAL_IMAGE" != "$EXPECTED_REF" ]; then
+            echo "ERROR: Revision image mismatch." >&2
+            echo "  Expected: ${EXPECTED_REF}" >&2
+            echo "  Actual:   ${ACTUAL_IMAGE}" >&2
+            exit 1
+          fi
+
+          ACTUAL_SHA="$(gcloud run revisions describe "$READY_REVISION" \
+            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format='value(spec.containers[0].env[APP_COMMIT_SHA])')"
+          echo "actual_sha=${ACTUAL_SHA}" >> "$GITHUB_OUTPUT"
+
+          EXPECTED_SHA="${{ steps.meta.outputs.image_tag }}"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "ERROR: Revision APP_COMMIT_SHA mismatch." >&2
+            echo "  Expected: ${EXPECTED_SHA}" >&2
+            echo "  Actual:   ${ACTUAL_SHA}" >&2
+            exit 1
+          fi
+
+          TRAFFIC="$(gcloud run services describe whatsss \
+            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format='value(status.traffic)')"
+          echo "traffic=${TRAFFIC}" >> "$GITHUB_OUTPUT"
+          echo "Revision verified: ${READY_REVISION} with correct digest and SHA."
+          echo "Traffic: ${TRAFFIC}"
+
       - name: Set up Python for Smoke Test
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
@@ -140,8 +188,10 @@ jobs:
         env:
           SMOKE_EMAIL: ${{ vars.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+          EXPECTED_COMMIT_SHA: ${{ steps.meta.outputs.image_tag }}
+          SERVICE_URL: ${{ steps.release.outputs.service_url }}
         run: |
-          python3 deploy/smoke_test.py "${{ steps.release.outputs.service_url }}"
+          python3 deploy/smoke_test.py "$SERVICE_URL"
 
       - name: Record deployment summary
         if: ${{ always() }}
@@ -150,6 +200,10 @@ jobs:
           DEPLOY_DIGEST: ${{ steps.digest.outputs.image_ref }}
           DEPLOY_IS_ROLLBACK: ${{ steps.meta.outputs.is_rollback }}
           DEPLOY_SERVICE_URL: ${{ steps.release.outputs.service_url }}
+          ACTUAL_REVISION: ${{ steps.verify_revision.outputs.revision_name }}
+          ACTUAL_IMAGE: ${{ steps.verify_revision.outputs.actual_image }}
+          ACTUAL_SHA: ${{ steps.verify_revision.outputs.actual_sha }}
+          TRAFFIC: ${{ steps.verify_revision.outputs.traffic }}
           RELEASE_RESULT: ${{ steps.release.outcome }}
           SMOKE_RESULT: ${{ steps.smoke_test.outcome }}
         run: |
@@ -159,6 +213,10 @@ jobs:
           * **Commit image tag:** \`${DEPLOY_IMAGE_TAG}\`
           * **Digest:** \`${DEPLOY_DIGEST}\`
           * **Rollback:** \`${DEPLOY_IS_ROLLBACK}\`
+          * **Active revision:** \`${ACTUAL_REVISION}\`
+          * **Verified image:** \`${ACTUAL_IMAGE}\`
+          * **Verified SHA:** \`${ACTUAL_SHA}\`
+          * **Traffic:** \`${TRAFFIC}\`
           * **Release result:** \`${RELEASE_RESULT}\`
           * **Smoke test result:** \`${SMOKE_RESULT}\`
           * **URL:** ${DEPLOY_SERVICE_URL}
