@@ -27,7 +27,7 @@ jobs:
   deploy:
     name: Deploy to Cloud Run
     needs: [test]
-    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.test.result == 'success' || (needs.test.result == 'skipped' && github.event.inputs.image_tag != '')) }}
     runs-on: ubuntu-latest
     environment: demo
 
