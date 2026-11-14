@@ -625,6 +625,9 @@ Do **NOT** embed `npx prisma migrate deploy` into the application container star
 
 Instead, execute migrations and idempotent seeding as a decoupled, isolated Cloud Run Job (`whatsss-migrate`) prior to routing user traffic:
 
+> [!NOTE] Legacy / Manual Baseline Example
+> The snippet below illustrates the manual baseline commands. In our automated continuous deployment pipeline (`.github/workflows/deploy.yml` and `deploy/release.sh`), mutable tags and `:latest` secret references are strictly prohibited. The production deployment pipeline uses immutable image digests (`@sha256:...`) and explicit positive integer secret versions (e.g., `:1`) validated from the GitHub `demo` environment.
+
 ```bash
 # Create or update Cloud Run Job for schema migration and idempotent seed
 gcloud run jobs deploy whatsss-migrate \
@@ -646,6 +649,9 @@ gcloud run jobs execute whatsss-migrate --region="asia-southeast1" --project="cp
 
 ### 6.5 Deploying Application Service to Cloud Run
 Once the migration job completes successfully, deploy the application service:
+
+> [!NOTE] Legacy / Manual Baseline Example
+> As with the migration job above, the automated CD pipeline (`deploy/release.sh`) replaces `:TAG` with the resolved immutable Artifact Registry digest (`whatsss@sha256:...`) and pins secrets to explicit verified numeric versions.
 
 ```bash
 gcloud run deploy whatsss \
@@ -1221,3 +1227,147 @@ flowchart TD
 | 15 | **Check C-03: Clean-Clone Build & Run Verification** | **COMPLETED** | Automated in both `ci-docker.yml` (PRs, Job `132001551007`) and `ci.yml` (pushes, Job `132001966691`): fresh clone, `.env.example` with special-char DB password & URL-encoded `DOCKER_DATABASE_URL`, migration failure gate, 200/503/200 probes, 25,000 THB transaction creation, and volume persistence across teardown |
 
 
+
+
+---
+
+## 12. Continuous Deployment Pipeline via GitHub Actions (Lab 5 Episode 7 / Issue #21 / Checkpoint C-06)
+
+To satisfy Checkpoint C-06 (Continuous Deployment Pipeline and Automated Rollback), the repository provides `.github/workflows/deploy.yml` paired with `deploy/release.sh` and `deploy/smoke_test.py`.
+
+```mermaid
+flowchart TD
+    Trigger["Trigger Event"] --> BranchCheck{"Triggered on refs/heads/main?"}
+    BranchCheck -- "No" --> Denied["Deploy Blocked (main-only constraint)"]
+    BranchCheck -- "Yes" --> ModeCheck{"Rollback Input (image_tag provided)?"}
+
+    subgraph NormalFlow ["Normal Deployment Flow (Push to main / dispatch without tag)"]
+        TestGate["Job: test-and-docker (Gate via ci-docker.yml)"]
+        BuildImage["Build Docker Image (tagged with commit SHA)"]
+        ResolveDigest1["Resolve Immutable Digest (@sha256:...) from Artifact Registry"]
+        ValidateAllSecrets["Validate All 4 Secrets (DB, JWT, Admin Pwd, Demo Pwd)"]
+        RunMigrateJob["Execute Cloud Run Job (whatsss-migrate) & Verify Success"]
+        DeployService1["Deploy Cloud Run Service (whatsss)"]
+    end
+
+    subgraph RollbackFlow ["Rollback Flow (workflow_dispatch on main with 40-char SHA)"]
+        SkipTest["Skip Test Job (Immediate Remediation)"]
+        SkipBuild["Skip Docker Build (Image already exists)"]
+        ResolveDigest2["Resolve Existing Digest (@sha256:...) from Artifact Registry"]
+        ValidateServiceSecrets["Validate Service Secrets Only (DB_URL, JWT_SECRET)"]
+        SkipMigration["SKIP_MIGRATIONS=true (Bypass Migration & Seed Job)"]
+        DeployService2["Deploy Cloud Run Service (whatsss) with Target Digest"]
+    end
+
+    subgraph VerificationGate ["Post-Deployment Verification & Audit"]
+        VerifyRevision["Verify Active Revision, Digest, Commit SHA & 100% Traffic"]
+        SmokeTest["Execute Smoke Test (deploy/smoke_test.py) with SHA & HTTPS validation"]
+        RecordSummary["Record Deployment Summary in GITHUB_STEP_SUMMARY"]
+    end
+
+    ModeCheck -- "No" --> TestGate
+    TestGate -- "Passed" --> BuildImage
+    BuildImage --> ResolveDigest1
+    ResolveDigest1 --> ValidateAllSecrets
+    ValidateAllSecrets --> RunMigrateJob
+    RunMigrateJob --> DeployService1
+    DeployService1 --> VerifyRevision
+
+    ModeCheck -- "Yes" --> SkipTest
+    SkipTest --> SkipBuild
+    SkipBuild --> ResolveDigest2
+    ResolveDigest2 --> ValidateServiceSecrets
+    ValidateServiceSecrets --> SkipMigration
+    SkipMigration --> DeployService2
+    DeployService2 --> VerifyRevision
+
+    VerifyRevision --> SmokeTest
+    SmokeTest --> RecordSummary
+```
+
+### 12.1 Pipeline Trigger Modes & Security Gates
+1. **Normal Automated Deployment (`push` to `main`):**
+   - Automatically triggered upon merging code into `main`.
+   - Gate 1: `test` job executes `.github/workflows/ci-docker.yml` (all unit, integration, clean-clone C-03, lint, and security checks must pass).
+   - Gate 2: `deploy` job runs under the GitHub `demo` environment.
+   - Gate 3: Docker image is built with `--build-arg APP_COMMIT_SHA=${GITHUB_SHA}` and tagged strictly with the 40-character Git commit SHA (mutable tags like `:latest` are removed).
+   - Gate 4: The immutable image digest (`@sha256:...`) is resolved directly from Artifact Registry; Cloud Run deployments never reference mutable tags.
+   - Gate 5: `deploy/release.sh` validates all 4 Secret Manager secret versions (`DB_URL_VERSION`, `JWT_SECRET_VERSION`, `ADMIN_PASSWORD_VERSION`, `DEMO_PASSWORD_VERSION`) to guarantee they exist and are in the `ENABLED` state.
+   - Gate 6: `deploy/release.sh` runs the decoupled Cloud Run Migration Job (`whatsss-migrate`) synchronously. If migrations fail, the release aborts immediately without mutating or deploying the Cloud Run service.
+   - Gate 7: `deploy/release.sh` deploys the Cloud Run Service (`whatsss`) with Cloud SQL connection, least-privilege runtime service account (`whatsss-runner`), and explicit numeric secret versions.
+   - Gate 8: Cloud Run revision inspection verifies active revision, image digest, commit SHA, and confirms that 100% of user traffic is routed to the new revision.
+   - Gate 9: `deploy/smoke_test.py` performs post-deployment probe verification on the live public HTTPS URL.
+
+2. **Rollback Deployment (`workflow_dispatch` on `main` with `image_tag`):**
+   - Operator triggers the workflow manually from `main` specifying the full 40-character commit SHA of an existing image in `image_tag`.
+   - The `test` job is skipped to allow immediate remediation of production incidents.
+   - Input validation strictly enforces `^[0-9a-f]{40}$` to prevent command injection.
+   - Image build is skipped; existing image digest is resolved from Artifact Registry.
+   - `SKIP_MIGRATIONS=true` is passed to `deploy/release.sh`, bypassing the Migration Job to prevent re-executing migrations or running potentially incompatible seed steps.
+   - Required service secrets (`DB_URL_VERSION`, `JWT_SECRET_VERSION`) are strictly validated, but migration/seed-only secrets (`ADMIN_PASSWORD_VERSION`, `DEMO_PASSWORD_VERSION`) are not required during rollback.
+   - Cloud Run revision, 100% traffic allocation, and smoke test verifications are executed normally.
+
+### 12.2 GitHub `demo` Environment & Configuration Matrix
+The `deploy` job targets the GitHub Environment `demo`, which enforces branch protection (`refs/heads/main` only) and provides the following configuration:
+
+| Configuration Item | Type | Required for Normal | Required for Rollback | Description & Value |
+|---|---|:---:|:---:|---|
+| `GCP_PROJECT_ID` | Variable | Yes | Yes | GCP Project ID (`cpe334-whatsss-pmandels`) |
+| `GCP_REGION` | Variable | Yes | Yes | Compute & Artifact Registry region (`asia-southeast1`) |
+| `WIF_PROVIDER` | Variable | Yes | Yes | Workload Identity Federation provider resource identifier |
+| `WIF_SERVICE_ACCOUNT` | Variable | Yes | Yes | Deployment service account (`whatsss-deployer@...`) |
+| `DB_URL_VERSION` | Variable | Yes | Yes | Numeric Secret Manager version for PostgreSQL connection string (e.g. `1`) |
+| `JWT_SECRET_VERSION` | Variable | Yes | Yes | Numeric Secret Manager version for JWT signing key (e.g. `1`) |
+| `ADMIN_PASSWORD_VERSION` | Variable | Yes | No | Numeric version for seed administrator credentials (migration-only) |
+| `DEMO_PASSWORD_VERSION` | Variable | Yes | No | Numeric version for seed demo user credentials (migration-only) |
+| `SMOKE_EMAIL` | Variable | Optional | Optional | Dedicated user identifier for post-deploy smoke tests (e.g. `user_demo`) |
+| `SMOKE_PASSWORD` | Secret | Optional* | Optional* | Password for dedicated smoke test user (*required if `SMOKE_EMAIL` is set) |
+
+**Zero Long-Lived Service Account Keys:** Authentication uses Workload Identity Federation (OIDC token exchange via `google-github-actions/auth`). Permissions are strictly bounded:
+- Top-level workflow permissions: `contents: read` only.
+- `deploy` job permissions: `contents: read`, `id-token: write` (least-privilege OIDC access).
+
+### 12.3 Explicit Secret Version Management
+To eliminate nondeterministic runtime behavior caused by `:latest` references, all Secret Manager secrets are pinned to explicit numeric versions:
+* `DATABASE_URL` -> `whatsss-database-url:${DB_URL_VERSION}`
+* `JWT_SECRET` -> `whatsss-jwt-secret:${JWT_SECRET_VERSION}`
+* `SEED_ADMIN_PASSWORD` -> `whatsss-admin-password:${ADMIN_PASSWORD_VERSION}` (Normal deploy only)
+* `SEED_DEMO_PASSWORD` -> `whatsss-demo-password:${DEMO_PASSWORD_VERSION}` (Normal deploy only)
+
+The release script verifies via `gcloud secrets versions describe` that each specified version exists and is in the `ENABLED` state before any rollout command is executed.
+
+### 12.4 Post-Deployment Verification (Smoke Test & Revision Check)
+The deployment workflow concludes with automated verification gates:
+1. **Revision, Digest & Traffic Gate:**
+   - Queries `gcloud run services describe whatsss` to obtain `status.latestReadyRevisionName`.
+   - Inspects the revision container image and `APP_COMMIT_SHA` environment variable.
+   - Verifies that 100% of traffic is allocated to the new revision (`status.traffic[0].percent == 100` and `status.traffic[0].revisionName == READY_REVISION`).
+   - Fails immediately if the image digest, commit SHA, or traffic allocation does not match expectations.
+2. **Automated Smoke Test (`deploy/smoke_test.py`):**
+   - **Liveness Probe:** `GET /api/health` must return HTTP 200, `status: "ok"`, and matching `commitSha`.
+   - **Readiness Probe:** `GET /api/ready` must return HTTP 200, `status: "ready"`, `database: "connected"`, and matching `commitSha`.
+   - **Frontend UI:** `GET /` must return HTTP 200 with HTML document.
+   - **Security Gate:** `GET /api/accounts` must return HTTP 401 Unauthorized without session cookies.
+   - **Dedicated Smoke-Test User Flow:** When configured, tests login with `SMOKE_EMAIL` and `SMOKE_PASSWORD` using `{ "username": smoke_email, "password": smoke_password }` payload, calls protected `/api/auth/me`, verifies HTTP 200, calls `/api/auth/logout`, and confirms session invalidation (post-logout `/api/auth/me` returns 401).
+   - **HTTPS Enforcement:** The automated smoke test strictly requires `https://` for all runs (both unauthenticated public probe checks and authenticated flows). Running over plain HTTP, FTP, or other insecure schemes fails fast before any network requests are made. In addition, URLs with invalid ports or embedded credentials are rejected before any network traffic is initiated.
+
+### 12.5 Rollback Runbook & Limitations
+To perform a rollback:
+1. Go to **Actions** -> **Deploy demo** -> **Run workflow**.
+2. Select branch `main`.
+3. In `image_tag`, enter the full 40-character Git commit SHA of the known healthy revision (e.g., `2a7c4c7343e6426cfca713d3288d495dfed5f92d`).
+4. Click **Run workflow**.
+
+> [!WARNING] Database Migrations Are Forward-Only
+> Rollbacks do **NOT** reverse database migrations (`SKIP_MIGRATIONS=true` prevents re-running migrations during rollback). All schema migrations must follow the expand-contract pattern and maintain backward compatibility with previous container images.
+
+### 12.6 Smoke Test Failure Recovery Runbook
+If the smoke test fails after a deployment:
+1. The GitHub Actions job fails, alerting the team and recording details in the Step Summary.
+2. **No Automatic Rollback:** The pipeline does **NOT** perform uncontrolled automated rollbacks or database mutations. Automated rollbacks upon probe failure can cause cascading failures (e.g., reverting to an older image incompatible with newly applied migrations, or entering infinite restart loops).
+3. Review Cloud Run logs:
+   ```bash
+   gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=whatsss" --limit=50 --project=cpe334-whatsss-pmandels
+   ```
+4. If the failure is due to an application bug, initiate a rollback using the procedure in §12.5 to restore the previous healthy revision.
+5. If the failure is due to an external service outage (e.g., database connectivity), resolve the underlying infrastructure issue and re-run the workflow.

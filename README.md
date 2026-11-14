@@ -121,3 +121,17 @@ docker compose ps
 ### 6.4 Development Workspaces
 * **Backend:** Located in `server/` (runs on port 5000)
 * **Frontend:** Located in `client/` (runs on port 5173)
+
+---
+
+## 12. Cloud Deployment & CI/CD Pipeline (Lab 5)
+
+Detailed cloud architecture, deployment procedures, and runbooks are maintained in [`docs/labs/lab-05/deployment.md`](docs/labs/lab-05/deployment.md).
+
+### 12.4 Post-Deployment Verification (Smoke Test & Revision Check)
+The deployment workflow executes automated verification gates:
+* **Revision, Digest & Traffic Gate:** Confirms 100% traffic allocation and verified commit SHA on Cloud Run.
+* **Automated Smoke Test (`deploy/smoke_test.py`):**
+  - **HTTPS Enforcement:** The automated smoke test strictly requires `https://` across all test runs (both unauthenticated public probes and authenticated flows). Requests over plain HTTP or invalid URLs (with invalid ports or embedded credentials) are rejected fast before any network transmission.
+  - **Probes & Security Gate:** Verifies `/api/health`, `/api/ready`, frontend UI landing, and protected `/api/accounts` (401).
+  - **Authenticated Flow:** When credentials are provided (`SMOKE_EMAIL` and `SMOKE_PASSWORD`), verifies login with `{ username, password }`, verifies user identity on `/api/auth/me`, and confirms logout session invalidation.

@@ -54,6 +54,14 @@ MIGRATE_JOB_NAME="${MIGRATE_JOB_NAME:-whatsss-migrate}"
 CLOUD_RUN_SERVICE="${CLOUD_RUN_SERVICE:-whatsss}"
 SEED_DEMO_DATA="${SEED_DEMO_DATA:-true}"
 
+# SKIP_MIGRATIONS: when "true", skip the Migration Job entirely (used for rollback).
+# Default is "false". Only "true" or "false" are accepted; anything else fails safely.
+SKIP_MIGRATIONS="${SKIP_MIGRATIONS:-false}"
+if [[ "${SKIP_MIGRATIONS}" != "true" && "${SKIP_MIGRATIONS}" != "false" ]]; then
+  echo "ERROR: SKIP_MIGRATIONS must be 'true' or 'false' (got: '${SKIP_MIGRATIONS}')." >&2
+  exit 1
+fi
+
 if [[ -z "${APP_COMMIT_SHA:-}" ]]; then
   echo "ERROR: APP_COMMIT_SHA is required." >&2
   exit 1
@@ -123,21 +131,31 @@ RAW_DEMO_PWD_VER="${DEMO_PASSWORD_VERSION:-${SECRET_DEMO_PWD_VERSION:-}}"
 
 DB_URL_VER="$(resolve_secret_version "${SECRET_DB_URL}" "${RAW_DB_URL_VER}" "DB_URL_VERSION")"
 JWT_VER="$(resolve_secret_version "${SECRET_JWT}" "${RAW_JWT_VER}" "JWT_SECRET_VERSION")"
-ADMIN_PWD_VER="$(resolve_secret_version "${SECRET_ADMIN_PWD}" "${RAW_ADMIN_PWD_VER}" "ADMIN_PASSWORD_VERSION")"
-DEMO_PWD_VER="$(resolve_secret_version "${SECRET_DEMO_PWD}" "${RAW_DEMO_PWD_VER}" "DEMO_PASSWORD_VERSION")"
+
+if [[ "${SKIP_MIGRATIONS}" == "true" ]]; then
+  ADMIN_PWD_VER=""
+  DEMO_PWD_VER=""
+else
+  ADMIN_PWD_VER="$(resolve_secret_version "${SECRET_ADMIN_PWD}" "${RAW_ADMIN_PWD_VER}" "ADMIN_PASSWORD_VERSION")"
+  DEMO_PWD_VER="$(resolve_secret_version "${SECRET_DEMO_PWD}" "${RAW_DEMO_PWD_VER}" "DEMO_PASSWORD_VERSION")"
+fi
 
 echo "------------------------------------------------------------------------------"
 echo " Whatsss Release Rollout (DRY_RUN=${DRY_RUN})"
-echo " Project ID : ${PROJECT_ID}"
-echo " Region     : ${REGION}"
-echo " Image Ref  : ${IMAGE_REF}"
-echo " Commit SHA : ${COMMIT_SHA}"
-echo " Runtime SA : ${RUNTIME_SA_EMAIL}"
+echo " Project ID      : ${PROJECT_ID}"
+echo " Region          : ${REGION}"
+echo " Image Ref       : ${IMAGE_REF}"
+echo " Commit SHA      : ${COMMIT_SHA}"
+echo " Runtime SA      : ${RUNTIME_SA_EMAIL}"
+echo " Skip Migrations : ${SKIP_MIGRATIONS}"
 echo "------------------------------------------------------------------------------"
 
 # ------------------------------------------------------------------------------
 # Step 1: Deploy & Execute Cloud Run Migration + Seed Job (Gate Before Service)
 # ------------------------------------------------------------------------------
+if [[ "${SKIP_MIGRATIONS}" == "true" ]]; then
+  echo "--> [1/4] SKIP_MIGRATIONS=true — skipping Migration Job deployment and execution (rollback mode)."
+else
 echo "--> [1/4] Configuring and executing Cloud Run Job (${MIGRATE_JOB_NAME})..."
 JOB_ARGS=(
   "${MIGRATE_JOB_NAME}"
@@ -205,6 +223,7 @@ else
 
   echo "Migration & seed job execution verified: ${LATEST_EXECUTION} (status: SUCCEEDED)"
 fi
+fi  # end: SKIP_MIGRATIONS == false block
 
 # ------------------------------------------------------------------------------
 # Step 2: Deploy Cloud Run Service (`whatsss`)
