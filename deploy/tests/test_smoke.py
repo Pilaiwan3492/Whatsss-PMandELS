@@ -7,6 +7,7 @@ Project: Whatsss — Personal Money and Expense Logging System (CPE334 Lab 5)
 import io
 import sys
 import os
+import json
 import unittest
 from unittest.mock import MagicMock
 import urllib.error
@@ -136,20 +137,26 @@ class TestSmokeTest(unittest.TestCase):
         self.assertFalse(result)
 
     def test_partial_credentials_email_only_fails(self):
+        mock_opener = MagicMock()
         result = smoke_test.run_smoke_test(
             "https://whatsss.run.app",
             smoke_email="user@example.com",
-            smoke_password=""
+            smoke_password="",
+            opener=mock_opener
         )
         self.assertFalse(result)
+        mock_opener.open.assert_not_called()
 
     def test_partial_credentials_password_only_fails(self):
+        mock_opener = MagicMock()
         result = smoke_test.run_smoke_test(
             "https://whatsss.run.app",
             smoke_email="",
-            smoke_password="secretpassword"
+            smoke_password="validpassword123",
+            opener=mock_opener
         )
         self.assertFalse(result)
+        mock_opener.open.assert_not_called()
 
     def test_authenticated_flow_success(self):
         mock_opener = MagicMock()
@@ -167,11 +174,15 @@ class TestSmokeTest(unittest.TestCase):
             elif url.endswith("/api/accounts"):
                 raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b'{"error":"Unauthorized"}'))
             elif url.endswith("/api/auth/login"):
+                payload = json.loads(req.data.decode("utf-8"))
+                self.assertEqual(payload["username"], "user@example.com")
+                self.assertEqual(payload["password"], "validpassword123")
+                self.assertNotIn("email", payload)
                 logged_in = True
-                return MockHTTPResponse(200, '{"user":{"id":"usr_1","email":"user@example.com"}}')
+                return MockHTTPResponse(200, '{"user":{"id":"usr_1","username":"user@example.com"}}')
             elif url.endswith("/api/auth/me"):
                 if logged_in:
-                    return MockHTTPResponse(200, '{"user":{"id":"usr_1","email":"user@example.com"}}')
+                    return MockHTTPResponse(200, '{"user":{"id":"usr_1","username":"user@example.com"}}')
                 else:
                     raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b'{"error":"Unauthorized"}'))
             elif url.endswith("/api/auth/logout"):

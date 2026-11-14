@@ -53,6 +53,11 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", opener=None):
         print(f"FAIL: Service URL must start with http:// or https:// (got: '{base_url}')", file=sys.stderr)
         return False
 
+    # Validate credentials before making any network requests
+    if bool(smoke_email) != bool(smoke_password):
+        print("FAIL: Both SMOKE_EMAIL and SMOKE_PASSWORD must be configured together.", file=sys.stderr)
+        return False
+
     print(f"Running automated smoke test on: {base_url}")
 
     # 1. Check Liveness Probe: GET /api/health
@@ -118,10 +123,6 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", opener=None):
     print("PASS /api/accounts (unauthenticated gate check)")
 
     # 5. Optional Authenticated User Flow
-    if bool(smoke_email) != bool(smoke_password):
-        print("FAIL: Both SMOKE_EMAIL and SMOKE_PASSWORD must be configured together.", file=sys.stderr)
-        return False
-
     if smoke_email and smoke_password:
         print("Testing authenticated user flow...")
         if opener is None:
@@ -135,8 +136,9 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", opener=None):
             "Origin": base_url,
             "Content-Type": "application/json"
         }
+        # Backend in auth.controller.ts expects username and password
         login_payload = {
-            "email": smoke_email,
+            "username": smoke_email,
             "password": smoke_password
         }
 
