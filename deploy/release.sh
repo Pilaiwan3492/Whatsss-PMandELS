@@ -295,9 +295,18 @@ else
   VERIFIED_CLIENT_URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
     --region="${REGION}" \
     --project="${PROJECT_ID}" \
-    --flatten="spec.template.spec.containers[].env[]" \
-    --filter="name=CLIENT_URL" \
-    --format="value(value)" 2>/dev/null || true)"
+    --format=json 2>/dev/null | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    for c in d.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []):
+        for e in c.get("env", []):
+            if e.get("name") == "CLIENT_URL":
+                print(e.get("value", ""))
+                sys.exit(0)
+except Exception:
+    pass
+' 2>/dev/null || true)"
 
   if [[ -z "${VERIFIED_CLIENT_URL}" ]]; then
     VERIFIED_CLIENT_URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
