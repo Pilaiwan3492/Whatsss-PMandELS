@@ -21,13 +21,13 @@ concurrency:
 jobs:
   test:
     name: Test & Build Gate
-    if: ${{ github.event.inputs.image_tag == '' }}
+    if: ${{ github.event.inputs.image_tag == '' && github.ref == 'refs/heads/main' }}
     uses: ./.github/workflows/ci-docker.yml
 
   deploy:
     name: Deploy to Cloud Run
     needs: [test]
-    if: ${{ always() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: demo
 
