@@ -359,7 +359,7 @@ The Whatsss deployment workflow deliberately employs `docker build` + `docker pu
 > [!CAUTION]
 > **Potential Service Downtime Warning:** Changing the database password on an active single-user Cloud SQL account (`whatsss_app`) creates a temporary credential mismatch during propagation. Existing Cloud Run container instances will continue attempting database queries using the previous password until the new revision is fully deployed and old instances are drained. **Never refer to this procedure as "atomic" or "zero-downtime".** Perform this maintenance strictly during a scheduled maintenance window.
 
-When business or security policies require rotating the Cloud SQL password, execute this hardened runbook (also available as executable script at [`deploy/rotate-db-password.sh`](file:///c:/Users/User/Downloads/group_work_specs_v1/Whatsss-PMandELS/deploy/rotate-db-password.sh)). It includes `set -euo pipefail`, pre-validation of Cloud Run state before any mutations, automatic cleanup via shell `trap`, an active `ERR` trap ensuring that any failure after Cloud SQL password change enters rollback, and explicit reporting if rollback itself fails:
+When business or security policies require rotating the Cloud SQL password, execute this hardened runbook (also available as executable script at [`deploy/rotate-db-password.sh`](../../../deploy/rotate-db-password.sh)). It includes `set -euo pipefail`, pre-validation of Cloud Run state before any mutations, automatic cleanup via shell `trap`, an active `ERR` trap ensuring that any failure after Cloud SQL password change enters rollback, and explicit reporting if rollback itself fails:
 
 ```bash
 #!/usr/bin/env bash
