@@ -20,7 +20,7 @@ DEMO_PASSWORD_VERSION="${DEMO_PASSWORD_VERSION:-1}"
 # Automatic cleanup trap: ensures temporary secret files are shredded upon exit, error, or interruption
 TMP_BACKUP=""
 TMP_NEW_SECRET=""
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 cleanup_temp_files() {
   if [[ -n "${TMP_NEW_SECRET:-}" && -f "${TMP_NEW_SECRET}" ]]; then
     shred -u "${TMP_NEW_SECRET}" 2>/dev/null || rm -f "${TMP_NEW_SECRET}"

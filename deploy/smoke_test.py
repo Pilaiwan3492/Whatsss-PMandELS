@@ -6,6 +6,7 @@ Lab 5 (Episode 7 & Checkpoint C-06)
 
 Checks public URL health, readiness, web UI landing, and protected API endpoints.
 Optionally verifies authenticated user flow if SMOKE_EMAIL and SMOKE_PASSWORD exist.
+Strictly requires HTTPS for all smoke tests and validates commit SHA and user identity.
 """
 
 import os
@@ -14,6 +15,7 @@ import re
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 import http.cookiejar
 
 def make_request(url, method="GET", data=None, headers=None, opener=None):
@@ -49,10 +51,49 @@ def make_request(url, method="GET", data=None, headers=None, opener=None):
         raise
 
 def run_smoke_test(base_url, smoke_email="", smoke_password="", expected_commit_sha="", opener=None):
-    base_url = base_url.rstrip("/")
-    if not base_url.startswith("https://") and not base_url.startswith("http://"):
-        print(f"FAIL: Service URL must start with http:// or https:// (got: '{base_url}')", file=sys.stderr)
+    if not isinstance(base_url, str):
+        print(f"FAIL: Service URL must be a string (got: {type(base_url)})", file=sys.stderr)
         return False
+
+    base_url = base_url.strip()
+    if not base_url:
+        print("FAIL: Service URL cannot be empty.", file=sys.stderr)
+        return False
+
+    # Strict URL validation using urllib.parse.urlsplit
+    try:
+        parsed = urllib.parse.urlsplit(base_url)
+    except Exception as e:
+        print(f"FAIL: Malformed Service URL: {e}", file=sys.stderr)
+        return False
+
+    # Reject non-HTTPS (including HTTP, FTP, etc.) for ALL smoke tests
+    if parsed.scheme != "https":
+        print(f"FAIL: Service URL must use HTTPS scheme (got: '{parsed.scheme or 'none'}'). HTTP is strictly forbidden.", file=sys.stderr)
+        return False
+
+    # Reject missing hostnames
+    if not parsed.hostname:
+        print("FAIL: Service URL must include a valid hostname.", file=sys.stderr)
+        return False
+
+    # Reject embedded user credentials (e.g. https://user:pass@host)
+    if parsed.username or parsed.password:
+        print("FAIL: Service URL must not contain embedded user credentials.", file=sys.stderr)
+        return False
+
+    # Reject query strings
+    if parsed.query:
+        print("FAIL: Service URL must not contain query parameters.", file=sys.stderr)
+        return False
+
+    # Reject fragments (#)
+    if parsed.fragment:
+        print("FAIL: Service URL must not contain fragments (#).", file=sys.stderr)
+        return False
+
+    # Normalized clean base URL
+    base_url = f"https://{parsed.netloc}".rstrip("/")
 
     # Validate EXPECTED_COMMIT_SHA before making any network requests
     if not expected_commit_sha or not re.match(r"^[0-9a-f]{40}$", expected_commit_sha):
@@ -63,12 +104,6 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", expected_commit_
     if bool(smoke_email) != bool(smoke_password):
         print("FAIL: Both SMOKE_EMAIL and SMOKE_PASSWORD must be configured together.", file=sys.stderr)
         return False
-
-    # Enforce HTTPS for authenticated smoke test flow
-    if smoke_email and smoke_password:
-        if not base_url.startswith("https://"):
-            print("FAIL: Authenticated smoke test requires HTTPS. HTTP is not allowed when credentials are configured.", file=sys.stderr)
-            return False
 
     print(f"Running automated smoke test on: {base_url}")
 
@@ -171,6 +206,34 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", expected_commit_
             print(f"FAIL login: Expected HTTP 200, got {status}. Body: {body}", file=sys.stderr)
             return False
 
+        try:
+            login_json = json.loads(body)
+        except Exception as e:
+            print(f"FAIL login: Response is not valid JSON: {e}. Body: {body}", file=sys.stderr)
+            return False
+
+        # Support both standard backend response { success: true, data: { user: {...} } } and flat { user: {...} }
+        login_user = None
+        if isinstance(login_json, dict):
+            if isinstance(login_json.get("data"), dict) and isinstance(login_json["data"].get("user"), dict):
+                login_user = login_json["data"]["user"]
+            elif isinstance(login_json.get("user"), dict):
+                login_user = login_json["user"]
+
+        if not login_user:
+            print(f"FAIL login: Response missing valid user object: {login_json}", file=sys.stderr)
+            return False
+
+        login_user_id = login_user.get("id")
+        if not login_user_id or not isinstance(login_user_id, str) or not login_user_id.strip():
+            print(f"FAIL login: User object missing valid non-empty id: {login_user}", file=sys.stderr)
+            return False
+
+        login_username = login_user.get("username")
+        if login_username != smoke_email:
+            print(f"FAIL login: User username mismatch (expected: {smoke_email}, got: {login_username})", file=sys.stderr)
+            return False
+
         me_url = f"{base_url}/api/auth/me"
         try:
             status, body, _ = make_request(me_url, method="GET", opener=auth_opener)
@@ -179,6 +242,37 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", expected_commit_
 
         if status != 200:
             print(f"FAIL /api/auth/me: Expected HTTP 200, got {status}. Body: {body}", file=sys.stderr)
+            return False
+
+        try:
+            me_json = json.loads(body)
+        except Exception as e:
+            print(f"FAIL /api/auth/me: Response is not valid JSON: {e}. Body: {body}", file=sys.stderr)
+            return False
+
+        me_user = None
+        if isinstance(me_json, dict):
+            if isinstance(me_json.get("data"), dict) and isinstance(me_json["data"].get("user"), dict):
+                me_user = me_json["data"]["user"]
+            elif isinstance(me_json.get("user"), dict):
+                me_user = me_json["user"]
+
+        if not me_user:
+            print(f"FAIL /api/auth/me: Response missing valid user object: {me_json}", file=sys.stderr)
+            return False
+
+        me_user_id = me_user.get("id")
+        if not me_user_id or not isinstance(me_user_id, str) or not me_user_id.strip():
+            print(f"FAIL /api/auth/me: User object missing valid non-empty id: {me_user}", file=sys.stderr)
+            return False
+
+        if me_user_id != login_user_id:
+            print(f"FAIL /api/auth/me: User ID mismatch between login and /api/auth/me ({login_user_id} vs {me_user_id})", file=sys.stderr)
+            return False
+
+        me_username = me_user.get("username")
+        if me_username != smoke_email:
+            print(f"FAIL /api/auth/me: Authenticated username mismatch (expected: {smoke_email}, got: {me_username})", file=sys.stderr)
             return False
 
         logout_url = f"{base_url}/api/auth/logout"
