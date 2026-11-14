@@ -110,7 +110,7 @@ jobs:
         run: npm run build
 
       # ------------------------------------------------------------------------
-      # 3. Docker Build & Probe
+      # 3. Deployment Script Verification & Docker Build / Probe
       # ------------------------------------------------------------------------
       - name: Lint Deployment Scripts (if present)
         run: |
@@ -120,6 +120,43 @@ jobs:
           else
             echo "No deploy/ directory present yet, skipping script lint."
           fi
+
+      - name: ShellCheck Deployment Scripts
+        run: |
+          if [ -d "deploy" ]; then
+            if ! command -v shellcheck >/dev/null 2>&1; then
+              sudo apt-get update && sudo apt-get install -y shellcheck
+            fi
+            shellcheck --version
+            shellcheck deploy/*.sh deploy/tests/*.sh deploy/tests/mocks/*
+          fi
+
+      - name: Validate GitHub Actions Workflow Files (actionlint)
+        run: |
+          ACTIONLINT_VERSION="1.7.4"
+          ACTIONLINT_SHA256="fc0a6886bbb9a23a39eeec4b176193cadb54ddbe77cdbb19b637933919545395"
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -o actionlint.tar.gz
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+          chmod +x actionlint
+          ./actionlint .github/workflows/ci-docker.yml .github/workflows/deploy.yml
+
+      - name: Run Deployment Script Tests
+        run: |
+          if [ -d "deploy/tests" ]; then
+            bash deploy/tests/test-deploy.sh
+            bash deploy/tests/test-release.sh
+          fi
+
+      - name: Set up Python for Deploy Tests
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Validate Smoke Test Python Syntax & Run Unit Tests
+        run: |
+          python3 -m py_compile deploy/smoke_test.py deploy/extract_revision_sha.py deploy/verify_traffic.py
+          python3 -m unittest discover -s deploy/tests -p "test_*.py" -v
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
@@ -140,7 +177,10 @@ jobs:
             echo "$LEAKED_IN_IMAGE"
             exit 1
           fi
-          docker history --no-trunc "whatsss:pr-${{ github.sha }}" | grep -iE "SEED_ADMIN_PASSWORD|SEED_DEMO_PASSWORD|JWT_SECRET|POSTGRES_PASSWORD" && (echo "::error::Secret env leaked in Docker image history!" && exit 1) || true
+          if docker history --no-trunc "whatsss:pr-${{ github.sha }}" | grep -iE "SEED_ADMIN_PASSWORD|SEED_DEMO_PASSWORD|JWT_SECRET|POSTGRES_PASSWORD"; then
+            echo "::error::Secret env leaked in Docker image history!"
+            exit 1
+          fi
           echo "Verified: Zero secret files or build-layer credentials present inside production Docker image."
 
       - name: Verify Container Startup, Liveness & Database Readiness Probes
@@ -240,7 +280,7 @@ jobs:
           docker compose config -q
 
           # Save demo user credentials for downstream authentication step
-          echo "CI_DEMO_PWD=${CI_DEMO_PWD}" >> $GITHUB_ENV
+          echo "CI_DEMO_PWD=${CI_DEMO_PWD}" >> "$GITHUB_ENV"
 
       - name: Verify Migration Failure Gate Blocks App Startup (service_completed_successfully)
         working-directory: ../clean-clone-test
@@ -328,12 +368,13 @@ jobs:
           docker compose -p whatsss_c03_ci start postgres
 
           PG_STATUS="starting"
-          for i in {1..20}; do
+          for attempt in {1..20}; do
             PG_CID=$(docker compose -p whatsss_c03_ci ps -q postgres 2>/dev/null || true)
             if [ -n "$PG_CID" ]; then
               PG_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$PG_CID" 2>/dev/null || echo "starting")
             fi
             if [ "$PG_STATUS" = "healthy" ]; then
+              echo "PostgreSQL recovered on attempt ${attempt}/20"
               break
             fi
             sleep 1
@@ -375,13 +416,14 @@ jobs:
           docker compose -p whatsss_c03_ci up -d
 
           healthy=false
-          for i in {1..30}; do
+          for attempt in {1..30}; do
             APP_CID=$(docker compose -p whatsss_c03_ci ps -q app 2>/dev/null || true)
             HEALTH_STATUS="starting"
             if [ -n "$APP_CID" ]; then
               HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$APP_CID" 2>/dev/null || echo "starting")
             fi
             if [ "$HEALTH_STATUS" = "healthy" ]; then
+              echo "Application recovered on attempt ${attempt}/30"
               healthy=true
               break
             fi
@@ -403,6 +445,8 @@ jobs:
 
       - name: Clean up Docker Compose Stack
         if: always()
-        working-directory: ../clean-clone-test
         run: |
-          docker compose -p whatsss_c03_ci down -v || true
+          if [ -d "../clean-clone-test" ]; then
+            cd ../clean-clone-test
+            docker compose -p whatsss_c03_ci down -v || true
+          fi

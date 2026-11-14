@@ -1,0 +1,242 @@
+name: Deploy demo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Rollback: full commit SHA of an existing image. Empty = test, build and deploy current main.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test & Build Gate
+    if: ${{ github.event.inputs.image_tag == '' && github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/ci-docker.yml
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: [test]
+    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.test.result == 'success' || (needs.test.result == 'skipped' && github.event.inputs.image_tag != '')) }}
+    runs-on: ubuntu-latest
+    environment: demo
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud via WIF
+        id: auth
+        uses: google-github-actions/auth@71fee339e7287955519cc3efdd6fa62024cc5418 # v2.1.8
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@618f082e2282e5229e71f99c38860340281a05cc # v2.1.4
+
+      - name: Set up Docker Buildx
+        if: ${{ github.event.inputs.image_tag == '' }}
+        uses: docker/setup-buildx-action@b5ca514310cf821ea81b438e64c18ab862353724 # v3.10.0
+
+      - name: Configure Docker authentication for Artifact Registry
+        if: ${{ github.event.inputs.image_tag == '' }}
+        run: |
+          gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Resolve Image Tag & Target Metadata
+        id: meta
+        env:
+          ROLLBACK_IMAGE_TAG: ${{ inputs.image_tag || github.event.inputs.image_tag || '' }}
+        run: |
+          if [ -n "$ROLLBACK_IMAGE_TAG" ]; then
+            if [[ ! "$ROLLBACK_IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "ERROR: Rollback image tag must be a full 40-character SHA." >&2
+              exit 1
+            fi
+            IMAGE_TAG="$ROLLBACK_IMAGE_TAG"
+            IS_ROLLBACK="true"
+          else
+            IMAGE_TAG="${GITHUB_SHA}"
+            IS_ROLLBACK="false"
+          fi
+          
+          IMAGE_BASE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/whatsss/whatsss"
+          {
+            echo "image_tag=${IMAGE_TAG}"
+            echo "image_base=${IMAGE_BASE}"
+            echo "is_rollback=${IS_ROLLBACK}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and Push Docker Image
+        if: ${{ github.event.inputs.image_tag == '' }}
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_base }}:${{ steps.meta.outputs.image_tag }}
+          build-args: |
+            APP_COMMIT_SHA=${{ steps.meta.outputs.image_tag }}
+
+      - name: Resolve Immutable Image Digest
+        id: digest
+        run: |
+          IMAGE_URI="${{ steps.meta.outputs.image_base }}:${{ steps.meta.outputs.image_tag }}"
+          DIGEST="$(gcloud artifacts docker images describe "${IMAGE_URI}" --format='value(image_summary.digest)')"
+          if [ -z "${DIGEST}" ]; then
+            echo "ERROR: Failed to resolve image digest for ${IMAGE_URI}" >&2
+            exit 1
+          fi
+          IMAGE_REF="${{ steps.meta.outputs.image_base }}@${DIGEST}"
+          {
+            echo "image_digest=${DIGEST}"
+            echo "image_ref=${IMAGE_REF}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved Immutable Image Ref: ${IMAGE_REF}"
+
+      - name: Execute Migration & Rollout Cloud Run Service (release.sh)
+        id: release
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          APP_COMMIT_SHA: ${{ steps.meta.outputs.image_tag }}
+          IMAGE_REF: ${{ steps.digest.outputs.image_ref }}
+          SKIP_MIGRATIONS: ${{ steps.meta.outputs.is_rollback }}
+          DB_URL_VERSION: ${{ vars.DB_URL_VERSION }}
+          JWT_SECRET_VERSION: ${{ vars.JWT_SECRET_VERSION }}
+          ADMIN_PASSWORD_VERSION: ${{ vars.ADMIN_PASSWORD_VERSION }}
+          DEMO_PASSWORD_VERSION: ${{ vars.DEMO_PASSWORD_VERSION }}
+        run: |
+          # Enforce explicit positive integer versions from GitHub Environment variables
+          REQUIRED_VARS=(DB_URL_VERSION JWT_SECRET_VERSION)
+          if [ "${SKIP_MIGRATIONS}" != "true" ]; then
+            REQUIRED_VARS+=(ADMIN_PASSWORD_VERSION DEMO_PASSWORD_VERSION)
+          fi
+
+          for var_name in "${REQUIRED_VARS[@]}"; do
+            val="${!var_name}"
+            if [[ -z "${val}" || ! "${val}" =~ ^[0-9]+$ || "${val}" -le 0 ]]; then
+              echo "ERROR: Environment variable ${var_name} must be a positive integer in environment demo (got: '${val}')." >&2
+              exit 1
+            fi
+          done
+
+          chmod +x deploy/release.sh
+          bash deploy/release.sh
+          SERVICE_URL="$(gcloud run services describe whatsss --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" --format='value(status.url)')"
+          echo "service_url=${SERVICE_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python for Deployment Verification & Smoke Test
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Verify Cloud Run Revision Digest & Commit SHA
+        id: verify_revision
+        run: |
+          READY_REVISION="$(gcloud run services describe whatsss \
+            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format='value(status.latestReadyRevisionName)')"
+          if [ -z "$READY_REVISION" ]; then
+            echo "ERROR: No ready revision found on Cloud Run service." >&2
+            exit 1
+          fi
+
+          ACTUAL_IMAGE="$(gcloud run revisions describe "$READY_REVISION" \
+            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format='value(spec.containers[0].image)')"
+
+          EXPECTED_REF="${{ steps.digest.outputs.image_ref }}"
+          if [ "$ACTUAL_IMAGE" != "$EXPECTED_REF" ]; then
+            echo "ERROR: Revision image mismatch." >&2
+            echo "  Expected: ${EXPECTED_REF}" >&2
+            echo "  Actual:   ${ACTUAL_IMAGE}" >&2
+            exit 1
+          fi
+
+          EXPECTED_SHA="${{ steps.meta.outputs.image_tag }}"
+          ACTUAL_SHA="$(gcloud run revisions describe "$READY_REVISION" \
+            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format=json | python3 deploy/extract_revision_sha.py --expected-sha "$EXPECTED_SHA")"
+
+          TRAFFIC_STATUS="$(gcloud run services describe whatsss \
+            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format=json | python3 deploy/verify_traffic.py --target-revision "$READY_REVISION")"
+
+          {
+            echo "revision_name=${READY_REVISION}"
+            echo "actual_image=${ACTUAL_IMAGE}"
+            echo "actual_sha=${ACTUAL_SHA}"
+            echo "traffic=${TRAFFIC_STATUS}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Revision verified: ${READY_REVISION} with correct digest and SHA."
+          echo "Traffic allocation verified: ${TRAFFIC_STATUS}"
+
+      - name: Smoke test public URL
+        id: smoke_test
+        env:
+          SMOKE_EMAIL: ${{ vars.SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+          EXPECTED_COMMIT_SHA: ${{ steps.meta.outputs.image_tag }}
+          SERVICE_URL: ${{ steps.release.outputs.service_url }}
+        run: |
+          python3 deploy/smoke_test.py "$SERVICE_URL"
+
+      - name: Record deployment summary
+        if: ${{ always() }}
+        env:
+          DEPLOY_IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+          DEPLOY_DIGEST: ${{ steps.digest.outputs.image_ref }}
+          DEPLOY_IS_ROLLBACK: ${{ steps.meta.outputs.is_rollback }}
+          DEPLOY_SERVICE_URL: ${{ steps.release.outputs.service_url }}
+          RELEASE_OUTCOME: ${{ steps.release.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify_revision.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke_test.outcome }}
+          ACTUAL_REVISION: ${{ steps.verify_revision.outputs.revision_name }}
+          ACTUAL_IMAGE: ${{ steps.verify_revision.outputs.actual_image }}
+          ACTUAL_SHA: ${{ steps.verify_revision.outputs.actual_sha }}
+          TRAFFIC: ${{ steps.verify_revision.outputs.traffic }}
+        run: |
+          if [ "${RELEASE_OUTCOME}" = "success" ] && [ "${VERIFY_OUTCOME}" = "success" ] && [ "${SMOKE_OUTCOME}" = "success" ]; then
+            DEPLOY_STATUS="SUCCESS"
+          else
+            DEPLOY_STATUS="FAILED"
+          fi
+
+          REPORT_REVISION="${ACTUAL_REVISION:-N/A (verification did not succeed)}"
+          REPORT_IMAGE="${ACTUAL_IMAGE:-N/A}"
+          REPORT_SHA="${ACTUAL_SHA:-N/A}"
+          REPORT_TRAFFIC="${TRAFFIC:-N/A}"
+          REPORT_URL="${DEPLOY_SERVICE_URL:-N/A}"
+
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Whatsss demo deployment: ${DEPLOY_STATUS}
+
+          * **Overall status:** **\`${DEPLOY_STATUS}\`**
+          * **Target commit SHA:** \`${DEPLOY_IMAGE_TAG}\`
+          * **Image digest:** \`${DEPLOY_DIGEST}\`
+          * **Rollback mode:** \`${DEPLOY_IS_ROLLBACK}\`
+          * **Release outcome:** \`${RELEASE_OUTCOME}\`
+          * **Revision verification:** \`${VERIFY_OUTCOME}\`
+          * **Smoke test outcome:** \`${SMOKE_OUTCOME}\`
+          * **Active revision:** \`${REPORT_REVISION}\`
+          * **Verified image:** \`${REPORT_IMAGE}\`
+          * **Verified SHA:** \`${REPORT_SHA}\`
+          * **Traffic allocation:** \`${REPORT_TRAFFIC}\`
+          * **Service URL:** ${REPORT_URL}
+          EOF

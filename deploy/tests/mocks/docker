@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# deploy/tests/mocks/docker — Mock Docker CLI for Automated Unit Tests
+# ==============================================================================
+
+set -euo pipefail
+
+LOG_FILE="${MOCK_LOG_FILE:?MOCK_LOG_FILE must be set by test runner}"
+echo "docker $*" >> "${LOG_FILE}"
+exit 0
