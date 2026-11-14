@@ -1349,7 +1349,7 @@ The deployment workflow concludes with automated verification gates:
    - **Frontend UI:** `GET /` must return HTTP 200 with HTML document.
    - **Security Gate:** `GET /api/accounts` must return HTTP 401 Unauthorized without session cookies.
    - **Dedicated Smoke-Test User Flow:** When configured, tests login with `SMOKE_EMAIL` and `SMOKE_PASSWORD` using `{ "username": smoke_email, "password": smoke_password }` payload, calls protected `/api/auth/me`, verifies HTTP 200, calls `/api/auth/logout`, and confirms session invalidation (post-logout `/api/auth/me` returns 401).
-   - **HTTPS Enforcement:** If `SMOKE_EMAIL` and `SMOKE_PASSWORD` are configured, the test strictly requires `https://`. Running with credentials over plain HTTP fails fast to prevent credential transmission over insecure channels.
+   - **HTTPS Enforcement:** The automated smoke test strictly requires `https://` for all runs (both unauthenticated public probe checks and authenticated flows). Running over plain HTTP, FTP, or other insecure schemes fails fast before any network requests are made. In addition, URLs with invalid ports or embedded credentials are rejected before any network traffic is initiated.
 
 ### 12.5 Rollback Runbook & Limitations
 To perform a rollback:

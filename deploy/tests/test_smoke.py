@@ -94,6 +94,26 @@ class TestSmokeTest(unittest.TestCase):
         self.assertFalse(result)
         mock_opener.open.assert_not_called()
 
+    def test_url_with_empty_credentials_rejected_before_network(self):
+        mock_opener = MagicMock()
+        for bad_url in ["https://@whatsss.run.app", "https://:@whatsss.run.app", "https://user:@whatsss.run.app", "https://:pass@whatsss.run.app"]:
+            result = smoke_test.run_smoke_test(bad_url, expected_commit_sha=VALID_SHA, opener=mock_opener)
+            self.assertFalse(result, f"Expected {bad_url} to be rejected")
+        mock_opener.open.assert_not_called()
+
+    def test_url_with_invalid_port_rejected_before_network(self):
+        mock_opener = MagicMock()
+        for bad_url in [
+            "https://whatsss.run.app:abc",
+            "https://whatsss.run.app:0",
+            "https://whatsss.run.app:65536",
+            "https://whatsss.run.app:-1",
+            "https://whatsss.run.app:"
+        ]:
+            result = smoke_test.run_smoke_test(bad_url, expected_commit_sha=VALID_SHA, opener=mock_opener)
+            self.assertFalse(result, f"Expected invalid port URL {bad_url} to be rejected")
+        mock_opener.open.assert_not_called()
+
     def test_url_without_hostname_rejected_before_network(self):
         mock_opener = MagicMock()
         result = smoke_test.run_smoke_test("https://", expected_commit_sha=VALID_SHA, opener=mock_opener)
@@ -511,6 +531,42 @@ class TestSmokeTest(unittest.TestCase):
             opener=mock_opener
         )
         self.assertFalse(result)
+
+    def test_auth_me_missing_user_id_aborts(self):
+        mock_opener = MagicMock()
+        logout_called = False
+
+        def mock_open(req, timeout=15):
+            nonlocal logout_called
+            url = req.full_url
+            if url.endswith("/api/health"):
+                return MockHTTPResponse(200, json.dumps({"status": "ok", "commitSha": VALID_SHA}))
+            elif url.endswith("/api/ready"):
+                return MockHTTPResponse(200, json.dumps({"status": "ready", "database": "connected", "commitSha": VALID_SHA}))
+            elif url.rstrip("/").endswith("run.app") or url.endswith("/"):
+                return MockHTTPResponse(200, '<!doctype html><html><body>Whatsss</body></html>')
+            elif url.endswith("/api/accounts"):
+                raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b'{"error":"Unauthorized"}'))
+            elif url.endswith("/api/auth/login"):
+                return MockHTTPResponse(200, json.dumps({"data": {"user": {"id": "usr_1", "username": "user@example.com"}}}))
+            elif url.endswith("/api/auth/me"):
+                # Missing user ID in /api/auth/me response
+                return MockHTTPResponse(200, json.dumps({"data": {"user": {"username": "user@example.com"}}}))
+            elif url.endswith("/api/auth/logout"):
+                logout_called = True
+                return MockHTTPResponse(200, json.dumps({"data": {"message": "Logged out successfully"}}))
+            return MockHTTPResponse(404, "Not Found")
+
+        mock_opener.open.side_effect = mock_open
+        result = smoke_test.run_smoke_test(
+            "https://whatsss.run.app",
+            smoke_email="user@example.com",
+            smoke_password="validpassword123",
+            expected_commit_sha=VALID_SHA,
+            opener=mock_opener
+        )
+        self.assertFalse(result)
+        self.assertFalse(logout_called, "Smoke test must not continue to logout when /api/auth/me user ID is missing")
 
     def test_auth_me_user_id_mismatch_aborts(self):
         mock_opener = MagicMock()

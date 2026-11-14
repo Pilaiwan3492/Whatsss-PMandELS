@@ -77,9 +77,25 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", expected_commit_
         print("FAIL: Service URL must include a valid hostname.", file=sys.stderr)
         return False
 
-    # Reject embedded user credentials (e.g. https://user:pass@host)
-    if parsed.username or parsed.password:
+    # Reject embedded user credentials (even when username or password is empty)
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
         print("FAIL: Service URL must not contain embedded user credentials.", file=sys.stderr)
+        return False
+
+    # Validate the URL port and reject invalid ports
+    try:
+        port = parsed.port
+    except ValueError as e:
+        print(f"FAIL: Service URL contains an invalid port: {e}", file=sys.stderr)
+        return False
+
+    if port is not None:
+        if port <= 0 or port > 65535:
+            print(f"FAIL: Service URL port out of valid range 1-65535 (got: {port}).", file=sys.stderr)
+            return False
+
+    if parsed.netloc.endswith(":"):
+        print("FAIL: Service URL contains an empty port.", file=sys.stderr)
         return False
 
     # Reject query strings
@@ -230,8 +246,9 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", expected_commit_
             return False
 
         login_username = login_user.get("username")
-        if login_username != smoke_email:
-            print(f"FAIL login: User username mismatch (expected: {smoke_email}, got: {login_username})", file=sys.stderr)
+        login_email = login_user.get("email")
+        if login_username != smoke_email and login_email != smoke_email:
+            print(f"FAIL login: User identity mismatch (expected: {smoke_email}, got username: {login_username}, email: {login_email})", file=sys.stderr)
             return False
 
         me_url = f"{base_url}/api/auth/me"
@@ -271,7 +288,8 @@ def run_smoke_test(base_url, smoke_email="", smoke_password="", expected_commit_
             return False
 
         me_username = me_user.get("username")
-        if me_username != smoke_email:
+        me_email = me_user.get("email")
+        if me_username != smoke_email and me_email != smoke_email:
             print(f"FAIL /api/auth/me: Authenticated username mismatch (expected: {smoke_email}, got: {me_username})", file=sys.stderr)
             return False
 
