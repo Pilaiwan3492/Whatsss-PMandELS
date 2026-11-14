@@ -255,4 +255,10 @@ describe('Unit Test: Cloud-Ready Health, Readiness Probes & Safe Logging (Point 
     expect(readyRoute).toBeDefined();
     expect(readyRoute.methods).toContain('get');
   });
+
+  it('intentionally fails to prove merge gate blocks PR (Check C-02)', () => {
+    // This assertion intentionally fails to prove that GitHub branch ruleset
+    // 'protect-main' blocks PR merge when 'test-and-docker' CI check fails.
+    expect(true).toBe(false);
+  });
 });
