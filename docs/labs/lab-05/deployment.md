@@ -1204,7 +1204,7 @@ flowchart TD
 | **CLIENT_URL exact HTTPS** | **Verified** | Service Configuration (`gcloud run services describe whatsss` confirmed `CLIENT_URL: https://whatsss-sipqw4logq-as.a.run.app` matches `status.url: https://whatsss-sipqw4logq-as.a.run.app`) |
 | **C-04 E2E** | **Verified** | Screenshots & Probe Logs (`/api/health` 200, `/api/ready` 200 `"database":"connected"`, `user_demo` E2E workflow `27,000.00 THB` Bank / `0.00 THB` Debt, `BR-04` unbalanced split rejection & `BR-10` Admin `403`) |
 | **Deploy Script Tests** | **Verified** | Automated unit test suites (`deploy/tests/test-deploy.sh` 14/14 passed, `deploy/tests/test-release.sh` 14/14 passed, ShellCheck clean, and Prisma special-char DB URL integration tests passing in CI) |
-| **PR Review** | **Pending Peer Review** | [PR #28 Review](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/28) (`chore/19-first-gcp-deploy-c04 -> staging-lab5`, awaiting review and approval by `@Pilaiwan3492`) |
+| **PR Review** | **Merged** | [PR #28](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/28) (`chore/19-first-gcp-deploy-c04 -> staging-lab5`) reviewed, approved, and merged into `staging-lab5` at `2026-11-13T21:46:34Z` (merge commit `2b2f47403bb3192262842c9bc0e83f2b222223f9`) |
 
 ### 11.2 Cumulative Lab 5 Baseline Acceptance Criteria (Episodes 1–4)
 
@@ -1375,45 +1375,76 @@ If the smoke test fails after a deployment:
 
 ---
 
-## 13. Data Persistence Across Restart & Redeploy (Checkpoint C-05)
+## 13. Data Persistence Across Revision Redeployment & Container Replacement (Checkpoint C-05)
 
 ### 13.1 Verification Objective & Architecture
 Under Checkpoint C-05 and Requirement R-04, the production application must demonstrate zero data loss across container lifecycle events, including:
-1. Container restart and new revision deployment on Google Cloud Run.
-2. Production automated rollback drills (`B -> A`) and roll-forward operations (`A -> B`).
+1. Container replacement and revision redeployment on Google Cloud Run.
+2. Rollback dispatch operations and service updates.
 
-Because Cloud Run containers are strictly stateless and all database operations target Cloud SQL (`whatsss-sql` PostgreSQL 16) via Cloud SQL Auth Proxy Unix sockets, container termination, rescheduling, scaling down to zero, or revision replacement have zero impact on persistent database transactions.
+**Architectural Foundation:** Google Cloud Run is a managed serverless container runtime. Cloud Run instances are strictly stateless and ephemeral: instances spin up on demand, shut down when idle, scale to zero, or get replaced whenever a new revision is deployed (`gcloud run deploy` / `deploy.yml`). There is no persistent disk attached to container instances. All persistent application state—including user credentials, financial account opening balances, double-entry transaction ledgers, split allocations, and audit history—is stored exclusively in Google Cloud SQL (`whatsss-sql` PostgreSQL 16 Enterprise) accessed via Cloud SQL Auth Proxy Unix sockets (`/cloudsql/cpe334-whatsss-pmandels:asia-southeast1:whatsss-sql`). Consequently, container termination, container replacement, or revision redeployment have zero impact on persistent database transactions.
 
 ### 13.2 Live Verification Procedure & Evidence
 
-#### Step 1: Baseline Record Creation (C-05 Before)
-* **Date & Environment:** `2026-11-14`, Production Cloud Run (`https://whatsss-sipqw4logq-as.a.run.app`).
+#### Step 1: Baseline Record Creation (Before Revision Redeployment)
+* **Date & Environment:** `2026-11-14`, Production Google Cloud Run (`https://whatsss-sipqw4logq-as.a.run.app`).
 * **Operator:** Signed in as seeded evaluator account `user_demo` (role `USER`).
-* **Initial State:** Prior baseline balance of `27,000.00 THB` and total income of `20,000.00 THB` from C-04 testing.
+* **Initial State:** Prior baseline balance of `27,000.00 THB` and total income of `20,000.00 THB` established during C-04 live testing.
 * **Action:** Recorded a new income transaction:
   - Account: `Checking Bank`
+  - Transaction Type: `Income`
   - Amount: `5,000.00 THB`
   - Description: `C-05 Persistence Test Deposit`
-* **Result:** Transaction recorded successfully into Cloud SQL. `Checking Bank Balance` updated to `32,000.00 THB`, and `Total Income` increased to `25,000.00 THB`.
+  - Date: `2026-11-14`
+* **Result:** Transaction committed successfully to Cloud SQL. Live UI confirmed:
+  - `Checking Bank Balance`: Updated from `27,000.00 THB` to **`32,000.00 THB`**
+  - `Total Income`: Increased from `20,000.00 THB` to **`25,000.00 THB`**
+  - `Credit Card Debt`: Remained fully settled at **`0.00 THB`**
+  - Recent Transactions: Top record shows `2026-11-14 | Income | C-05 Persistence Test Deposit | + 5,000.00 THB`
 * **Evidence Screenshot:** [`evidence/c05-01-before-restart.png`](evidence/c05-01-before-restart.png)
 
-![C-05 Before Restart](evidence/c05-01-before-restart.png)
+![Live Dashboard Before Revision Redeployment](evidence/c05-01-before-restart.png)
+*Caption: Figure 13.1 — Production Dashboard before Revision Redeployment / Container Replacement (`https://whatsss-sipqw4logq-as.a.run.app/dashboard`). Evaluator user `user_demo` records income transaction "C-05 Persistence Test Deposit" (+5,000.00 THB), establishing a verified baseline balance of 32,000.00 THB.*
 
-#### Step 2: Cloud Run Restart & Revision Rollout
-* **Action:** Triggered a complete revision rollout via GitHub Actions `workflow_dispatch` (Run ID `43599307331`) deploying a fresh container revision to Cloud Run. All running container instances were terminated and replaced with newly spun-up containers.
-* **Verification:** Navigated to `https://whatsss-sipqw4logq-as.a.run.app/dashboard` and performed a hard refresh (`F5`).
-* **Outcome:** The live dashboard displayed the exact persistent state with zero data loss:
-  - `Checking Bank Balance`: `32,000.00 THB`
-  - `Total Income`: `25,000.00 THB`
-  - Recent Transactions: `C-05 Persistence Test Deposit (+ 5,000.00 THB)` intact at the top of the transaction ledger.
+#### Step 2: Cloud Run Revision Redeployment & Container Replacement (Run ID `43599307331`)
+* **Operation Performed:** Dispatched revision redeployment via GitHub Actions `workflow_dispatch` ([Run ID `43599307331`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43599307331)) specifying image tag `f160f256af24635cdc602b676a7cf8822fbbceb8`.
+* **Execution Parameters & Workflow Mode:**
+  - `inputs.image_tag`: `f160f256af24635cdc602b676a7cf8822fbbceb8`
+  - `DEPLOY_IS_ROLLBACK`: `true`
+  - `SKIP_MIGRATIONS`: `true`
+* **Workflow Mechanics:**
+  - The `test-and-docker` test gate and Docker build steps were skipped as designed for rapid redeployment.
+  - Image digest was resolved directly from Artifact Registry (`asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss:f160f256af24635cdc602b676a7cf8822fbbceb8`).
+  - Prisma migrations were bypassed (`SKIP_MIGRATIONS=true`).
+  - Cloud Run deployed new active revision `whatsss-00020-65k`, routing 100% traffic to the new revision and replacing previously running container instances.
+  - Automated HTTPS smoke tests (`deploy/smoke_test.py`) executed against public URL `https://whatsss-sipqw4logq-as.a.run.app`, passing `/api/health`, `/api/ready` (`database: connected`), `/` SPA HTML, and `/api/accounts` (401 auth gate).
+* **Live Post-Redeployment Verification:**
+  - Navigated to `https://whatsss-sipqw4logq-as.a.run.app/dashboard` and performed a forced hard refresh (`Ctrl+F5`) to verify state directly from Cloud SQL.
+  - **Account Balance Verified:** `Checking Bank Balance` remained exactly **`32,000.00 THB`** (did not revert to opening balance of `10,000.00 THB` or baseline `27,000.00 THB`).
+  - **Transaction Ledger Verified:** The exact test transaction `C-05 Persistence Test Deposit` (`+ 5,000.00 THB`, Date `2026-11-14`, Type `Income`) persisted intact at the top of the transaction history.
+  - **Total Income & Debt Verified:** `Total Income` remained **`25,000.00 THB`**; `Credit Card Debt` remained **`0.00 THB`**.
 * **Evidence Screenshot:** [`evidence/c05-02-after-restart.png`](evidence/c05-02-after-restart.png)
 
-![C-05 After Restart](evidence/c05-02-after-restart.png)
+![Live Dashboard After Revision Redeployment](evidence/c05-02-after-restart.png)
+*Caption: Figure 13.2 — Production Dashboard after Cloud Run Revision Redeployment / Container Replacement (`https://whatsss-sipqw4logq-as.a.run.app/dashboard`, Run ID `43599307331`, Revision `whatsss-00020-65k`). Full page hard refresh confirms zero data loss: Checking Bank balance remains 32,000.00 THB, Total Income remains 25,000.00 THB, and transaction "C-05 Persistence Test Deposit" (+5,000.00 THB) is preserved in Cloud SQL.*
 
-#### Step 3: Rollback & Roll-Forward Persistence Drills
-* **Rollback Drill (`workflow_dispatch`, Run ID `43598016213`):** Rolled back Cloud Run service without re-running migrations (`SKIP_MIGRATIONS=true`). Verified that `test-and-docker` gate was skipped for immediate remediation, Cloud Run deployed healthy image, and `deploy/smoke_test.py` passed all liveness, readiness, and public endpoint checks.
-* **Data Integrity Confirmation:** Re-queried `/api/accounts` and `/api/dashboard`; confirmed `32,000.00 THB` and `C-05 Persistence Test Deposit` persisted unaltered throughout the rollback drill.
-* **Roll-Forward Drill (`workflow_dispatch`, Run ID `43599307331`):** Restored latest release cleanly with 100% traffic allocation and passing health probes.
+### 13.3 Deployment Sequence & Multi-Version Drill Analysis
+
+To maintain absolute technical precision and transparency regarding the deployment sequence and workflow modes:
+
+| Workflow Run ID | Event Type | Head Commit / Image Tag | Deployment Mode | Active Cloud Run Revision | Traffic | Smoke Test | Data Persistence Verified |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| [`43597142988`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43597142988) | `push` (`main`) | `f160f256af24635cdc602b676a7cf8822fbbceb8` | Normal Forward Deploy (`DEPLOY_IS_ROLLBACK=false`, `SKIP_MIGRATIONS=false`) | `whatsss-00017-snp` | 100% | PASS | Verified baseline state |
+| [`43598016213`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43598016213) | `workflow_dispatch` | `f160f256af24635cdc602b676a7cf8822fbbceb8` | Rollback Dispatch Drill (`DEPLOY_IS_ROLLBACK=true`, `SKIP_MIGRATIONS=true`) | `whatsss-00018-7jp` | 100% | PASS | Verified: 32,000 THB & deposit intact |
+| [`43599307331`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43599307331) | `workflow_dispatch` | `f160f256af24635cdc602b676a7cf8822fbbceb8` | Redeploy Dispatch Drill (`DEPLOY_IS_ROLLBACK=true`, `SKIP_MIGRATIONS=true`) | `whatsss-00020-65k` | 100% | PASS | Verified: 32,000 THB & deposit intact |
+
+#### Precise Status of Checkpoint C-05:
+1. **Container Replacement & Database Persistence across Container Lifecycle Events:** **VERIFIED**
+   - Live testing unequivocally proves that replacing Cloud Run container instances (via new revision rollout `whatsss-00020-65k`) retains 100% data integrity in Cloud SQL, with zero data loss or ledger distortion.
+2. **Rollback Dispatch Automation Mechanics:** **VERIFIED**
+   - Workflow runs `43598016213` and `43599307331` successfully verified the rollback execution path: test gates and image builds were skipped, migrations bypassed, healthy image rolled out to Cloud Run, and smoke tests confirmed live readiness.
+3. **Multi-Version Roll-Forward Sequence (`Version B -> Version A -> Version B` across distinct images):** **PARTIALLY VERIFIED**
+   - Because both dispatch runs (`43598016213` and `43599307331`) targeted image tag `f160f256af24635cdc602b676a7cf8822fbbceb8`, Run `43599307331` demonstrated revision redeployment, container replacement, and rollback dispatch execution, but not a forward deployment between two distinct release versions (A vs B). A full drill alternating between two distinct version images remains pending future multi-release testing.
 
 ---
 
@@ -1428,7 +1459,7 @@ Because Cloud Run containers are strictly stateless and all database operations 
   2. `WIF Authentication`: Authenticated keyless via Workload Identity Federation as `whatsss-deployer@cpe334-whatsss-pmandels.iam.gserviceaccount.com`.
   3. `Docker Build & Push`: Built with `provenance: false` to ensure immutable single-manifest digest matching Cloud Run revision spec.
   4. `Database Migration Job`: Executed `whatsss-migrate` Cloud Run Job synchronously with `DB_URL_VERSION=3`, verifying schema and seed idempotency before service rollout.
-  5. `Cloud Run Rollout`: Deployed `whatsss` Cloud Run Service with 100% traffic allocation.
+  5. `Cloud Run Rollout`: Deployed `whatsss` Cloud Run Service with 100% traffic allocation (Revision `whatsss-00017-snp`).
   6. `Revision & Traffic Verification`: Verified revision image digest, `APP_COMMIT_SHA=f160f256af24635cdc602b676a7cf8822fbbceb8`, and `100%` traffic allocation.
   7. `Automated HTTPS Smoke Test`:
      - `PASS /api/health` (commitSha: `f160f256af24635cdc602b676a7cf8822fbbceb8`)
@@ -1444,7 +1475,7 @@ Because Cloud Run containers are strictly stateless and all database operations 
   - `Test & Build Gate`: **`Skipped`** (immediate remediation constraint satisfied).
   - `Docker Build`: **`Skipped`** (existing image digest resolved directly from Artifact Registry).
   - `Migration Job`: **`Skipped`** (`SKIP_MIGRATIONS=true` prevents forward schema mutation during rollback).
-  - `Cloud Run Service Rollout`: Updated service revision to specified image with 100% traffic.
+  - `Cloud Run Service Rollout`: Updated service revision to specified image with 100% traffic (Revision `whatsss-00018-7jp`).
   - `Smoke Test`: All HTTPS health, readiness, and security probes passed 100%.
   - `Step Summary Report`: Recorded `Rollback mode: true` and `Overall status: SUCCESS`.
 
@@ -1458,7 +1489,7 @@ Because Cloud Run containers are strictly stateless and all database operations 
 | **C-02** | Failed CI Check Blocks Merging (`protect-main`) | **VERIFIED** | Branch protection requires `test-and-docker` passing check and 1 approving review; direct push and failing PRs strictly blocked |
 | **C-03** | Clean-Clone Build, Run & Data Persistence | **VERIFIED** | Automated in `test-and-docker` and `ci.yml` (clean clone, `.env.example`, special-char DB password, migration failure gate, 200/503/200 probes, 25,000 THB transaction, volume persistence across teardown) |
 | **C-04** | Public Cloud Run Deployment & End-to-End Verification | **VERIFIED** | Live service at `https://whatsss-sipqw4logq-as.a.run.app`, Cloud SQL PostgreSQL 16 (`whatsss-sql`), Secret Manager, least-privilege SA, E2E workflow (`27,000 THB` Bank / `0 THB` Debt), rule rejections (`BR-04` & `BR-10`) |
-| **C-05** | Data Persistence Across Restart & Redeploy | **VERIFIED** | Live test with `C-05 Persistence Test Deposit` (`+5,000.00 THB`), Checking Bank balance `32,000.00 THB` preserved intact across Cloud Run restart (Run ID `43599307331`), rollback (Run ID `43598016213`), and roll-forward |
+| **C-05** | Data Persistence Across Revision Redeployment & Container Replacement | **PARTIALLY VERIFIED** | Container replacement & data persistence verified: `C-05 Persistence Test Deposit` (`+5,000.00 THB`) and Checking Bank balance `32,000.00 THB` preserved intact across Cloud Run revision redeployment / container replacement (Run ID `43599307331`, Revision `whatsss-00020-65k`); rollback dispatch mechanics verified (Run ID `43598016213`); distinct 3-version roll-forward drill (`B -> A -> B`) across different commit images remains pending. |
 | **C-06** | Continuous Deployment Pipeline & Automated Rollback | **VERIFIED** | `.github/workflows/deploy.yml` with WIF, immutable digest deployment, migration job, 100% traffic, and smoke test (Push Run `43597142988` and Dispatch Rollback Run `43598016213`) |
 
 ---
@@ -1481,7 +1512,25 @@ Because Cloud Run containers are strictly stateless and all database operations 
 | **EVD-12** | C-04 / Rotation Safety | [`evidence/c04-12-rotation-probe-failure-credential-mismatch.png`](evidence/c04-12-rotation-probe-failure-credential-mismatch.png) | Fail-closed behavior on password mismatch |
 | **EVD-13** | C-04 / Logging Audit | [`evidence/c04-13-cloud-logging-prisma-auth-failed.png`](evidence/c04-13-cloud-logging-prisma-auth-failed.png) | Cloud Logging trace for authentication validation |
 | **EVD-14** | C-04 / Healthy Revision Probes | [`evidence/c04-14-cloudshell-successful-revision-00006-probes.png`](evidence/c04-14-cloudshell-successful-revision-00006-probes.png) | Revision `whatsss-00006-9j1` serving 100% traffic with 200 OK probes |
-| **EVD-15** | C-05 / Data Persistence Before | [`evidence/c05-01-before-restart.png`](evidence/c05-01-before-restart.png) | Record `C-05 Persistence Test Deposit` (`+5,000.00 THB`) created, balance `32,000.00 THB` on live URL |
-| **EVD-16** | C-05 / Data Persistence After | [`evidence/c05-02-after-restart.png`](evidence/c05-02-after-restart.png) | Zero data loss: `32,000.00 THB` and test record intact after Cloud Run restart & revision replacement |
-| **EVD-17** | C-06 / Automated Deployment | [Run #43597142988](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43597142988) | Automated CD workflow on `main` push (Commit `f160f25`), all 31 checks, migration job, rollout, smoke tests |
-| **EVD-18** | C-06 / Rollback Verification | [Run #43598016213](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43598016213) | `workflow_dispatch` rollback test with skipped test/build gate, bypassed migration, 100% traffic, smoke test |
+| **EVD-15** | C-05 / Data Persistence Before Redeploy | [`evidence/c05-01-before-restart.png`](evidence/c05-01-before-restart.png) | Baseline financial ledger state before revision redeployment: record `C-05 Persistence Test Deposit` (`+5,000.00 THB`) created, Checking Bank balance `32,000.00 THB` on live URL |
+| **EVD-16** | C-05 / Data Persistence After Redeploy | [`evidence/c05-02-after-restart.png`](evidence/c05-02-after-restart.png) | Zero data loss verified after Cloud Run revision redeployment / container replacement (Run ID `43599307331`, Revision `whatsss-00020-65k`): `32,000.00 THB` balance and test record intact |
+| **EVD-17** | C-06 / Automated Deployment | [`Run #43597142988`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43597142988) | Automated CD workflow on `main` push (Commit `f160f25`), all 31 checks, migration job, rollout, smoke tests |
+| **EVD-18** | C-06 / Rollback Verification | [`Run #43598016213`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/43598016213) | `workflow_dispatch` rollback test with skipped test/build gate, bypassed migration, 100% traffic, smoke test |
+
+---
+
+## 17. Issue #23 Deliverables & Scope Clarification
+
+In accordance with Lab 5 Handout Section 4.3, 11, and 12, Issue #23 encompasses both repository technical documentation and course report submission:
+
+1. **Repository Deliverables (Covered in PR #36):**
+   - Finalized production deployment runbook and verification documentation (`docs/labs/lab-05/deployment.md`).
+   - Genuine, sanitized test evidence screenshots verifying Cloud Run end-to-end functionality (C-04) and data persistence across revision redeployment / container replacement (C-05) in `docs/labs/lab-05/evidence/`.
+   - Comprehensive traceability matrix for CI/CD pipelines, Action SHA pinning, and least-privilege IAM configuration.
+
+2. **Course Report Deliverables (Handout Section 12 — Submitted Separately):**
+   - The consolidated course PDF document (`lab5_sec<section>_<group name>.pdf`) containing:
+     - Written responses to **Answer Part 0 through Part 4**.
+     - Formatted and sanitized **Evidence Index Table**.
+     - Complete team **Contribution Table**.
+   - As per project specifications, this report PDF is assembled and submitted directly to the course portal. PR #36 covers only the repository documentation and verification evidence; it does not contain the PDF submission or mark Issue #23 as complete until the PDF is reviewed, finalized, and submitted by the team before the 15 November 2026 23:59 deadline, and grading is completed.
