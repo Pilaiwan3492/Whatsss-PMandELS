@@ -131,8 +131,14 @@ RAW_DEMO_PWD_VER="${DEMO_PASSWORD_VERSION:-${SECRET_DEMO_PWD_VERSION:-}}"
 
 DB_URL_VER="$(resolve_secret_version "${SECRET_DB_URL}" "${RAW_DB_URL_VER}" "DB_URL_VERSION")"
 JWT_VER="$(resolve_secret_version "${SECRET_JWT}" "${RAW_JWT_VER}" "JWT_SECRET_VERSION")"
-ADMIN_PWD_VER="$(resolve_secret_version "${SECRET_ADMIN_PWD}" "${RAW_ADMIN_PWD_VER}" "ADMIN_PASSWORD_VERSION")"
-DEMO_PWD_VER="$(resolve_secret_version "${SECRET_DEMO_PWD}" "${RAW_DEMO_PWD_VER}" "DEMO_PASSWORD_VERSION")"
+
+if [[ "${SKIP_MIGRATIONS}" == "true" ]]; then
+  ADMIN_PWD_VER=""
+  DEMO_PWD_VER=""
+else
+  ADMIN_PWD_VER="$(resolve_secret_version "${SECRET_ADMIN_PWD}" "${RAW_ADMIN_PWD_VER}" "ADMIN_PASSWORD_VERSION")"
+  DEMO_PWD_VER="$(resolve_secret_version "${SECRET_DEMO_PWD}" "${RAW_DEMO_PWD_VER}" "DEMO_PASSWORD_VERSION")"
+fi
 
 echo "------------------------------------------------------------------------------"
 echo " Whatsss Release Rollout (DRY_RUN=${DRY_RUN})"

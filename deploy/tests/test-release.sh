@@ -538,6 +538,84 @@ if [[ "${output}" != *"[3/4] Resolving live Cloud Run HTTPS URL and synchronizin
 fi
 pass_test "SKIP_MIGRATIONS=true preserves CLIENT_URL synchronization and verification"
 
+# ------------------------------------------------------------------------------
+# Test 21: Rollback does not require migration/seed-only secrets
+# ------------------------------------------------------------------------------
+new_test_env "rel21_rollback_omits_seed_secrets"
+output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="true" \
+  DB_URL_VERSION="1" \
+  JWT_SECRET_VERSION="1" \
+  ADMIN_PASSWORD_VERSION="" \
+  DEMO_PASSWORD_VERSION="" \
+  SECRET_ADMIN_PWD_VERSION="" \
+  SECRET_DEMO_PWD_VERSION="" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"
+if ! grep -q "gcloud run deploy whatsss" "${MOCK_LOG_FILE}"; then
+  fail_test "Expected 'gcloud run deploy whatsss' to be called during rollback without seed secrets"
+fi
+pass_test "Rollback succeeds without requiring migration or seed secrets"
+
+# ------------------------------------------------------------------------------
+# Test 22: Rollback still enforces required service secrets (DB_URL and JWT_SECRET)
+# ------------------------------------------------------------------------------
+new_test_env "rel22_rollback_requires_service_secrets"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="true" \
+  DB_URL_VERSION="" \
+  SECRET_DB_URL_VERSION="" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail during rollback when DB_URL_VERSION is missing"
+fi
+if [[ "${output}" != *"ERROR: DB_URL_VERSION is required"* ]]; then
+  fail_test "Expected DB_URL_VERSION required error during rollback, got: ${output}"
+fi
+
+new_test_env "rel22_rollback_requires_jwt_secret"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="true" \
+  JWT_SECRET_VERSION="" \
+  SECRET_JWT_VERSION="" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail during rollback when JWT_SECRET_VERSION is missing"
+fi
+if [[ "${output}" != *"ERROR: JWT_SECRET_VERSION is required"* ]]; then
+  fail_test "Expected JWT_SECRET_VERSION required error during rollback, got: ${output}"
+fi
+pass_test "Rollback strictly enforces required Cloud Run Service secrets (DB_URL and JWT_SECRET)"
+
+# ------------------------------------------------------------------------------
+# Test 23: Normal deployment requires all 4 secrets including seed secrets
+# ------------------------------------------------------------------------------
+new_test_env "rel23_normal_deploy_requires_admin_pwd"
+if output="$(
+  GCP_PROJECT_ID="cpe334-whatsss-pmandels" \
+  APP_COMMIT_SHA="${VALID_COMMIT_SHA}" \
+  IMAGE_REF="${VALID_IMAGE_REF}" \
+  SKIP_MIGRATIONS="false" \
+  ADMIN_PASSWORD_VERSION="" \
+  SECRET_ADMIN_PWD_VERSION="" \
+  bash "${RELEASE_SCRIPT}" 2>&1
+)"; then
+  fail_test "Expected release.sh to fail in normal deploy when ADMIN_PASSWORD_VERSION is missing"
+fi
+if [[ "${output}" != *"ERROR: ADMIN_PASSWORD_VERSION is required"* ]]; then
+  fail_test "Expected ADMIN_PASSWORD_VERSION required error, got: ${output}"
+fi
+pass_test "Normal deployment strictly requires migration and seed secrets"
+
 echo "=============================================================================="
 echo " ALL ${PASS_COUNT} RELEASE SCRIPT TESTS PASSED!"
 echo "=============================================================================="

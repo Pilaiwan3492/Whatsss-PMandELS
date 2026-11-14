@@ -181,7 +181,10 @@ jobs:
             echo "$LEAKED_IN_IMAGE"
             exit 1
           fi
-          docker history --no-trunc "whatsss:pr-${{ github.sha }}" | grep -iE "SEED_ADMIN_PASSWORD|SEED_DEMO_PASSWORD|JWT_SECRET|POSTGRES_PASSWORD" && (echo "::error::Secret env leaked in Docker image history!" && exit 1) || true
+          if docker history --no-trunc "whatsss:pr-${{ github.sha }}" | grep -iE "SEED_ADMIN_PASSWORD|SEED_DEMO_PASSWORD|JWT_SECRET|POSTGRES_PASSWORD"; then
+            echo "::error::Secret env leaked in Docker image history!"
+            exit 1
+          fi
           echo "Verified: Zero secret files or build-layer credentials present inside production Docker image."
 
       - name: Verify Container Startup, Liveness & Database Readiness Probes
@@ -281,7 +284,7 @@ jobs:
           docker compose config -q
 
           # Save demo user credentials for downstream authentication step
-          echo "CI_DEMO_PWD=${CI_DEMO_PWD}" >> $GITHUB_ENV
+          echo "CI_DEMO_PWD=${CI_DEMO_PWD}" >> "$GITHUB_ENV"
 
       - name: Verify Migration Failure Gate Blocks App Startup (service_completed_successfully)
         working-directory: ../clean-clone-test
@@ -369,12 +372,13 @@ jobs:
           docker compose -p whatsss_c03_ci start postgres
 
           PG_STATUS="starting"
-          for i in {1..20}; do
+          for attempt in {1..20}; do
             PG_CID=$(docker compose -p whatsss_c03_ci ps -q postgres 2>/dev/null || true)
             if [ -n "$PG_CID" ]; then
               PG_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$PG_CID" 2>/dev/null || echo "starting")
             fi
             if [ "$PG_STATUS" = "healthy" ]; then
+              echo "PostgreSQL recovered on attempt ${attempt}/20"
               break
             fi
             sleep 1
@@ -416,13 +420,14 @@ jobs:
           docker compose -p whatsss_c03_ci up -d
 
           healthy=false
-          for i in {1..30}; do
+          for attempt in {1..30}; do
             APP_CID=$(docker compose -p whatsss_c03_ci ps -q app 2>/dev/null || true)
             HEALTH_STATUS="starting"
             if [ -n "$APP_CID" ]; then
               HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$APP_CID" 2>/dev/null || echo "starting")
             fi
             if [ "$HEALTH_STATUS" = "healthy" ]; then
+              echo "Application recovered on attempt ${attempt}/30"
               healthy=true
               break
             fi
@@ -444,6 +449,8 @@ jobs:
 
       - name: Clean up Docker Compose Stack
         if: always()
-        working-directory: ../clean-clone-test
         run: |
-          docker compose -p whatsss_c03_ci down -v || true
+          if [ -d "../clean-clone-test" ]; then
+            cd ../clean-clone-test
+            docker compose -p whatsss_c03_ci down -v || true
+          fi

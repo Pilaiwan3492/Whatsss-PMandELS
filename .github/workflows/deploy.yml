@@ -76,9 +76,11 @@ jobs:
           fi
           
           IMAGE_BASE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/whatsss/whatsss"
-          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "image_base=${IMAGE_BASE}" >> "$GITHUB_OUTPUT"
-          echo "is_rollback=${IS_ROLLBACK}" >> "$GITHUB_OUTPUT"
+          {
+            echo "image_tag=${IMAGE_TAG}"
+            echo "image_base=${IMAGE_BASE}"
+            echo "is_rollback=${IS_ROLLBACK}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and Push Docker Image
         if: ${{ github.event.inputs.image_tag == '' }}
@@ -88,7 +90,6 @@ jobs:
           push: true
           tags: |
             ${{ steps.meta.outputs.image_base }}:${{ steps.meta.outputs.image_tag }}
-            ${{ steps.meta.outputs.image_base }}:latest
           build-args: |
             APP_COMMIT_SHA=${{ steps.meta.outputs.image_tag }}
 
@@ -102,8 +103,10 @@ jobs:
             exit 1
           fi
           IMAGE_REF="${{ steps.meta.outputs.image_base }}@${DIGEST}"
-          echo "image_digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "image_ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+          {
+            echo "image_digest=${DIGEST}"
+            echo "image_ref=${IMAGE_REF}"
+          } >> "$GITHUB_OUTPUT"
           echo "Resolved Immutable Image Ref: ${IMAGE_REF}"
 
       - name: Execute Migration & Rollout Cloud Run Service (release.sh)
@@ -120,7 +123,12 @@ jobs:
           DEMO_PASSWORD_VERSION: ${{ vars.DEMO_PASSWORD_VERSION }}
         run: |
           # Enforce explicit positive integer versions from GitHub Environment variables
-          for var_name in DB_URL_VERSION JWT_SECRET_VERSION ADMIN_PASSWORD_VERSION DEMO_PASSWORD_VERSION; do
+          REQUIRED_VARS=(DB_URL_VERSION JWT_SECRET_VERSION)
+          if [ "${SKIP_MIGRATIONS}" != "true" ]; then
+            REQUIRED_VARS+=(ADMIN_PASSWORD_VERSION DEMO_PASSWORD_VERSION)
+          fi
+
+          for var_name in "${REQUIRED_VARS[@]}"; do
             val="${!var_name}"
             if [[ -z "${val}" || ! "${val}" =~ ^[0-9]+$ || "${val}" -le 0 ]]; then
               echo "ERROR: Environment variable ${var_name} must be a positive integer in environment demo (got: '${val}')." >&2
@@ -143,12 +151,10 @@ jobs:
             echo "ERROR: No ready revision found on Cloud Run service." >&2
             exit 1
           fi
-          echo "revision_name=${READY_REVISION}" >> "$GITHUB_OUTPUT"
 
           ACTUAL_IMAGE="$(gcloud run revisions describe "$READY_REVISION" \
             --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
             --format='value(spec.containers[0].image)')"
-          echo "actual_image=${ACTUAL_IMAGE}" >> "$GITHUB_OUTPUT"
 
           EXPECTED_REF="${{ steps.digest.outputs.image_ref }}"
           if [ "$ACTUAL_IMAGE" != "$EXPECTED_REF" ]; then
@@ -161,7 +167,6 @@ jobs:
           ACTUAL_SHA="$(gcloud run revisions describe "$READY_REVISION" \
             --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
             --format='value(spec.containers[0].env[APP_COMMIT_SHA])')"
-          echo "actual_sha=${ACTUAL_SHA}" >> "$GITHUB_OUTPUT"
 
           EXPECTED_SHA="${{ steps.meta.outputs.image_tag }}"
           if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
@@ -171,12 +176,27 @@ jobs:
             exit 1
           fi
 
-          TRAFFIC="$(gcloud run services describe whatsss \
+          TRAFFIC_PERCENT="$(gcloud run services describe whatsss \
             --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
-            --format='value(status.traffic)')"
-          echo "traffic=${TRAFFIC}" >> "$GITHUB_OUTPUT"
+            --format='value(status.traffic[0].percent)')"
+          TRAFFIC_REVISION="$(gcloud run services describe whatsss \
+            --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format='value(status.traffic[0].revisionName)')"
+
+          if [ "$TRAFFIC_PERCENT" != "100" ] || [ "$TRAFFIC_REVISION" != "$READY_REVISION" ]; then
+            echo "ERROR: Intended traffic allocation not satisfied (expected 100% to ${READY_REVISION}, got ${TRAFFIC_PERCENT:-0}% to ${TRAFFIC_REVISION:-unknown})." >&2
+            exit 1
+          fi
+
+          TRAFFIC_STATUS="100% -> ${READY_REVISION}"
+          {
+            echo "revision_name=${READY_REVISION}"
+            echo "actual_image=${ACTUAL_IMAGE}"
+            echo "actual_sha=${ACTUAL_SHA}"
+            echo "traffic=${TRAFFIC_STATUS}"
+          } >> "$GITHUB_OUTPUT"
           echo "Revision verified: ${READY_REVISION} with correct digest and SHA."
-          echo "Traffic: ${TRAFFIC}"
+          echo "Traffic allocation verified: ${TRAFFIC_STATUS}"
 
       - name: Set up Python for Smoke Test
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
@@ -200,24 +220,39 @@ jobs:
           DEPLOY_DIGEST: ${{ steps.digest.outputs.image_ref }}
           DEPLOY_IS_ROLLBACK: ${{ steps.meta.outputs.is_rollback }}
           DEPLOY_SERVICE_URL: ${{ steps.release.outputs.service_url }}
+          RELEASE_OUTCOME: ${{ steps.release.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify_revision.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke_test.outcome }}
           ACTUAL_REVISION: ${{ steps.verify_revision.outputs.revision_name }}
           ACTUAL_IMAGE: ${{ steps.verify_revision.outputs.actual_image }}
           ACTUAL_SHA: ${{ steps.verify_revision.outputs.actual_sha }}
           TRAFFIC: ${{ steps.verify_revision.outputs.traffic }}
-          RELEASE_RESULT: ${{ steps.release.outcome }}
-          SMOKE_RESULT: ${{ steps.smoke_test.outcome }}
         run: |
-          cat << EOF >> "$GITHUB_STEP_SUMMARY"
-          ## Whatsss demo deployment
+          if [ "${RELEASE_OUTCOME}" = "success" ] && [ "${VERIFY_OUTCOME}" = "success" ] && [ "${SMOKE_OUTCOME}" = "success" ]; then
+            DEPLOY_STATUS="SUCCESS"
+          else
+            DEPLOY_STATUS="FAILED"
+          fi
 
-          * **Commit image tag:** \`${DEPLOY_IMAGE_TAG}\`
-          * **Digest:** \`${DEPLOY_DIGEST}\`
-          * **Rollback:** \`${DEPLOY_IS_ROLLBACK}\`
-          * **Active revision:** \`${ACTUAL_REVISION}\`
-          * **Verified image:** \`${ACTUAL_IMAGE}\`
-          * **Verified SHA:** \`${ACTUAL_SHA}\`
-          * **Traffic:** \`${TRAFFIC}\`
-          * **Release result:** \`${RELEASE_RESULT}\`
-          * **Smoke test result:** \`${SMOKE_RESULT}\`
-          * **URL:** ${DEPLOY_SERVICE_URL}
+          REPORT_REVISION="${ACTUAL_REVISION:-N/A (verification did not succeed)}"
+          REPORT_IMAGE="${ACTUAL_IMAGE:-N/A}"
+          REPORT_SHA="${ACTUAL_SHA:-N/A}"
+          REPORT_TRAFFIC="${TRAFFIC:-N/A}"
+          REPORT_URL="${DEPLOY_SERVICE_URL:-N/A}"
+
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Whatsss demo deployment: ${DEPLOY_STATUS}
+
+          * **Overall status:** **\`${DEPLOY_STATUS}\`**
+          * **Target commit SHA:** \`${DEPLOY_IMAGE_TAG}\`
+          * **Image digest:** \`${DEPLOY_DIGEST}\`
+          * **Rollback mode:** \`${DEPLOY_IS_ROLLBACK}\`
+          * **Release outcome:** \`${RELEASE_OUTCOME}\`
+          * **Revision verification:** \`${VERIFY_OUTCOME}\`
+          * **Smoke test outcome:** \`${SMOKE_OUTCOME}\`
+          * **Active revision:** \`${REPORT_REVISION}\`
+          * **Verified image:** \`${REPORT_IMAGE}\`
+          * **Verified SHA:** \`${REPORT_SHA}\`
+          * **Traffic allocation:** \`${REPORT_TRAFFIC}\`
+          * **Service URL:** ${REPORT_URL}
           EOF
