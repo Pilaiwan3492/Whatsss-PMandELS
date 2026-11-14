@@ -141,6 +141,11 @@ jobs:
           SERVICE_URL="$(gcloud run services describe whatsss --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" --format='value(status.url)')"
           echo "service_url=${SERVICE_URL}" >> "$GITHUB_OUTPUT"
 
+      - name: Set up Python for Deployment Verification & Smoke Test
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
       - name: Verify Cloud Run Revision Digest & Commit SHA
         id: verify_revision
         run: |
@@ -164,24 +169,10 @@ jobs:
             exit 1
           fi
 
+          EXPECTED_SHA="${{ steps.meta.outputs.image_tag }}"
           ACTUAL_SHA="$(gcloud run revisions describe "$READY_REVISION" \
             --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
-            --flatten='spec.containers[0].env[]' \
-            --filter='spec.containers[0].env.name=APP_COMMIT_SHA' \
-            --format='value(spec.containers[0].env.value)')"
-
-          if [ -z "$ACTUAL_SHA" ]; then
-            echo "ERROR: APP_COMMIT_SHA environment variable is missing or empty in revision ${READY_REVISION}." >&2
-            exit 1
-          fi
-
-          EXPECTED_SHA="${{ steps.meta.outputs.image_tag }}"
-          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-            echo "ERROR: Revision APP_COMMIT_SHA mismatch." >&2
-            echo "  Expected: ${EXPECTED_SHA}" >&2
-            echo "  Actual:   ${ACTUAL_SHA}" >&2
-            exit 1
-          fi
+            --format=json | python3 deploy/extract_revision_sha.py --expected-sha "$EXPECTED_SHA")"
 
           TRAFFIC_PERCENT="$(gcloud run services describe whatsss \
             --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" \
@@ -204,11 +195,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Revision verified: ${READY_REVISION} with correct digest and SHA."
           echo "Traffic allocation verified: ${TRAFFIC_STATUS}"
-
-      - name: Set up Python for Smoke Test
-        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
-        with:
-          python-version: '3.11'
 
       - name: Smoke test public URL
         id: smoke_test

@@ -155,11 +155,13 @@ jobs:
 
       - name: Validate Smoke Test Python Syntax & Run Unit Tests
         run: |
-          if [ -f "deploy/smoke_test.py" ]; then
+          if [ -f "deploy/smoke_test.py" ] && [ -f "deploy/extract_revision_sha.py" ]; then
+            python3 -m py_compile deploy/smoke_test.py deploy/extract_revision_sha.py
+          elif [ -f "deploy/smoke_test.py" ]; then
             python3 -m py_compile deploy/smoke_test.py
           fi
           if [ -d "deploy/tests" ]; then
-            python3 -m unittest discover -s deploy/tests -p "test_*.py"
+            python3 -m unittest discover -s deploy/tests -p "test_*.py" -v
           fi
 
       - name: Set up Docker Buildx
