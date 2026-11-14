@@ -58,12 +58,18 @@ jobs:
 
       - name: Resolve Image Tag & Target Metadata
         id: meta
+        env:
+          ROLLBACK_IMAGE_TAG: ${{ inputs.image_tag || github.event.inputs.image_tag || '' }}
         run: |
-          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
-            IMAGE_TAG="${{ github.event.inputs.image_tag }}"
+          if [ -n "$ROLLBACK_IMAGE_TAG" ]; then
+            if [[ ! "$ROLLBACK_IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "ERROR: Rollback image tag must be a full 40-character SHA." >&2
+              exit 1
+            fi
+            IMAGE_TAG="$ROLLBACK_IMAGE_TAG"
             IS_ROLLBACK="true"
           else
-            IMAGE_TAG="${{ github.sha }}"
+            IMAGE_TAG="${GITHUB_SHA}"
             IS_ROLLBACK="false"
           fi
           
@@ -105,11 +111,20 @@ jobs:
           GCP_REGION: ${{ vars.GCP_REGION }}
           APP_COMMIT_SHA: ${{ steps.meta.outputs.image_tag }}
           IMAGE_REF: ${{ steps.digest.outputs.image_ref }}
-          DB_URL_VERSION: "1"
-          JWT_SECRET_VERSION: "1"
-          ADMIN_PASSWORD_VERSION: "1"
-          DEMO_PASSWORD_VERSION: "1"
+          DB_URL_VERSION: ${{ vars.DB_URL_VERSION }}
+          JWT_SECRET_VERSION: ${{ vars.JWT_SECRET_VERSION }}
+          ADMIN_PASSWORD_VERSION: ${{ vars.ADMIN_PASSWORD_VERSION }}
+          DEMO_PASSWORD_VERSION: ${{ vars.DEMO_PASSWORD_VERSION }}
         run: |
+          # Enforce explicit positive integer versions from GitHub Environment variables
+          for var_name in DB_URL_VERSION JWT_SECRET_VERSION ADMIN_PASSWORD_VERSION DEMO_PASSWORD_VERSION; do
+            val="${!var_name}"
+            if [[ -z "${val}" || ! "${val}" =~ ^[0-9]+$ || "${val}" -le 0 ]]; then
+              echo "ERROR: Environment variable ${var_name} must be a positive integer in environment demo (got: '${val}')." >&2
+              exit 1
+            fi
+          done
+
           chmod +x deploy/release.sh
           bash deploy/release.sh
           SERVICE_URL="$(gcloud run services describe whatsss --region="${{ vars.GCP_REGION }}" --project="${{ vars.GCP_PROJECT_ID }}" --format='value(status.url)')"
@@ -121,6 +136,7 @@ jobs:
           python-version: '3.11'
 
       - name: Smoke test public URL
+        id: smoke_test
         env:
           SMOKE_EMAIL: ${{ vars.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
@@ -129,13 +145,21 @@ jobs:
 
       - name: Record deployment summary
         if: ${{ always() }}
+        env:
+          DEPLOY_IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+          DEPLOY_DIGEST: ${{ steps.digest.outputs.image_ref }}
+          DEPLOY_IS_ROLLBACK: ${{ steps.meta.outputs.is_rollback }}
+          DEPLOY_SERVICE_URL: ${{ steps.release.outputs.service_url }}
+          RELEASE_RESULT: ${{ steps.release.outcome }}
+          SMOKE_RESULT: ${{ steps.smoke_test.outcome }}
         run: |
-          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
           ## Whatsss demo deployment
 
-          * **Commit image tag:** `${{ steps.meta.outputs.image_tag }}`
-          * **Digest:** `${{ steps.digest.outputs.image_ref }}`
-          * **Rollback:** `${{ steps.meta.outputs.is_rollback }}`
-          * **URL:** ${{ steps.release.outputs.service_url }}
-          * **Smoke test:** passed (health, readiness, DB, HTML, endpoints)
+          * **Commit image tag:** \`${DEPLOY_IMAGE_TAG}\`
+          * **Digest:** \`${DEPLOY_DIGEST}\`
+          * **Rollback:** \`${DEPLOY_IS_ROLLBACK}\`
+          * **Release result:** \`${RELEASE_RESULT}\`
+          * **Smoke test result:** \`${SMOKE_RESULT}\`
+          * **URL:** ${DEPLOY_SERVICE_URL}
           EOF

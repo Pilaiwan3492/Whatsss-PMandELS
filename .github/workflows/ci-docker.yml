@@ -138,6 +138,20 @@ jobs:
             bash deploy/tests/test-release.sh
           fi
 
+      - name: Set up Python for Deploy Tests
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Validate Smoke Test Python Syntax & Run Unit Tests
+        run: |
+          if [ -f "deploy/smoke_test.py" ]; then
+            python3 -m py_compile deploy/smoke_test.py
+          fi
+          if [ -d "deploy/tests" ]; then
+            python3 -m unittest discover -s deploy/tests -p "test_*.py"
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
 
