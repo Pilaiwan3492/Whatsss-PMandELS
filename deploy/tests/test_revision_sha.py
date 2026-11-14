@@ -136,6 +136,39 @@ class TestExtractRevisionSha(unittest.TestCase):
             extract_revision_sha.extract_app_commit_sha(revision)
         self.assertIn("string", str(ctx.exception).lower())
 
+    def test_sha_with_leading_whitespace_raises_value_error(self):
+        revision = self._build_revision([
+            {
+                "name": "app",
+                "env": [{"name": "APP_COMMIT_SHA", "value": f" {VALID_SHA}"}]
+            }
+        ])
+        with self.assertRaises(ValueError) as ctx:
+            extract_revision_sha.extract_app_commit_sha(revision)
+        self.assertIn("40 lowercase hexadecimal", str(ctx.exception))
+
+    def test_sha_with_trailing_whitespace_raises_value_error(self):
+        revision = self._build_revision([
+            {
+                "name": "app",
+                "env": [{"name": "APP_COMMIT_SHA", "value": f"{VALID_SHA} "}]
+            }
+        ])
+        with self.assertRaises(ValueError) as ctx:
+            extract_revision_sha.extract_app_commit_sha(revision)
+        self.assertIn("40 lowercase hexadecimal", str(ctx.exception))
+
+    def test_sha_with_leading_and_trailing_whitespace_raises_value_error(self):
+        revision = self._build_revision([
+            {
+                "name": "app",
+                "env": [{"name": "APP_COMMIT_SHA", "value": f" {VALID_SHA} "}]
+            }
+        ])
+        with self.assertRaises(ValueError) as ctx:
+            extract_revision_sha.extract_app_commit_sha(revision)
+        self.assertIn("40 lowercase hexadecimal", str(ctx.exception))
+
     # 4. Invalid SHA Formats
     def test_short_sha_raises_value_error(self):
         revision = self._build_revision([

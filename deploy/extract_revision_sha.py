@@ -75,15 +75,12 @@ def extract_app_commit_sha(revision_data, expected_sha=None):
     if val is None or not isinstance(val, str) or not val.strip():
         raise ValueError("APP_COMMIT_SHA environment variable value is empty or not a string.")
 
-    val = val.strip()
-
     if not SHA_REGEX.match(val):
         raise ValueError(f"APP_COMMIT_SHA must be exactly 40 lowercase hexadecimal characters (got: '{val}').")
 
     if expected_sha is not None:
-        if not isinstance(expected_sha, str) or not SHA_REGEX.match(expected_sha.strip()):
+        if not isinstance(expected_sha, str) or not SHA_REGEX.match(expected_sha):
             raise ValueError(f"Expected SHA must be exactly 40 lowercase hexadecimal characters (got: '{expected_sha}').")
-        expected_sha = expected_sha.strip()
         if val != expected_sha:
             raise ValueError(f"APP_COMMIT_SHA mismatch! Expected '{expected_sha}', but revision has '{val}'.")
 
