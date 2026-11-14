@@ -485,7 +485,7 @@ case "${subcmd} ${subcmd2} ${subcmd3}" in
       *serviceAccountName*)
         cat "${STATE_DIR}/svc_sa_${svc_name}"
         ;;
-      *containers.env.value*)
+      *value\(value\)*|*containers.env.value*)
         cat "${STATE_DIR}/svc_client_url_${svc_name}"
         ;;
       *image*)

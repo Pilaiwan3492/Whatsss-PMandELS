@@ -296,8 +296,17 @@ else
     --region="${REGION}" \
     --project="${PROJECT_ID}" \
     --flatten="spec.template.spec.containers[].env[]" \
-    --filter="spec.template.spec.containers.env.name=CLIENT_URL" \
-    --format="value(spec.template.spec.containers.env.value)" 2>/dev/null || true)"
+    --filter="name=CLIENT_URL" \
+    --format="value(value)" 2>/dev/null || true)"
+
+  if [[ -z "${VERIFIED_CLIENT_URL}" ]]; then
+    VERIFIED_CLIENT_URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
+      --region="${REGION}" \
+      --project="${PROJECT_ID}" \
+      --flatten="spec.template.spec.containers[].env[]" \
+      --filter="spec.template.spec.containers.env.name=CLIENT_URL" \
+      --format="value(spec.template.spec.containers.env.value)" 2>/dev/null || true)"
+  fi
 
   if [[ "${VERIFIED_CLIENT_URL}" != "${SERVICE_URL}" ]]; then
     echo "ERROR: Post-update CLIENT_URL verification failed. Expected '${SERVICE_URL}', got '${VERIFIED_CLIENT_URL}'." >&2
