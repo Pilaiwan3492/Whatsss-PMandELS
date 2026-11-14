@@ -92,6 +92,7 @@ jobs:
             ${{ steps.meta.outputs.image_base }}:${{ steps.meta.outputs.image_tag }}
           build-args: |
             APP_COMMIT_SHA=${{ steps.meta.outputs.image_tag }}
+          provenance: false
 
       - name: Resolve Immutable Image Digest
         id: digest
@@ -163,10 +164,17 @@ jobs:
 
           EXPECTED_REF="${{ steps.digest.outputs.image_ref }}"
           if [ "$ACTUAL_IMAGE" != "$EXPECTED_REF" ]; then
-            echo "ERROR: Revision image mismatch." >&2
-            echo "  Expected: ${EXPECTED_REF}" >&2
-            echo "  Actual:   ${ACTUAL_IMAGE}" >&2
-            exit 1
+            MATCH_FOUND=false
+            if docker buildx imagetools inspect "$EXPECTED_REF" 2>/dev/null | grep -q "${ACTUAL_IMAGE#*@sha256:}"; then
+              MATCH_FOUND=true
+            fi
+            if [ "$MATCH_FOUND" != "true" ]; then
+              echo "ERROR: Revision image mismatch." >&2
+              echo "  Expected: ${EXPECTED_REF}" >&2
+              echo "  Actual:   ${ACTUAL_IMAGE}" >&2
+              exit 1
+            fi
+            echo "Verified ACTUAL_IMAGE is manifest inside index EXPECTED_REF: ${ACTUAL_IMAGE}"
           fi
 
           EXPECTED_SHA="${{ steps.meta.outputs.image_tag }}"
