@@ -86,12 +86,38 @@ Each `USER` account is expected to have its own isolated set of 5 standard accou
 #### A. Test Data Preparation & Fixture Separation
 1. **Test Users & Roles (Must Be Verified per Target Environment):**
    - **User A (`user_demo`, Role: `USER`):** Primary UAT financial user; verify before UAT that `user_demo` and its 5 standard accounts (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`) exist on the target environment (Cloud Run / Staging / Local).
-   - **User B (`user_other`, Role: `USER`):** Secondary UAT financial user required for cross-user isolation testing (`UAT-S1-04` Sub-check 4B) and dedicated boundary fixture testing (`UAT-S1-02` Sub-check 2D). Because `server/prisma/seed.ts` only seeds `user_other` automatically when `NODE_ENV !== 'production'`, the Product Team must verify whether `user_other` and its 5 standard accounts exist in the target UAT environment prior to testing, and if absent, provision `user_other` and its 5 accounts using `provisionDemoAccounts` before starting UAT. Do not claim or assume User B's accounts exist on Cloud Run without verification evidence.
+   - **User B (`user_other`, Role: `USER`):** Secondary UAT financial user required for cross-user isolation testing (`UAT-S1-04` Sub-check 4B), isolated `AC-03-2` unlocked `Checking Bank` testing (`UAT-S1-03`), and dedicated boundary fixture testing (`UAT-S1-02` Sub-check 2D). Because `server/prisma/seed.ts` only seeds `user_other` automatically when `NODE_ENV !== 'production'`, the Product Team must follow the **5-Step User B Provisioning Procedure** below before executing cross-user UAT on Cloud Run. Never assume or claim that User B exists on Cloud Run without verification evidence.
    - **Admin (`admin` on Cloud Run / `admin_demo` on Local/Staging, Role: `ADMIN`):** Administrative user possessing zero financial accounts (`BR-10`).
-2. **Fixture Separation (Lab 5 Historical Data vs. Lab 6 UAT Data):**
+
+2. **5-Step User B (`user_other`) Verification & Provisioning Procedure:**
+   > **Technical Note on `provisionDemoAccounts(client, user)`:** In `server/prisma/seed.ts`, `provisionDemoAccounts(client, user)` only creates/upserts the 5 standard financial accounts for an **already existing** `User` record (`user: { id, role, username }`); it does **not** create the `User` row or set a password hash. Therefore, provisioning User B when absent requires creating the `User` record first before calling `provisionDemoAccounts`:
+   - **Step 1 — Verify User B (`user_other`) in Target Environment:**
+     - Check whether `user_other` exists in the target UAT environment, has `role = 'USER'`, has `is_active = true`, and can authenticate at `/login`. Never assume local seed data exists on Cloud Run.
+   - **Step 2 — Create User B Record If Absent (Authorized Provisioning Only):**
+     - If `user_other` does not exist in the target environment, create the `User` record through an authorized one-off Prisma provisioning task/command (never using `prisma migrate reset` on production and never modifying existing Lab 5 records):
+       - `id`: Generated UUID
+       - `username`: `'user_other'`
+       - `email`: `'user_other@whatsss.local'` (verified non-conflicting)
+       - `role`: `'USER'`
+       - `is_active`: `true`
+       - `password_hash`: Salted `bcrypt.hash(process.env.UAT_USER_B_PASSWORD, 10)` using a strong password (>= 12 chars) injected via secure environment variable / Secret Manager (never hardcode or record plaintext passwords in Git, UAT docs, or screenshots).
+   - **Step 3 — Provision User B's 5 Standard Financial Accounts:**
+     - Pass the created/verified `userB` record (`{ id: userB.id, role: userB.role, username: userB.username }`) into `await provisionDemoAccounts(prisma, userB)` from `server/prisma/seed.ts` to atomically upsert User B's 5 isolated accounts (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`).
+   - **Step 4 — Post-Provisioning Verification:**
+     - Verify that `user_other` owns all 5 standard accounts (`0.00 THB` initial balance, `is_opening_locked = false`), `user_other` can log in at `/login`, `user_demo` (User A) cannot access `user_other`'s records, `user_other` (User B) cannot access `user_demo`'s records, and existing financial data of `user_demo` (Lab 5 records) remains completely untouched.
+   - **Step 5 — Mandatory `BLOCKED` Rule If Provisioning Cannot Be Completed:**
+     - If the team lacks authorization/permissions to provision `user_other` in the target environment or approved provisioning has not been completed before UAT execution, record:
+       ```text
+       UAT-S1-04 (Sub-check 4B): BLOCKED
+       Reason: The required User B test account is not available in the target environment, and approved provisioning has not been completed.
+       ```
+       **Never report `PASS` if the test was not actually executed against a real User B account.**
+
+3. **Fixture Separation (Lab 5 Historical Data vs. Lab 6 UAT Data):**
    - **Fresh Seeded Database (Local / Isolated UAT Staging):** All accounts start at $B_{\text{pre}} = 0.00\text{ THB}$, $D_0 = 0.00\text{ THB}$, $I_0 = 0.00\text{ THB}$, $E_0 = 0.00\text{ THB}$, `is_opening_locked = false`, and `0` transactions.
    - **Existing Live Cloud Run Database (`https://whatsss-sipqw4logq-as.a.run.app`):** Retains historical verification records from Lab 5 (`C-04` and `C-05`) on `user_demo`, where Opening Balance (`10,000.00 THB`) was already locked (`is_opening_locked = true`) and pre-test starting balances are $B_0 = 32,000.00\text{ THB}$, $D_0 = 0.00\text{ THB}$, $I_0 = 25,000.00\text{ THB}$, $E_0 = 3,000.00\text{ THB}$.
-   - **Dedicated Over-Repayment Fixture (`UAT-S1-02` Sub-check 2D):** Uses an isolated account state with `Checking Bank Balance = 5,000.00 THB` and `Visa Credit Card Debt = 3,000.00 THB` (can be prepared on a fresh reset or on `user_other` / dedicated UAT account so it does not conflict with `UAT-S1-01`).
+   - **Separated `Checking Bank` Fixtures for `UAT-S1-03` (`AC-03-2` vs. `AC-03-3`):** `AC-03-2` (invalid opening balance) requires an unlocked **`Checking Bank`** (`is_opening_locked = false`, no committed transactions), whereas `AC-03-3` requires a separate **`Checking Bank`** with at least one committed transaction (`is_opening_locked = true`). Never use `Visa Credit Card` as the fixture for `AC-03-2`.
+   - **Dedicated Over-Repayment Fixture (`UAT-S1-02` Sub-check 2D):** Uses an isolated account state with `Checking Bank Balance = 5,000.00 THB` and `Visa Credit Card Debt = 3,000.00 THB` (prepared on a fresh reset or on `user_other` / dedicated UAT account so it does not conflict with `UAT-S1-01`).
 
 #### B. Baseline Verification (Mandatory Pre-Run Gate)
 Before executing any UAT test case, the tester must verify and record:
@@ -124,7 +150,7 @@ To distinguish UAT transactions across repeated test runs without ambiguity:
    - **Never reset or delete existing production/demo data on the live Cloud SQL instance (`whatsss-sql`) without explicit authorization**, as Lab 5 grading requires C-04/C-05 records to remain inspectable.
    - Instead, either:
      - **(Option 1 — Delta Verification with Run Tags):** Execute `UAT-S1-01` on `user_demo` using unique `[LAB6-UAT-RUN-01]` descriptions and verify the exact mathematical deltas from the recorded starting state $B_0 = 32,000.00\text{ THB} \rightarrow 49,000.00\text{ THB}$; **OR**
-     - **(Option 2 — Dedicated UAT User Fixture):** Provision a dedicated fresh `USER` account (e.g., `user_other` or `uat_tester_01` with its 5 standard accounts starting at `0.00 THB` via `provisionDemoAccounts`) so the UAT Team can test from a clean `0.00 THB` baseline without touching `user_demo`'s Lab 5 records.
+     - **(Option 2 — Dedicated UAT User Fixture):** Provision a dedicated fresh `USER` account (e.g., `user_other` or `uat_tester_01` created via authorized `prisma.user.upsert` followed by `provisionDemoAccounts(prisma, user)` per the 5-Step Procedure in `A2.4.A`) so the UAT Team can test from a clean `0.00 THB` baseline without touching `user_demo`'s Lab 5 records.
 
 ---
 
@@ -286,46 +312,85 @@ $$\text{Verification (Live DB): } B_0 = 32,000.00\text{ THB} \implies \text{Fina
 
 ---
 
-#### `UAT-S1-03` — Business-Rule & Immutability Case: Opening Balance Permanent Lock After First Transaction (`F-03`, `BR-02`, `AC-03-3`)
-* **Category:** Business-Rule / State Immutability Case
+#### `UAT-S1-03` — Business-Rule & Immutability Case: Invalid Opening Balance Rejection (`AC-03-2`) & Permanent Lock After First Transaction (`AC-03-3`)
+* **Category:** Business-Rule / State Immutability Case (`F-03`, `BR-02`)
 * **Linked Requirements & ACs:** `F-03`; `FR-05`; `BR-02`; `AC-03-2`, `AC-03-3`, `AC-03-4`.
-* **Role / Account:** `USER-A` (`user_demo`, Role: `USER`)
-* **Preconditions:** `USER-A` (`user_demo`) has at least one committed transaction referencing `Checking Bank` (`is_opening_locked = true`), and an unlocked account (e.g., `Visa Credit Card` before any purchase, or on a fresh user) to test invalid negative opening balance input (`AC-03-2`).
+* **Role / Account:** `USER-A` (`user_demo`) and/or `USER-B` (`user_other`) (Role: `USER`)
+* **Preconditions (Strictly Separated `Checking Bank` Fixtures — Never Use `Visa Credit Card` for `AC-03-2`):**
+  Per the Sprint 1 Feature Contract (`F-03`), Opening Balance validation (`AC-03-2`) and locking (`AC-03-3`) apply to the eligible **`Checking Bank`** (`CASH`) account. To prevent one test from mutating the state required by the other, `AC-03-2` and `AC-03-3` use separate `Checking Bank` fixtures:
+  ```text
+  For AC-03-2 (Invalid Opening Balance on Unlocked Account):
+  The tester uses a fresh eligible Checking Bank account
+  with is_opening_locked=false and no committed transactions
+  (e.g., on a fresh user/environment BEFORE UAT-S1-01 commits any transaction,
+  or on User B's separate unlocked Checking Bank account).
+  Never use Visa Credit Card as the test fixture for AC-03-2.
+
+  For AC-03-3 (Permanent Lock After First Committed Transaction):
+  The tester uses a separate Checking Bank account
+  with at least one committed transaction and
+  is_opening_locked=true (e.g., User A's Checking Bank after UAT-S1-01).
+  ```
 * **Synthetic Inputs:**
-  - *Part A (Manual UI UAT):* Inspect locked `Checking Bank` card on `/accounts`; test invalid opening balance `-500.00` or `100.123` on any unlocked account modal (`AC-03-2`).
-  - *Part B (API Corroboration — only if executed):* `PATCH /api/accounts/<checking_bank_id>/opening-balance` with `{ "opening_balance": 99999.00 }`.
+  - *For `AC-03-2` (Unlocked `Checking Bank`, `is_opening_locked = false`):* Invalid negative Opening Balance = `-500.00` THB; invalid decimal precision Opening Balance = `100.123` THB.
+  - *For `AC-03-3` (Locked `Checking Bank`, `is_opening_locked = true`):* Attempted new Opening Balance = `99999.00` THB.
 * **Numbered User Actions & Explicit Separation of UI vs. API Validation:**
 
-  ##### Part A — Manual UI UAT (Required)
-  1. Log in as `user_demo` and navigate to `/accounts` (`Financial Accounts`).
-  2. Locate the **Checking Bank** card under `Cash & Liquid Accounts`.
-  3. Verify that the **Set Opening Balance** button is **no longer present** on the `Checking Bank` card.
-  4. Verify that the `Status:` field displays the locked badge **`Opening balance locked`** (with tooltip `"Opening balance is locked permanently following first transaction"`).
-  5. Confirm that the user cannot open the Opening Balance modal or modify the Opening Balance of `Checking Bank` through the UI.
-  6. *(For `AC-03-2` on any unlocked account card where `Set Opening Balance` is still visible):* Click **Set Opening Balance**, enter `-500` or `100.123`, and click **Save Opening Balance**. Verify the modal rejects the input with `Opening balance must be a non-negative number.` or `Opening balance allows at most 2 decimal places.`
-
-  ##### Part B — API Corroboration (Record ONLY When Actually Executed)
-  1. While logged in as `user_demo` on `/accounts`, open Browser DevTools (`F12` $\rightarrow$ Console) and send a direct `PATCH` request attempting to overwrite the locked `Checking Bank` opening balance:
-     ```javascript
-     fetch('/api/accounts', { credentials: 'include' })
-       .then(r => r.json())
-       .then(async d => {
-         const bank = d.data.accounts.find(a => a.name === 'Checking Bank');
-         const res = await fetch(`/api/accounts/${bank.id}/opening-balance`, {
-           method: 'PATCH',
-           headers: { 'Content-Type': 'application/json' },
-           credentials: 'include',
-           body: JSON.stringify({ opening_balance: 99999.00 })
+  ##### Sub-case 3.1 — `AC-03-2`: Invalid Opening Balance on Unlocked `Checking Bank` (`is_opening_locked = false`)
+  1. **Part A — Manual UI UAT (Required):**
+     - Log in to the account owning the **unlocked `Checking Bank`** (`is_opening_locked = false`, zero committed transactions) and navigate to `/accounts`.
+     - Locate the **Checking Bank** card under `Cash & Liquid Accounts` and confirm the **Set Opening Balance** button is visible.
+     - Click **Set Opening Balance**. Enter `-500` in **Opening Balance (THB)** and click **Save Opening Balance**. Verify the UI rejects the negative input (`Opening balance must be a non-negative number.`).
+     - Enter `100.123` (3 decimal places) and click **Save Opening Balance**. Verify the UI rejects the excessive precision (`Opening balance allows at most 2 decimal places.`). Click **Cancel**.
+  2. **Part B — API Corroboration (Record ONLY When Actually Executed):**
+     - While logged in to the account with the **unlocked `Checking Bank`** (`is_opening_locked = false`), open Browser DevTools (`F12` $\rightarrow$ Console) and send a direct `PATCH` request with `-500.00` (and/or `100.123`):
+       ```javascript
+       fetch('/api/accounts', { credentials: 'include' })
+         .then(r => r.json())
+         .then(async d => {
+           const unlockedBank = d.data.accounts.find(a => a.name === 'Checking Bank' && a.is_opening_locked === false);
+           const res = await fetch(`/api/accounts/${unlockedBank.id}/opening-balance`, {
+             method: 'PATCH',
+             headers: { 'Content-Type': 'application/json' },
+             credentials: 'include',
+             body: JSON.stringify({ opening_balance: -500.00 })
+           });
+           console.log('AC-03-2 Invalid Opening Balance PATCH Status:', res.status, await res.json());
          });
-         console.log('Locked Opening Balance PATCH Status:', res.status, await res.json());
-       });
-     ```
-  2. Record the exact HTTP status code and JSON error response returned by the server.
-  3. Refresh `/accounts` and `/dashboard` to confirm `Checking Bank` Opening Balance and Current Balance remain unchanged.
+       ```
+     - Record the exact HTTP status code and JSON error response, and verify `Checking Bank` remains at its original balance with `is_opening_locked = false`.
 
-* **Specific Expected Results:**
-  - **Part A (Manual UI Result):** `Checking Bank` displays `Status: Opening balance locked`, the **Set Opening Balance** button is absent, and UI modification is impossible.
-  - **Part B (API Corroboration Result — only when `PATCH` is executed):** The server responds with HTTP **`422 Unprocessable Entity`** and error code **`OPENING_BALANCE_LOCKED`**, and `opening_balance` remains unchanged. *(If Part B is not executed, record only the Part A UI observation and do not claim that the API returned HTTP 422).*
+  ##### Sub-case 3.2 — `AC-03-3`: Permanent Opening Balance Lock on `Checking Bank` (`is_opening_locked = true`)
+  1. **Part A — Manual UI UAT (Required):**
+     - Log in to the account owning the **locked `Checking Bank`** (`is_opening_locked = true`, after at least one committed transaction) and navigate to `/accounts`.
+     - Locate the **Checking Bank** card under `Cash & Liquid Accounts`.
+     - Verify that the **Set Opening Balance** button is **no longer present** on the `Checking Bank` card.
+     - Verify that the `Status:` field displays the locked badge **`Opening balance locked`** (with tooltip `"Opening balance is locked permanently following first transaction"`).
+     - Confirm that the user cannot open the Opening Balance modal or modify the Opening Balance of `Checking Bank` through the UI.
+  2. **Part B — API Corroboration (Record ONLY When Actually Executed):**
+     - While logged in to the account with the **locked `Checking Bank`** (`is_opening_locked = true`), open Browser DevTools (`F12` $\rightarrow$ Console) and send a direct `PATCH` request attempting to overwrite the locked opening balance:
+       ```javascript
+       fetch('/api/accounts', { credentials: 'include' })
+         .then(r => r.json())
+         .then(async d => {
+           const lockedBank = d.data.accounts.find(a => a.name === 'Checking Bank' && a.is_opening_locked === true);
+           const res = await fetch(`/api/accounts/${lockedBank.id}/opening-balance`, {
+             method: 'PATCH',
+             headers: { 'Content-Type': 'application/json' },
+             credentials: 'include',
+             body: JSON.stringify({ opening_balance: 99999.00 })
+           });
+           console.log('AC-03-3 Locked Opening Balance PATCH Status:', res.status, await res.json());
+         });
+       ```
+     - Record the exact HTTP status code and JSON error response returned by the server, and refresh `/accounts` and `/dashboard` to confirm `Checking Bank` Opening Balance and Current Balance remain unchanged.
+
+* **Specific Expected Results (`AC-03-2` vs. `AC-03-3` Contract Matrix):**
+  | Test Criterion | Target Account Fixture & Condition | Expected Manual UI Result | Expected API Corroboration Result (Only When `PATCH` Executed) |
+  |:---:|---|---|---|
+  | **`AC-03-2`** | Unlocked **`Checking Bank`** (`is_opening_locked = false`, 0 committed transactions) given invalid input `-500` or `100.123` | Modal displays inline validation error and prevents saving; balance and lock state remain unchanged | HTTP **`400 Bad Request`** with error code **`INVALID_OPENING_BALANCE`** |
+  | **`AC-03-3`** | Separate Locked **`Checking Bank`** (`is_opening_locked = true`, $\ge 1$ committed transaction) given `99999.00` | `Set Opening Balance` button is replaced by `Opening balance locked` badge; UI editing impossible | HTTP **`422 Unprocessable Entity`** with error code **`OPENING_BALANCE_LOCKED`** |
+  - *(Strict Reporting Rule: If the Part B `PATCH` requests are not executed, record only the Part A UI observations and never claim that the API returned HTTP `400` or `422`).*
 * **Actual / Evidence / Status:** `NOT RUN` — *Independent UAT Team to complete.*
 
 ---
@@ -339,7 +404,7 @@ $$\text{Verification (Live DB): } B_0 = 32,000.00\text{ THB} \implies \text{Fina
   - **User B:** `USER-B` (`user_other`, Role: `USER`)
 * **Preconditions & Environment Verification Gate (Critical):**
   - Before executing Sub-check 4B (Cross-User Isolation), verify that **both User A (`user_demo`) and User B (`user_other`) and their financial accounts actually exist** in the target UAT environment.
-  - *Environment Note:* `server/prisma/seed.ts` automatically provisions `user_demo`, `user_other`, and `admin_demo` in Local/Staging environments (`NODE_ENV !== 'production'`). On Cloud Run (`NODE_ENV === 'production'`), if `user_other` has not yet been provisioned in Cloud SQL, the Product Team must provision `user_other` (with its 5 standard accounts) prior to the UAT session, or execute Sub-check 4B against the Staging environment where both real users exist. **Never substitute a fake/nonexistent UUID for User B's real account.** If User B is unavailable in the tested environment, mark Sub-check 4B as **`BLOCKED`** (not `PASS`).
+  - *Environment Note:* `server/prisma/seed.ts` automatically provisions `user_demo`, `user_other`, and `admin_demo` in Local/Staging environments (`NODE_ENV !== 'production'`). On Cloud Run (`NODE_ENV === 'production'`), if `user_other` has not yet been provisioned in Cloud SQL, the Product Team must complete the **5-Step User B Provisioning Procedure in Section `A2.4.A`** (creating the `User` record first and then calling `provisionDemoAccounts(client, user)`) prior to the UAT session, or execute Sub-check 4B against the Staging environment where both real users exist. **Never substitute a fake/nonexistent UUID for User B's real account.** If User B is unavailable in the tested environment and approved provisioning has not been completed, mark Sub-check 4B as **`BLOCKED`** with reason: `"The required User B test account is not available in the target environment, and approved provisioning has not been completed."` (never `PASS`).
 * **Synthetic Inputs:**
   - *Sub-check 4A (Admin Financial Denial — `BR-10` / `AC-02-2`):* Login as `admin` (Cloud Run) / `admin_demo` (Local/Staging); navigate to `/dashboard`, `/accounts`, `/transactions` and query `/api/accounts`, `/api/transactions`, `/api/reports/summary`.
   - *Sub-check 4B (Real Cross-User Isolation — `BR-01` / `AC-02-3`):* Real Account ID `<USER_B_ACCOUNT_ID>` belonging to **User B (`user_other`)**, accessed and targeted for modification while logged in as **User A (`user_demo`)**.
@@ -513,7 +578,7 @@ Every Acceptance Criterion listed below has an explicit, executable test step de
 |---|---|---|---|
 | **`F-01` Authentication & Session** | `FR-01`, `FR-02`, `BR-09`, `NFR-SEC-01` | `AC-01-1` (Valid login), `AC-01-2` (Invalid login `401`), `AC-01-3` (Session identity), `AC-01-5` (Logout clears session) | `UAT-S1-06` (Steps 1–4), `UAT-S1-05` (Steps 2–3) |
 | **`F-02` Authorization & Privacy** | `BR-01`, `BR-09`, `BR-10`, `NFR-SEC-02` | `AC-02-1` (Unauth `401`), `AC-02-2` (Admin `403` `BR-10`), `AC-02-3` (Cross-user real account isolation `BR-01`), `AC-02-4` (CSRF `403 CSRF_ORIGIN_REJECTED`) | `UAT-S1-06` (Step 1), `UAT-S1-04` (Sub-checks `4A`, `4B`, `4C`) |
-| **`F-03` Opening Balance & Lock** | `FR-05`, `BR-02`, `NFR-DATA-01` | `AC-03-1` (Set valid opening balance), `AC-03-2` (Invalid negative/decimal opening balance), `AC-03-3` (Locked after first tx: Part A UI & Part B API `422`), `AC-03-4` (Excluded from income/expense `BR-02`) | `UAT-S1-01` (Step 1), `UAT-S1-03` (Part A Steps 1–6 & Part B Steps 1–3) |
+| **`F-03` Opening Balance & Lock** | `FR-05`, `BR-02`, `NFR-DATA-01` | `AC-03-1` (Set valid opening balance), `AC-03-2` (Invalid negative/decimal opening balance on unlocked `Checking Bank` $\rightarrow$ `400 INVALID_OPENING_BALANCE`), `AC-03-3` (Locked `Checking Bank` after first tx: Part A UI & Part B API `422 OPENING_BALANCE_LOCKED`), `AC-03-4` (Excluded from income/expense `BR-02`) | `UAT-S1-01` (Step 1), `UAT-S1-03` (Sub-case `3.1` & Sub-case `3.2`) |
 | **`F-04` Income Transaction** | `FR-06`, `BR-03`, `NFR-DATA-01` | `AC-04-1` (Valid salary inflow `+20,000.00`), `AC-04-2` (Invalid income amount / missing date rejection) | `UAT-S1-01` (Step 2), `UAT-S1-02` (Sub-check `2E`) |
 | **`F-05` Credit Card Purchase** | `FR-07`, `BR-04`, `NFR-DATA-01` | `AC-05-1` (Valid CC purchase `+3,000.00`), `AC-05-2` (Missing primary CC account rejection), `AC-05-3` (Invalid/malformed amount rejection) | `UAT-S1-01` (Step 3), `UAT-S1-02` (Sub-check `2F`) |
 | **`F-06` Multiple Allocations** | `FR-08`, `BR-05`, `BR-06` | `AC-06-1` (Balanced multi-line split `1,000 + 2,000 = 3,000`), `AC-06-2` (Unbalanced split rejection `BR-06`), `AC-06-3` (Duplicate category rejection) | `UAT-S1-01` (Step 3), `UAT-S1-02` (Sub-checks `2A`, `2B`, `2C`) |
@@ -673,10 +738,15 @@ For every accepted defect resolved in this lab (or for a TA-approved controlled 
 
 ### 5.3 Team Contribution Table
 
-| Team Member | Student ID | GitHub Handle | Primary Lab 6 Responsibilities |
-|---|:---:|:---:|---|
-| **Aphichaya Klinhual** | `67070503447` | `@Apichaya251400` | **Issue #37 (Product Team Lead):** Authored Sprint 1 UAT Test Plan, Test Data Lifecycle, and Safe Handoff (`UAT-S1-01`–`06` in `docs/labs/lab-06/uat-plan.md`); prepared test account fixtures; co-executed partner UAT cases in Part B; responsible for Part D RED/GREEN regression tests, bugfix implementation, and Cloud Run redeployment; reviewed Issue #38 PR. |
-| **Pilaiwan Churdchu** | `67070503492` | `@Pilaiwan3492` | **Issue #38 (Independent UAT Lead & Defect Manager):** Reviewed & approved Issue #37 UAT Plan PR; led Part B independent UAT execution on partner team's deployment and recorded Partner App acceptance decision (B2); authored Part C outgoing defect reports and incoming triage register; verified Whatsss independent retest sign-off (D2) and compiled final Lab 6 submission PDF. |
+> **Contribution Status Legend:**
+> - `Completed`: Task finished with verifiable repository/PR evidence.
+> - `In Progress`: Currently under active authoring or peer review.
+> - `Planned / Pending`: Scheduled for execution during/after the live UAT session. *(Do not mark as `Completed` until actual GitHub review submissions, execution logs, and evidence exist).*
+
+| Team Member | Student ID | GitHub Handle | Completed / In Progress Work | Planned / Pending Work (To Update After Execution) |
+|---|:---:|:---:|---|---|
+| **Aphichaya Klinhual** | `67070503447` | `@Apichaya251400` | - **[In Progress]** Responsible for Product Team handoff and Part A UAT plan preparation (`docs/labs/lab-06/uat-plan.md` in [PR #39](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/39), Issue #37). | - **[Planned / Pending]** Preflight evidence collection (`A-EV-01`, `A-EV-02`) and User B fixture verification.<br>- **[Planned / Pending]** Co-execution of Partner App UAT cases (Part B).<br>- **[Planned / Pending]** Part D defect resolution (`RED` $\rightarrow$ `GREEN` regression testing and Cloud Run redeployment) and peer review of Issue #38 PR. *(Final contribution links will be updated after execution).* |
+| **Pilaiwan Churdchu** | `67070503492` | `@Pilaiwan3492` | - **[In Progress]** Peer review of Issue #37 Part A UAT Plan PR ([PR #39](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/39)). | - **[Planned / Pending]** Responsible for Part B independent UAT execution on Partner App and recording Partner App acceptance decision (`B2`).<br>- **[Planned / Pending]** Responsible for Part C outgoing defect reports and incoming defect triage register (`C1`, `C2`).<br>- **[Planned / Pending]** Independent retest verification, final sign-off coordination (`D2`), and final Lab 6 PDF compilation (Issue #38). |
 
 ### 5.4 AI-Use Declaration
-AI assistance (Antigravity AI coding assistant) was used to help structure the Sprint 1 UAT test plan template, cross-reference requirement/acceptance-criteria IDs from our repository's Sprint 1 specifications (`docs/sprints/sprint-1/`), and format markdown tables. Both students (`Aphichaya Klinhual` and `Pilaiwan Churdchu`) independently verified all test steps, balance formulas, deployed URLs, and revision states against the live Cloud Run service, and are solely responsible for executing live UAT sessions, recording genuine test outcomes, triaging defects, and obtaining independent acceptance sign-offs. No execution outcomes or partner sign-offs were fabricated or generated by AI.
+AI assistance (Antigravity AI coding assistant) was used to help draft and format this Sprint 1 UAT test plan (`docs/labs/lab-06/uat-plan.md`) from the repository's Sprint 1 specifications and the CPE 334 Lab 6 handout. The team reviewed the repository documentation, application source code (`client/src/`, `server/src/`, `server/prisma/seed.ts`), and Sprint 1 feature contracts (`docs/sprints/sprint-1/`). **Live Cloud Run URL and deployed revision preflight verification (`A-EV-01`, `A-EV-02`), UAT test execution outcomes, defect triage dispositions, and independent acceptance sign-offs are currently pending and will be recorded after the live UAT preflight and test sessions.** No execution outcomes, screenshots, or partner sign-offs were fabricated or generated by AI.
