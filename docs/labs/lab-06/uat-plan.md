@@ -8,10 +8,10 @@
 > **Repository:** [`https://github.com/Pilaiwan3492/Whatsss-PMandELS`](https://github.com/Pilaiwan3492/Whatsss-PMandELS)  
 > **Reference Staging Branch:** [`staging-lab5`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/tree/staging-lab5)  
 > **Baseline Release (`main`) Commit SHA:** `ba2f9dd43d8ed620d4b27820d43bee243d2e3d4d` (`ba2f9dd`)  
-> **Verified Serving Application Image Commit SHA:** `f160f256af24635cdc602b676a7cf8822fbbceb8` (`f160f25`)  
-> **Deployed Cloud Run Revision:** `whatsss-00020-65k` (Region: `asia-southeast1`, Project: `cpe334-whatsss-pmandels`, 100% Traffic)  
+> **Last Known Serving Application Image Commit SHA (Handoff Baseline):** `f160f256af24635cdc602b676a7cf8822fbbceb8` (`f160f25`)  
+> **Deployed Cloud Run Revision (Handoff Baseline):** `whatsss-00020-65k` (Region: `asia-southeast1`, Project: `cpe334-whatsss-pmandels`, 100% Traffic)  
 > **Public Service URL (Cloud Run):** [`https://whatsss-sipqw4logq-as.a.run.app`](https://whatsss-sipqw4logq-as.a.run.app)  
-> **Document Status:** `PRODUCT-TEAM UAT HANDOFF DRAFT` — Independent UAT execution and evidence capture pending.
+> **Document Status:** `PRODUCT-TEAM UAT HANDOFF DRAFT` — Independent UAT execution and preflight evidence capture pending.
 
 ---
 
@@ -46,28 +46,30 @@ The assessed UAT scope is strictly the delivered Sprint 1 functionality defined 
 ### A2. Release, Roles, Synthetic Data, and Safe Handoff
 
 #### 1. Deployed Release Environment (Provided Before Execution)
-| Parameter | Verified Value |
+| Parameter | Last Known / Handoff Baseline |
 |---|---|
 | **Public Application URL** | `https://whatsss-sipqw4logq-as.a.run.app` |
-| **Health & Readiness Probes** | `GET /api/health` (`200 OK`) \| `GET /api/ready` (`200 OK`, `"database":"connected"`) |
+| **Health & Readiness Probes** | `GET /api/health` (expected `200 OK`) \| `GET /api/ready` (expected `200 OK`, `"database":"connected"`) |
 | **Main Release Commit SHA** | `ba2f9dd43d8ed620d4b27820d43bee243d2e3d4d` (`ba2f9dd`) |
-| **Serving Container Commit SHA** | `f160f256af24635cdc602b676a7cf8822fbbceb8` (verified via `/api/health` `commitSha`) |
+| **Serving Container Commit SHA** | `f160f256af24635cdc602b676a7cf8822fbbceb8` (last known baseline; to be re-verified via `/api/health` `commitSha` at preflight) |
 | **Active Cloud Run Revision** | `whatsss-00020-65k` (`asia-southeast1`) |
 | **Database Backing** | Google Cloud SQL for PostgreSQL 16 (`whatsss-sql`, `db-f1-micro`, Enterprise edition) |
 
-> **Preflight Check for UAT Testers:** Before running test cases, open `https://whatsss-sipqw4logq-as.a.run.app/api/health` and `https://whatsss-sipqw4logq-as.a.run.app/api/ready` in a clean browser profile (Incognito/InPrivate) to confirm HTTP 200 and record the `commitSha` and timestamp. If the service is unreachable or the version cannot be identified, stop and record `BLOCKED`.
+> **Handoff Baseline Note:** These values represent the last known handoff baseline and must be re-verified during the preflight session before UAT execution (`A-EV-01` and `A-EV-02` remain `Pending Evidence` in Section `5.2` until live preflight evidence is captured).
+>
+> **Preflight Check for UAT Testers:** Before running test cases, open `https://whatsss-sipqw4logq-as.a.run.app/api/health` and `https://whatsss-sipqw4logq-as.a.run.app/api/ready` in a clean browser profile (Incognito/InPrivate) to confirm HTTP 200 and record the actual `commitSha` and timestamp. If the service is unreachable or the version cannot be identified, stop and record `BLOCKED`.
 
 #### 2. Safe Test Accounts (Credentials Delivered Privately — Never in Git or PDF)
 Account passwords are stored in GCP Secret Manager and transmitted to the partner UAT Team **exclusively via private handoff channel (Discord DM / LEB2 private message)**. Never include plaintext passwords, JWT cookies, or secret values in screenshots or reports.
 
-| Account Label | Username (Local / Staging) | Username (Cloud Run Production) | Role | Environment Availability & Purpose in UAT Cases |
+| Account Label | Username (Local / Staging) | Username (Cloud Run Production) | Role | Environment Availability & Verification Requirement |
 |:---:|:---:|:---:|:---:|---|
-| **`USER-A` (`USER-DEMO`)** | `user_demo` | `user_demo` | `USER` | Seeded in Local, Staging, and Cloud Run (`SEED_DEMO_DATA=true`). Primary user for normal financial journey, boundary checks, opening balance lock, and persistence testing (`UAT-S1-01`–`06`). |
-| **`USER-B` (`USER-OTHER`)** | `user_other` | `user_other` *(requires UAT fixture verification/provisioning before test)* | `USER` | Seeded automatically in Local/Staging (`NODE_ENV !== 'production'`); must be verified present in target UAT environment prior to executing `UAT-S1-04` cross-user isolation between User A and User B. |
-| **`ADMIN-DEMO`** | `admin_demo` | `admin` | `ADMIN` | Seeded in Local/Staging (`admin_demo`) and Cloud Run (`admin`). Platform administrator account used to verify role segregation and denial of access to personal financial ledgers (`BR-10`, HTTP `403 Forbidden` in `UAT-S1-04`). |
+| **`USER-A` (`USER-DEMO`)** | `user_demo` | `user_demo` | `USER` | Seeded in Local/Staging and Cloud Run when `SEED_DEMO_DATA=true`. **Must be verified present on Cloud Run (with its 5 standard accounts) during preflight before starting UAT** (`UAT-S1-01`–`06`). |
+| **`USER-B` (`USER-OTHER`)** | `user_other` | `user_other` *(not seeded by default in `NODE_ENV=production`; must be verified or provisioned before UAT)* | `USER` | Seeded automatically only in Local/Staging (`NODE_ENV !== 'production'`). **Must be verified to exist with its 5 standard accounts in the target UAT environment—or provisioned per Section `A2.4`—before executing `UAT-S1-04` cross-user isolation.** Never claim User B exists on Cloud Run without verification evidence. |
+| **`ADMIN-DEMO`** | `admin_demo` | `admin` | `ADMIN` | Seeded in Local/Staging (`admin_demo`) and Cloud Run (`admin`). **Must be verified present during preflight** to test role segregation and denial of access to personal financial ledgers (`BR-10`, HTTP `403 Forbidden` in `UAT-S1-04`). |
 
-#### 3. Seeded Synthetic Financial Accounts (for `USER-A` and `USER-B`)
-Each `USER` account (`user_demo` and `user_other`) is provisioned with its own isolated set of 5 standard accounts under distinct `user_id` ownership:
+#### 3. Seeded Synthetic Financial Accounts (Expected per Provisioned `USER`)
+Each `USER` account is expected to have its own isolated set of 5 standard accounts under distinct `user_id` ownership when successfully provisioned. The availability of `user_demo`, `user_other`, and their respective accounts must be verified separately in each target environment before UAT:
 
 | Account Name | Account Type | UI Section on `/accounts` | Domain Role | Fresh Seed Initial Balance ($B_{\text{pre}}$) |
 |---|:---:|---|---|---:|
@@ -82,9 +84,9 @@ Each `USER` account (`user_demo` and `user_other`) is provisioned with its own i
 ### A2.4 Test Data Lifecycle and Reset/Cleanup Procedure
 
 #### A. Test Data Preparation & Fixture Separation
-1. **Test Users & Roles:**
-   - **User A (`user_demo`, Role: `USER`):** Primary UAT financial user (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`).
-   - **User B (`user_other`, Role: `USER`):** Secondary UAT financial user with its own separate 5 accounts for cross-user isolation testing (`UAT-S1-04`) and dedicated boundary fixture testing (`UAT-S1-02` Sub-check 2D).
+1. **Test Users & Roles (Must Be Verified per Target Environment):**
+   - **User A (`user_demo`, Role: `USER`):** Primary UAT financial user; verify before UAT that `user_demo` and its 5 standard accounts (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`) exist on the target environment (Cloud Run / Staging / Local).
+   - **User B (`user_other`, Role: `USER`):** Secondary UAT financial user required for cross-user isolation testing (`UAT-S1-04` Sub-check 4B) and dedicated boundary fixture testing (`UAT-S1-02` Sub-check 2D). Because `server/prisma/seed.ts` only seeds `user_other` automatically when `NODE_ENV !== 'production'`, the Product Team must verify whether `user_other` and its 5 standard accounts exist in the target UAT environment prior to testing, and if absent, provision `user_other` and its 5 accounts using `provisionDemoAccounts` before starting UAT. Do not claim or assume User B's accounts exist on Cloud Run without verification evidence.
    - **Admin (`admin` on Cloud Run / `admin_demo` on Local/Staging, Role: `ADMIN`):** Administrative user possessing zero financial accounts (`BR-10`).
 2. **Fixture Separation (Lab 5 Historical Data vs. Lab 6 UAT Data):**
    - **Fresh Seeded Database (Local / Isolated UAT Staging):** All accounts start at $B_{\text{pre}} = 0.00\text{ THB}$, $D_0 = 0.00\text{ THB}$, $I_0 = 0.00\text{ THB}$, $E_0 = 0.00\text{ THB}$, `is_opening_locked = false`, and `0` transactions.
@@ -358,38 +360,37 @@ $$\text{Verification (Live DB): } B_0 = 32,000.00\text{ THB} \implies \text{Fina
      ```
   5. Log out of the Administrator account.
 
-  ##### Sub-check 4B — Cross-User Isolation Using Real User B Account (`BR-01` / `AC-02-3`)
-  1. **Verify User A and User B exist** in the target UAT environment.
+  ##### Sub-check 4B — Cross-User Ownership / Authorization Isolation Using Real User B Account (`BR-01` / `AC-02-3`)
+  1. **Verify User A (`user_demo`) and User B (`user_other`) exist** with their respective 5 standard accounts in the target UAT environment before proceeding.
   2. **Log in as User B (`user_other`)** at `/login` and navigate to `/accounts`.
-  3. **Select a real financial account belonging to User B** (e.g., User B's `Checking Bank` account) and record its current Opening Balance, Current Balance, and lock status.
+  3. **Select a real financial account belonging to User B** (specifically User B's `Checking Bank` account) and record its current Opening Balance, Current Balance, transaction count, and confirm whether its Opening Balance is unlocked (`is_opening_locked = false`).
   4. **Record User B's real Account ID (`<USER_B_ACCOUNT_ID>`):** Open Browser DevTools Console (`F12`) while logged in as **User B (`user_other`)** and run:
      ```javascript
      fetch('/api/accounts', { credentials: 'include' })
        .then(r => r.json())
        .then(d => {
          const userBBank = d.data.accounts.find(a => a.name === 'Checking Bank');
-         console.log('USER B Real Checking Bank ID:', userBBank.id, 'Balance:', userBBank.current_balance);
+         console.log(
+           'USER B Real Checking Bank ID:', userBBank.id,
+           'Balance:', userBBank.current_balance,
+           'is_opening_locked:', userBBank.is_opening_locked
+         );
        });
      ```
-     Copy the printed UUID string as `<USER_B_ACCOUNT_ID>` (and optionally User B's `Salary` account UUID as `<USER_B_SALARY_ID>`).
+     Copy the printed UUID string as `<USER_B_ACCOUNT_ID>`.
   5. **Log out of User B (`user_other`)** by clicking **Logout**.
   6. **Log in as User A (`user_demo`)** at `/login`.
   7. **Attempt to view User B's account data while authenticated as User A:**
      - Inspect `/accounts` and `/api/accounts` as User A; verify that `<USER_B_ACCOUNT_ID>` is completely absent from User A's account list.
-  8. **Attempt to modify User B's account and create a transaction referencing User B's real Account ID while authenticated as User A:**
-     - In Browser DevTools Console (`F12`) as **User A (`user_demo`)**, replace `<USER_B_ACCOUNT_ID>` with the real UUID captured in Step 4 and execute:
+  8. **Execute Cross-User Ownership Authorization Tests while authenticated as User A (`user_demo`):**
+     - **Important Ownership Proof Rule:** Never rely on a `PATCH` against a *locked* Opening Balance account (`is_opening_locked = true`), because a `422 OPENING_BALANCE_LOCKED` response reflects business-rule locking rather than cross-user ownership rejection. To prove ownership authorization unambiguously:
+       - **Primary Test (Always Valid Regardless of Lock State):** Send a `POST /api/transactions/income` request as User A referencing User B's real `<USER_B_ACCOUNT_ID>` as `primary_account_id`.
+       - **Secondary Test (Only When User B's Account Has `is_opening_locked = false`):** Send a `PATCH /api/accounts/<USER_B_ACCOUNT_ID>/opening-balance` request as User A on User B's unlocked account.
+     - In Browser DevTools Console (`F12`) while authenticated as **User A (`user_demo`)**, replace `<USER_B_ACCOUNT_ID>` with User B's real UUID from Step 4 and execute:
        ```javascript
-       const userBAccountId = '<USER_B_ACCOUNT_ID>'; // Paste real UUID of User B's Checking Bank
+       const userBAccountId = '<USER_B_ACCOUNT_ID>'; // Real UUID of User B's Checking Bank
 
-       // Attempt 1: Modify User B's Opening Balance as User A
-       fetch(`/api/accounts/${userBAccountId}/opening-balance`, {
-         method: 'PATCH',
-         headers: { 'Content-Type': 'application/json' },
-         credentials: 'include',
-         body: JSON.stringify({ opening_balance: 77777.00 })
-       }).then(async r => console.log('Cross-User PATCH Status:', r.status, await r.json()));
-
-       // Attempt 2: Record an Income transaction into User B's Bank Account as User A
+       // Primary Ownership Test: Attempt to create an Income Transaction on User B's account as User A
        fetch('/api/accounts', { credentials: 'include' })
          .then(r => r.json())
          .then(async d => {
@@ -403,32 +404,63 @@ $$\text{Verification (Live DB): } B_0 = 32,000.00\text{ THB} \implies \text{Fina
                income_account_id: userASalary.id,
                total_amount: 5000.00,
                transaction_date: '2026-11-17',
-               description: '[LAB6-UAT-RUN-01] Unauthorized Cross-User Attempt'
+               description: '[LAB6-UAT-RUN-01] Unauthorized Cross-User Income Attempt'
              })
            });
-           console.log('Cross-User POST Income Status:', res.status, await res.json());
+           console.log('Cross-User POST Income (Expected 404 NOT_FOUND):', res.status, await res.json());
          });
-       ```
-  9. **Verify rejection:** Confirm that both requests are rejected by the server and record the actual HTTP status codes and response bodies observed.
-  10. **Log out of User A (`user_demo`), log back in as User B (`user_other`)**, and inspect `/accounts` and `/transactions` to verify that User B's original balances, opening balance lock status, and transaction history are 100% intact and unchanged.
 
-  ##### Sub-check 4C — CSRF Untrusted Origin Rejection (`AC-02-4` / `TEST-SEC-04`)
-  1. From a terminal (using `curl`), send a state-changing request (`POST /api/auth/logout` or `POST /api/transactions/income`) to the target service URL with an unauthorized `Origin` header:
+       // Secondary Ownership Test (Use ONLY when User B's account has is_opening_locked === false):
+       fetch(`/api/accounts/${userBAccountId}/opening-balance`, {
+         method: 'PATCH',
+         headers: { 'Content-Type': 'application/json' },
+         credentials: 'include',
+         body: JSON.stringify({ opening_balance: 77777.00 })
+       }).then(async r => console.log('Cross-User Unlocked PATCH (Expected 404 NOT_FOUND):', r.status, await r.json()));
+       ```
+  9. **Verify HTTP `404 NOT_FOUND` response:** Confirm that the server rejects the cross-user request(s) with HTTP **`404 Not Found`** and error code **`NOT_FOUND`** per `AC-02-3` (`BR-01`). *(Never count `422 OPENING_BALANCE_LOCKED` as proof of cross-user authorization).*
+  10. **Log out of User A (`user_demo`), log back in as User B (`user_other`)**, and inspect `/accounts` and `/transactions` to verify that no new transaction was created and User B's balances and account data remain 100% unchanged.
+
+  ##### Sub-check 4C — CSRF Untrusted Origin Rejection Using an Authenticated Session (`AC-02-4` / `TEST-SEC-04`)
+  1. **Authenticate as a valid UAT user (`user_demo`) and store the session cookie securely in a local temporary cookie jar** (never echo, commit, or screenshot the raw cookie/token value):
      ```bash
-     curl -i -X POST "https://whatsss-sipqw4logq-as.a.run.app/api/auth/logout" \
-       -H "Origin: https://untrusted-origin.example" \
-       -H "Content-Type: application/json"
+     # Step 1: Log in with valid UAT credentials (replace <PRIVATE_UAT_PASSWORD> locally in terminal; never commit)
+     curl -sS -c /tmp/whatsss_uat_cookie.txt \
+       -X POST "https://whatsss-sipqw4logq-as.a.run.app/api/auth/login" \
+       -H "Origin: https://whatsss-sipqw4logq-as.a.run.app" \
+       -H "Content-Type: application/json" \
+       -d '{"username":"user_demo","password":"<PRIVATE_UAT_PASSWORD>"}'
      ```
-  2. Record the HTTP status code and JSON error response, and verify that active user data is unchanged.
+  2. **Verify that the authenticated session is active and valid** before testing CSRF:
+     ```bash
+     # Step 2: Confirm authenticated session returns HTTP 200 OK and user_demo profile
+     curl -i -sS -b /tmp/whatsss_uat_cookie.txt \
+       "https://whatsss-sipqw4logq-as.a.run.app/api/auth/me"
+     ```
+  3. **Send a state-changing request using the verified authenticated session (`-b /tmp/whatsss_uat_cookie.txt`) but with an untrusted `Origin` header (`https://untrusted-origin.example`):**
+     ```bash
+     # Step 3: Send authenticated state-changing request from untrusted Origin
+     curl -i -sS -b /tmp/whatsss_uat_cookie.txt \
+       -X POST "https://whatsss-sipqw4logq-as.a.run.app/api/transactions/income" \
+       -H "Origin: https://untrusted-origin.example" \
+       -H "Content-Type: application/json" \
+       -d '{"primary_account_id":"00000000-0000-0000-0000-000000000000","income_account_id":"00000000-0000-0000-0000-000000000000","total_amount":1000.00,"transaction_date":"2026-11-17","description":"CSRF Test"}'
+
+     # Clean up temporary cookie file immediately after test
+     rm -f /tmp/whatsss_uat_cookie.txt
+     ```
+  4. **Verify rejection and zero state mutation:** Confirm the response is HTTP **`403 Forbidden`** with error code **`CSRF_ORIGIN_REJECTED`** (`AC-02-4`), and verify in the UI (`/dashboard` and `/transactions`) that no transaction or balance change occurred.
+  5. **Security & Redaction Rules:**
+     - **Never** include raw `Cookie` or `Set-Cookie` token values in GitHub, screenshots, or the PDF report (redact any token string as `<REDACTED_COOKIE>`).
+     - If authenticated CSRF testing cannot be executed during the UAT session, record Sub-check 4C honestly as **`BLOCKED`** or a documented limitation—**never mark it `PASS`**.
 
 * **Specific Expected Results:**
   - **Sub-check 4A (`BR-10` / `AC-02-2`):** Administrator is denied access to `/dashboard`, `/accounts`, and `/transactions` in the UI (`Access Forbidden (403)`), and all financial API endpoints return HTTP `403 Forbidden`.
   - **Sub-check 4B (`BR-01` / `AC-02-3`):**
     - User A cannot view User B's financial accounts or balances.
-    - User A cannot modify User B's opening balance or record transactions against User B's real `<USER_B_ACCOUNT_ID>` (per Sprint 1 contract `AC-02-3`, cross-tenant access returns `404 Not Found` / `NOT_FOUND`; testers must record the actual HTTP status and message returned).
-    - Zero private data or balance of User B is disclosed in the error response.
-    - Re-logging in as User B confirms User B's balances and transaction history remain completely unmodified.
-  - **Sub-check 4C (`AC-02-4`):** State-changing request with untrusted `Origin` is rejected with HTTP **`403 Forbidden`** and error code **`CSRF_ORIGIN_REJECTED`**, with zero state mutation.
+    - Authenticated as User A, attempting to create an Income transaction on User B's real `<USER_B_ACCOUNT_ID>` (or `PATCH` User B's unlocked opening balance) is rejected with HTTP **`404 Not Found`** (`NOT_FOUND`) per `AC-02-3`. (`422 OPENING_BALANCE_LOCKED` is never accepted as proof of cross-user ownership isolation).
+    - Zero private data or balance of User B is disclosed, no new transaction is created, and User B's balances and transaction history remain completely unmodified.
+  - **Sub-check 4C (`AC-02-4`):** State-changing request sent with a verified authenticated session and an untrusted `Origin` (`https://untrusted-origin.example`) is rejected by `csrfGuard` with HTTP **`403 Forbidden`** and error code **`CSRF_ORIGIN_REJECTED`**, with zero database writes or balance changes.
 * **Actual / Evidence / Status:** `NOT RUN` — *Independent UAT Team to complete.*
 
 ---
@@ -560,23 +592,25 @@ For every accepted defect resolved in this lab (or for a TA-approved controlled 
 3. **Implementation Fix & Verification (`GREEN`):**
    - Correct the application logic.
    - Re-run the exact same reproduction test and capture the passing output (`PASS`).
-4. **Full Regression Suite Verification (Safe Working Directory Sequence from Repository Root):**
-   - Execute the repository verification commands below (returning to the repository root before invoking `deploy/tests/*`):
+4. **Full Regression Suite Verification (Fail-Fast & Safe Working Directory Sequence from Repository Root):**
+   - Execute the repository verification commands below (`set -euo pipefail` ensures immediate termination if any test or build step fails, and `cd ..` returns to the repository root before invoking `deploy/tests/*`):
      ```bash
-     # 1. Backend unit & integration tests + TypeScript build (from repository root)
+     set -euo pipefail
+
+     # Backend tests
      cd server
      npm test
      npm run build
 
-     # 2. Frontend unit & component tests + production bundle build
+     # Frontend tests
      cd ../client
      npm test
      npm run build
 
-     # 3. Return to repository root before running deployment script tests
+     # Return to repository root
      cd ..
 
-     # 4. Deployment & release script automated test suites (verified at deploy/tests/*)
+     # Deployment and release tests
      bash deploy/tests/test-deploy.sh
      bash deploy/tests/test-release.sh
      ```
@@ -616,7 +650,7 @@ For every accepted defect resolved in this lab (or for a TA-approved controlled 
 |---|---|---|---|
 | **Sprint 1 Code Baseline** | `sprint-1` | `2002ad088e739b90072f129838e6a096f6f4bf87` | Frozen Sprint 1 implementation baseline (`F-01`–`F-09`) |
 | **Lab 5 Production Release (`main`)** | `main` / `staging-lab5` | `ba2f9dd43d8ed620d4b27820d43bee243d2e3d4d` | Merged Lab 5 release & CI/CD pipeline baseline |
-| **Initial Tested Cloud Run Deployment** | Cloud Run (`asia-southeast1`) | Revision `whatsss-00020-65k` (Image SHA `f160f256af24635cdc602b676a7cf8822fbbceb8`) | Active 100% traffic serving revision at UAT handoff |
+| **Initial Tested Cloud Run Deployment** | Cloud Run (`asia-southeast1`) | Revision `whatsss-00020-65k` (Image SHA `f160f256af24635cdc602b676a7cf8822fbbceb8`) | Last known handoff baseline; to be re-verified during preflight (`A-EV-01`) |
 | **Defective Commit(s) (if any)** | `TBD` | `TBD` | To be recorded in Part C/D |
 | **Regression Test (`RED`) & Fix (`GREEN`) Commit** | `TBD` | `TBD` | To be recorded in Part D |
 | **Corrected `main` Release & Cloud Run Revision** | `TBD` | `TBD` | To be recorded in Part D after retest |
