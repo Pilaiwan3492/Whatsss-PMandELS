@@ -89,24 +89,30 @@ Each `USER` account is expected to have its own isolated set of 5 standard accou
    - **User B (`user_other`, Role: `USER`):** Secondary UAT financial user required for cross-user isolation testing (`UAT-S1-04` Sub-check 4B), isolated `AC-03-2` unlocked `Checking Bank` testing (`UAT-S1-03`), and dedicated boundary fixture testing (`UAT-S1-02` Sub-check 2D). Because `server/prisma/seed.ts` only seeds `user_other` automatically when `NODE_ENV !== 'production'`, the Product Team must follow the **5-Step User B Provisioning Procedure** below before executing cross-user UAT on Cloud Run. Never assume or claim that User B exists on Cloud Run without verification evidence.
    - **Admin (`admin` on Cloud Run / `admin_demo` on Local/Staging, Role: `ADMIN`):** Administrative user possessing zero financial accounts (`BR-10`).
 
-2. **5-Step User B (`user_other`) Verification & Provisioning Procedure:**
-   > **Technical Note on `provisionDemoAccounts(client, user)`:** In `server/prisma/seed.ts`, `provisionDemoAccounts(client, user)` only creates/upserts the 5 standard financial accounts for an **already existing** `User` record (`user: { id, role, username }`); it does **not** create the `User` row or set a password hash. Therefore, provisioning User B when absent requires creating the `User` record first before calling `provisionDemoAccounts`:
-   - **Step 1 — Verify User B (`user_other`) in Target Environment:**
-     - Check whether `user_other` exists in the target UAT environment, has `role = 'USER'`, has `is_active = true`, and can authenticate at `/login`. Never assume local seed data exists on Cloud Run.
-   - **Step 2 — Create User B Record If Absent (Authorized Provisioning Only):**
-     - If `user_other` does not exist in the target environment, create the `User` record through an authorized one-off Prisma provisioning task/command (never using `prisma migrate reset` on production and never modifying existing Lab 5 records):
-       - `id`: Generated UUID
-       - `username`: `'user_other'`
-       - `email`: `'user_other@whatsss.local'` (verified non-conflicting)
-       - `role`: `'USER'`
-       - `is_active`: `true`
-       - `password_hash`: Salted `bcrypt.hash(process.env.UAT_USER_B_PASSWORD, 10)` using a strong password (>= 12 chars) injected via secure environment variable / Secret Manager (never hardcode or record plaintext passwords in Git, UAT docs, or screenshots).
-   - **Step 3 — Provision User B's 5 Standard Financial Accounts:**
-     - Pass the created/verified `userB` record (`{ id: userB.id, role: userB.role, username: userB.username }`) into `await provisionDemoAccounts(prisma, userB)` from `server/prisma/seed.ts` to atomically upsert User B's 5 isolated accounts (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`).
-   - **Step 4 — Post-Provisioning Verification:**
-     - Verify that `user_other` owns all 5 standard accounts (`0.00 THB` initial balance, `is_opening_locked = false`), `user_other` can log in at `/login`, `user_demo` (User A) cannot access `user_other`'s records, `user_other` (User B) cannot access `user_demo`'s records, and existing financial data of `user_demo` (Lab 5 records) remains completely untouched.
-   - **Step 5 — Mandatory `BLOCKED` Rule If Provisioning Cannot Be Completed:**
-     - If the team lacks authorization/permissions to provision `user_other` in the target environment or approved provisioning has not been completed before UAT execution, record:
+2. **Actionable User B (`user_other`) Provisioning Procedure (`server/prisma/provision-user-b.ts`):**
+   > **Technical Note on `provisionDemoAccounts(client, user)`:** In `server/prisma/seed.ts`, `provisionDemoAccounts(client, user)` only creates/upserts the 5 standard financial accounts for an **already existing** `User` record (`user: { id, role, username }`); it does **not** create the `User` row or set a password hash. To make User B provisioning repeatable and executable, the repository provides the dedicated script [`server/prisma/provision-user-b.ts`](../../../server/prisma/provision-user-b.ts), which executes inside an atomic `prisma.$transaction`:
+   - **Step 1 — Check Existing User B (`user_other`):**
+     - Queries `tx.user.findUnique({ where: { username: 'user_other' } })`. If `user_other` already exists, verifies `role === 'USER'` and `is_active === true` and reuses the existing user without overwriting its password or data. If absent, checks `tx.user.findUnique({ where: { email } })` to prevent unique constraint conflicts.
+   - **Step 2 — Create User B Record When Absent:**
+     - Creates `user_other` matching the Prisma `User` schema (`id` UUID, `username: 'user_other'`, `email: 'user_other@whatsss.local'`, `password_hash`, `role: 'USER'`, `is_active: true`). Never assigns role `ADMIN`.
+   - **Step 3 — Secure Password Handling:**
+     - Reads the password from environment variable `UAT_USER_B_PASSWORD` (or `SEED_DEMO_PASSWORD` from Secret Manager), enforces minimum length $\ge 12$ characters, rejects template placeholders via `isPlaceholderPassword()`, and hashes with `bcrypt.hash(rawPassword, 10)`. Never hardcodes or logs plaintext passwords or hashes.
+   - **Step 4 — Provision Accounts via `provisionDemoAccounts(prisma, userB)`:**
+     - Invokes `await provisionDemoAccounts(tx, { id: userB.id, role: userB.role, username: userB.username })` to idempotently upsert User B's 5 standard accounts.
+   - **Step 5 — Verify Provisioned Accounts & Ownership:**
+     - Verifies that all 5 standard accounts (`Checking Bank`, `Visa Credit Card`, `Salary`, `Dining`, `Grocery`) exist with `user_id === userB.id`, with no duplicate accounts, no modification to User A (`user_demo`), and no overwriting of existing balances.
+   - **Step 6 — Atomic Error Handling:**
+     - Executes all steps inside `client.$transaction(...)` so any validation or database error rolls back cleanly with a descriptive error message without deleting or altering existing data.
+   - **Step 7 — Exact Execution Command (From Repository Root):**
+     ```bash
+     # Run from the server workspace (requires UAT_USER_B_PASSWORD or SEED_DEMO_PASSWORD >= 12 chars in env)
+     cd server
+     npx tsx prisma/provision-user-b.ts
+     # Or via npm script:
+     npm run prisma:provision-user-b
+     ```
+   - **Mandatory `BLOCKED` Rule If Provisioning Cannot Be Executed:**
+     - If the team lacks authorization/access to run `provision-user-b.ts` against the target environment and `user_other` is not present, record:
        ```text
        UAT-S1-04 (Sub-check 4B): BLOCKED
        Reason: The required User B test account is not available in the target environment, and approved provisioning has not been completed.
@@ -116,8 +122,8 @@ Each `USER` account is expected to have its own isolated set of 5 standard accou
 3. **Fixture Separation (Lab 5 Historical Data vs. Lab 6 UAT Data):**
    - **Fresh Seeded Database (Local / Isolated UAT Staging):** All accounts start at $B_{\text{pre}} = 0.00\text{ THB}$, $D_0 = 0.00\text{ THB}$, $I_0 = 0.00\text{ THB}$, $E_0 = 0.00\text{ THB}$, `is_opening_locked = false`, and `0` transactions.
    - **Existing Live Cloud Run Database (`https://whatsss-sipqw4logq-as.a.run.app`):** Retains historical verification records from Lab 5 (`C-04` and `C-05`) on `user_demo`, where Opening Balance (`10,000.00 THB`) was already locked (`is_opening_locked = true`) and pre-test starting balances are $B_0 = 32,000.00\text{ THB}$, $D_0 = 0.00\text{ THB}$, $I_0 = 25,000.00\text{ THB}$, $E_0 = 3,000.00\text{ THB}$.
-   - **Separated `Checking Bank` Fixtures for `UAT-S1-03` (`AC-03-2` vs. `AC-03-3`):** `AC-03-2` (invalid opening balance) requires an unlocked **`Checking Bank`** (`is_opening_locked = false`, no committed transactions), whereas `AC-03-3` requires a separate **`Checking Bank`** with at least one committed transaction (`is_opening_locked = true`). Never use `Visa Credit Card` as the fixture for `AC-03-2`.
-   - **Dedicated Over-Repayment Fixture (`UAT-S1-02` Sub-check 2D):** Uses an isolated account state with `Checking Bank Balance = 5,000.00 THB` and `Visa Credit Card Debt = 3,000.00 THB` (prepared on a fresh reset or on `user_other` / dedicated UAT account so it does not conflict with `UAT-S1-01`).
+   - **Separated `Checking Bank` Fixtures for `UAT-S1-03` (`AC-03-2` vs. `AC-03-3`):** `AC-03-2` (invalid opening balance) requires an unlocked **`Checking Bank`** (`is_opening_locked = false`, zero committed transactions referencing `Checking Bank`), whereas `AC-03-3` requires a separate **`Checking Bank`** with at least one committed transaction (`is_opening_locked = true`). Never use `Visa Credit Card` as the fixture for `AC-03-2`. If any test case requires recording an Income transaction on `Checking Bank` (such as `UAT-S1-01`), it must use User A (`user_demo`)'s account, never the `Checking Bank` reserved for `AC-03-2`.
+   - **Dedicated Over-Repayment Fixture (`UAT-S1-02` Sub-check 2D):** Prepared on User B (`user_other`) (or a fresh reset before `UAT-S1-01`) with `Checking Bank Balance = 5,000.00 THB` established **exclusively via Set Opening Balance (`5000.00`)** (never by recording an Income transaction) and `Visa Credit Card Debt = 3,000.00 THB` (via a `3000.00` Credit Card Purchase). Because the credit card purchase only references `Visa Credit Card` and `Dining`/`Grocery`—and the `3,500.00 THB` over-repayment is rejected—`Checking Bank` has zero committed transactions and remains unlocked (`is_opening_locked = false`) for `UAT-S1-03` (`AC-03-2`).
 
 #### B. Baseline Verification (Mandatory Pre-Run Gate)
 Before executing any UAT test case, the tester must verify and record:
@@ -150,7 +156,7 @@ To distinguish UAT transactions across repeated test runs without ambiguity:
    - **Never reset or delete existing production/demo data on the live Cloud SQL instance (`whatsss-sql`) without explicit authorization**, as Lab 5 grading requires C-04/C-05 records to remain inspectable.
    - Instead, either:
      - **(Option 1 — Delta Verification with Run Tags):** Execute `UAT-S1-01` on `user_demo` using unique `[LAB6-UAT-RUN-01]` descriptions and verify the exact mathematical deltas from the recorded starting state $B_0 = 32,000.00\text{ THB} \rightarrow 49,000.00\text{ THB}$; **OR**
-     - **(Option 2 — Dedicated UAT User Fixture):** Provision a dedicated fresh `USER` account (e.g., `user_other` or `uat_tester_01` created via authorized `prisma.user.upsert` followed by `provisionDemoAccounts(prisma, user)` per the 5-Step Procedure in `A2.4.A`) so the UAT Team can test from a clean `0.00 THB` baseline without touching `user_demo`'s Lab 5 records.
+     - **(Option 2 — Dedicated UAT User Fixture):** Provision the dedicated secondary `USER` account `user_other` via `cd server && npx tsx prisma/provision-user-b.ts` (`npm run prisma:provision-user-b`, per `A2.4.A.2`) so the UAT Team can test from a clean `0.00 THB` baseline without touching `user_demo`'s Lab 5 records.
 
 ---
 
@@ -249,11 +255,11 @@ $$\text{Verification (Live DB): } B_0 = 32,000.00\text{ THB} \implies \text{Fina
   - Sub-check 2D (Dedicated Over-Repayment Fixture per Sprint 1 Test Spec `AC-07-4` / `TEST-REPAY-03`): Dedicated `USER` fixture (e.g., `user_other` or freshly reset `user_demo`) prepared with **Bank Balance = `5,000.00 THB`** and **Credit Card Debt = `3,000.00 THB`**.
 * **Preconditions:**
   - Record pre-test account balances before running negative checks.
-  - For **Sub-check 2D (Over-Repayment `AC-07-4`)**, prepare the dedicated fixture first so it is 100% independent of `UAT-S1-01`:
+  - For **Sub-check 2D (Over-Repayment `AC-07-4`)**, prepare the dedicated fixture first using **Opening Balance ONLY** (never by recording an Income transaction, so `Checking Bank` remains unlocked `is_opening_locked = false` for `UAT-S1-03` `AC-03-2`):
     | Dedicated Fixture Parameter (`AC-07-4` / `TEST-REPAY-03`) | Required Value | How to Prepare on Isolated User (`user_other` or Fresh Reset) |
     |---|---:|---|
-    | **Checking Bank Balance** | **`5,000.00 THB`** | Set Opening Balance = `5000.00` THB on `Checking Bank` (or deposit `5000.00` Income if `0.00`). |
-    | **Visa Credit Card Debt** | **`3,000.00 THB`** | Record a Credit Card Purchase of `3000.00` THB (`Dining: 1000.00`, `Grocery: 2000.00`) on `Visa Credit Card`. |
+    | **Checking Bank Balance** | **`5,000.00 THB`** | **Set Opening Balance = `5000.00` THB on `Checking Bank` ONLY.** *(Do NOT record an Income transaction for this fixture; keeping zero committed transactions on `Checking Bank` preserves `is_opening_locked = false` for `UAT-S1-03` `AC-03-2`).* |
+    | **Visa Credit Card Debt** | **`3,000.00 THB`** | Record a Credit Card Purchase of `3000.00` THB (`Dining: 1000.00`, `Grocery: 2000.00`) on `Visa Credit Card` *(does not lock `Checking Bank`)*. |
     | **Attempted Repayment Amount** | **`3,500.00 THB`** | Strictly exceeds the `3,000.00 THB` Credit Card Debt while being less than the `5,000.00 THB` Bank Balance. |
 * **Synthetic Inputs & Numbered User Actions:**
   1. **Sub-check 2A — Under-Allocated Split (`BR-06` / `AC-06-2`):**
@@ -321,9 +327,12 @@ $$\text{Verification (Live DB): } B_0 = 32,000.00\text{ THB} \implies \text{Fina
   ```text
   For AC-03-2 (Invalid Opening Balance on Unlocked Account):
   The tester uses a fresh eligible Checking Bank account
-  with is_opening_locked=false and no committed transactions
-  (e.g., on a fresh user/environment BEFORE UAT-S1-01 commits any transaction,
-  or on User B's separate unlocked Checking Bank account).
+  with is_opening_locked=false and zero committed transactions referencing Checking Bank
+  (e.g., User B's Checking Bank where UAT-S1-02 Sub-check 2D used Opening Balance only,
+  or a fresh user's Checking Bank BEFORE UAT-S1-01 records any Income/Repayment).
+  Before starting AC-03-2, explicitly verify that is_opening_locked=false.
+  If any other test case requires recording an Income transaction, use a separate
+  account (User A / user_demo), never the Checking Bank reserved for AC-03-2.
   Never use Visa Credit Card as the test fixture for AC-03-2.
 
   For AC-03-3 (Permanent Lock After First Committed Transaction):
@@ -447,15 +456,13 @@ $$\text{Verification (Live DB): } B_0 = 32,000.00\text{ THB} \implies \text{Fina
   6. **Log in as User A (`user_demo`)** at `/login`.
   7. **Attempt to view User B's account data while authenticated as User A:**
      - Inspect `/accounts` and `/api/accounts` as User A; verify that `<USER_B_ACCOUNT_ID>` is completely absent from User A's account list.
-  8. **Execute Cross-User Ownership Authorization Tests while authenticated as User A (`user_demo`):**
-     - **Important Ownership Proof Rule:** Never rely on a `PATCH` against a *locked* Opening Balance account (`is_opening_locked = true`), because a `422 OPENING_BALANCE_LOCKED` response reflects business-rule locking rather than cross-user ownership rejection. To prove ownership authorization unambiguously:
-       - **Primary Test (Always Valid Regardless of Lock State):** Send a `POST /api/transactions/income` request as User A referencing User B's real `<USER_B_ACCOUNT_ID>` as `primary_account_id`.
-       - **Secondary Test (Only When User B's Account Has `is_opening_locked = false`):** Send a `PATCH /api/accounts/<USER_B_ACCOUNT_ID>/opening-balance` request as User A on User B's unlocked account.
+  8. **Execute Cross-User Ownership Authorization Test while authenticated as User A (`user_demo`):**
+     - Send a `POST /api/transactions/income` request authenticated as **User A (`user_demo`)** but specifying User B's real `<USER_B_ACCOUNT_ID>` as `primary_account_id`. *(Using `POST /api/transactions/income` tests ownership authorization directly and avoids any ambiguity with `422 OPENING_BALANCE_LOCKED` on locked accounts).*
      - In Browser DevTools Console (`F12`) while authenticated as **User A (`user_demo`)**, replace `<USER_B_ACCOUNT_ID>` with User B's real UUID from Step 4 and execute:
        ```javascript
        const userBAccountId = '<USER_B_ACCOUNT_ID>'; // Real UUID of User B's Checking Bank
 
-       // Primary Ownership Test: Attempt to create an Income Transaction on User B's account as User A
+       // Cross-User Ownership Test: Attempt to create an Income Transaction on User B's account as User A
        fetch('/api/accounts', { credentials: 'include' })
          .then(r => r.json())
          .then(async d => {
@@ -474,17 +481,9 @@ $$\text{Verification (Live DB): } B_0 = 32,000.00\text{ THB} \implies \text{Fina
            });
            console.log('Cross-User POST Income (Expected 404 NOT_FOUND):', res.status, await res.json());
          });
-
-       // Secondary Ownership Test (Use ONLY when User B's account has is_opening_locked === false):
-       fetch(`/api/accounts/${userBAccountId}/opening-balance`, {
-         method: 'PATCH',
-         headers: { 'Content-Type': 'application/json' },
-         credentials: 'include',
-         body: JSON.stringify({ opening_balance: 77777.00 })
-       }).then(async r => console.log('Cross-User Unlocked PATCH (Expected 404 NOT_FOUND):', r.status, await r.json()));
        ```
-  9. **Verify HTTP `404 NOT_FOUND` response:** Confirm that the server rejects the cross-user request(s) with HTTP **`404 Not Found`** and error code **`NOT_FOUND`** per `AC-02-3` (`BR-01`). *(Never count `422 OPENING_BALANCE_LOCKED` as proof of cross-user authorization).*
-  10. **Log out of User A (`user_demo`), log back in as User B (`user_other`)**, and inspect `/accounts` and `/transactions` to verify that no new transaction was created and User B's balances and account data remain 100% unchanged.
+  9. **Verify HTTP `404 NOT_FOUND` response:** Confirm that the server rejects the cross-user request with HTTP **`404 Not Found`** and error code **`NOT_FOUND`** per `AC-02-3` (`BR-01`), with zero private data of User B leaked in the response. *(Never count `422 OPENING_BALANCE_LOCKED` as proof of cross-user authorization).*
+  10. **Log out of User A (`user_demo`), log back in as User B (`user_other`)**, and inspect `/accounts` and `/transactions` (or query `/api/accounts` and `/api/transactions` as User B) to verify that no new transaction was created and User B's balances and account data remain 100% unchanged.
 
   ##### Sub-check 4C — CSRF Untrusted Origin Rejection Using an Authenticated Session (`AC-02-4` / `TEST-SEC-04`)
   1. **Authenticate as a valid UAT user (`user_demo`) and store the session cookie securely in a local temporary cookie jar** (never echo, commit, or screenshot the raw cookie/token value):
@@ -523,7 +522,7 @@ $$\text{Verification (Live DB): } B_0 = 32,000.00\text{ THB} \implies \text{Fina
   - **Sub-check 4A (`BR-10` / `AC-02-2`):** Administrator is denied access to `/dashboard`, `/accounts`, and `/transactions` in the UI (`Access Forbidden (403)`), and all financial API endpoints return HTTP `403 Forbidden`.
   - **Sub-check 4B (`BR-01` / `AC-02-3`):**
     - User A cannot view User B's financial accounts or balances.
-    - Authenticated as User A, attempting to create an Income transaction on User B's real `<USER_B_ACCOUNT_ID>` (or `PATCH` User B's unlocked opening balance) is rejected with HTTP **`404 Not Found`** (`NOT_FOUND`) per `AC-02-3`. (`422 OPENING_BALANCE_LOCKED` is never accepted as proof of cross-user ownership isolation).
+    - Authenticated as User A, attempting to create an Income transaction (`POST /api/transactions/income`) targeting User B's real `<USER_B_ACCOUNT_ID>` is rejected with HTTP **`404 Not Found`** (`NOT_FOUND`) per `AC-02-3`. (`422 OPENING_BALANCE_LOCKED` is never used or accepted as proof of cross-user ownership isolation).
     - Zero private data or balance of User B is disclosed, no new transaction is created, and User B's balances and transaction history remain completely unmodified.
   - **Sub-check 4C (`AC-02-4`):** State-changing request sent with a verified authenticated session and an untrusted `Origin` (`https://untrusted-origin.example`) is rejected by `csrfGuard` with HTTP **`403 Forbidden`** and error code **`CSRF_ORIGIN_REJECTED`**, with zero database writes or balance changes.
 * **Actual / Evidence / Status:** `NOT RUN` — *Independent UAT Team to complete.*
