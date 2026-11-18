@@ -879,15 +879,16 @@ describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Id
 
   it('Case 25: provisionUserB creates user_other with bcrypt hash and provisions 5 isolated accounts without touching other users', async () => {
     const accountsStore: any[] = [];
+    const userCreateSpy = vi.fn().mockImplementation(async ({ data }: any) => ({
+      id: 'user-b-uuid',
+      ...data
+    }));
     const mockClient: any = {
       $transaction: vi.fn(async (cb: any) => {
         const tx = {
           user: {
             findUnique: vi.fn().mockResolvedValue(null),
-            create: vi.fn().mockImplementation(async ({ data }: any) => ({
-              id: 'user-b-uuid',
-              ...data
-            }))
+            create: userCreateSpy
           },
           account: {
             upsert: vi.fn().mockImplementation(async ({ create }: any) => {
@@ -907,6 +908,16 @@ describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Id
 
     expect(result.created).toBe(true);
     expect(result.username).toBe('user_other');
+    expect(userCreateSpy).toHaveBeenCalledTimes(1);
+
+    const createCall = userCreateSpy.mock.calls[0][0];
+    const savedHash = createCall.data.password_hash;
+
+    expect(savedHash).not.toBe('ValidUserBPassword2026!');
+    expect(await bcrypt.compare('ValidUserBPassword2026!', savedHash)).toBe(true);
+    expect(createCall.data.role).toBe('USER');
+    expect(createCall.data.is_active).toBe(true);
+
     expect(result.accountNames).toHaveLength(5);
     for (const std of STANDARD_ACCOUNTS) {
       expect(result.accountNames).toContain(std.name);
