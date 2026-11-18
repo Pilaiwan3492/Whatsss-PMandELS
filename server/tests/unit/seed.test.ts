@@ -883,6 +883,10 @@ describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Id
       id: 'user-b-uuid',
       ...data
     }));
+    const accountUpsertSpy = vi.fn().mockImplementation(async ({ create }: any) => {
+      accountsStore.push(create);
+      return create;
+    });
     const mockClient: any = {
       $transaction: vi.fn(async (cb: any) => {
         const tx = {
@@ -891,10 +895,7 @@ describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Id
             create: userCreateSpy
           },
           account: {
-            upsert: vi.fn().mockImplementation(async ({ create }: any) => {
-              accountsStore.push(create);
-              return create;
-            }),
+            upsert: accountUpsertSpy,
             findMany: vi.fn().mockImplementation(async () => accountsStore)
           }
         };
@@ -918,9 +919,26 @@ describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Id
     expect(createCall.data.role).toBe('USER');
     expect(createCall.data.is_active).toBe(true);
 
+    expect(accountUpsertSpy).toHaveBeenCalledTimes(5);
+    expect(accountsStore).toHaveLength(5);
     expect(result.accountNames).toHaveLength(5);
+
+    for (const call of accountUpsertSpy.mock.calls) {
+      const upsertArg = call[0];
+      expect(upsertArg.where.user_id_name.user_id).toBe('user-b-uuid');
+      expect(upsertArg.create.user_id).toBe('user-b-uuid');
+    }
+
+    for (const acc of accountsStore) {
+      expect(acc.user_id).toBe('user-b-uuid');
+    }
+
     for (const std of STANDARD_ACCOUNTS) {
-      expect(result.accountNames).toContain(std.name);
+      const matchingAccounts = accountsStore.filter(
+        (acc) => acc.name === std.name && acc.user_id === 'user-b-uuid'
+      );
+      expect(matchingAccounts).toHaveLength(1);
+      expect(result.accountNames.filter((name) => name === std.name)).toHaveLength(1);
     }
   });
 
