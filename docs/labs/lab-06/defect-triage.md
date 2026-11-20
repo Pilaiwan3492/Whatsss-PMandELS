@@ -44,14 +44,30 @@ During the independent user acceptance testing of **SingSlot Sprint 1** (`singsl
 
 ## 3. Incoming Findings Register (Whatsss Application)
 
-### 3.1 Incoming Partner-Reported Findings (SingSlot $\rightarrow$ Whatsss)
-The Whatsss team monitors incoming findings reported by the SingSlot UAT Team against Whatsss deployed Cloud Run release `whatsss-00006-9j1` (`https://whatsss-sipqw4logq-as.a.run.app`, baseline tag `v0.1.0-sprint1`).
+This register separates findings identified through internal audit and handoff verification from findings formally reported by the partner testing team. Each finding must retain its actual source to ensure accurate traceability and avoid misrepresenting internal observations as partner-reported defects.
+
+### 3.1 Internal Audit and Handoff Verification Findings
+
+The following findings were identified through our team's internal audit and handoff verification of Whatsss. They were not submitted as formal defect reports by the SingSlot UAT Team.
 
 | Finding ID | Reporter / Source | Linked Requirement | Description & Observation | Classification | Severity | Disposition & Evidence |
 |:---:|:---:|:---:|---|:---:|:---:|---|
 | **DEF-01** | Internal Audit / Handoff Verification | `TC-UAT-01`<br>`BR-04` | Boundary test on expense split allocation decimal cents precision. Balanced allocation accepted (`200 OK`). | **Not-a-Defect** | None | Conforms strictly to `BR-04` and `WP-04` contract. |
 | **DEF-02** | Internal Audit / Handoff Verification | `TC-UAT-03`<br>`BR-10` | Administrator attempts to view user financial transactions and receives `HTTP 403 Forbidden`. | **Not-a-Defect** | None | Intended security behavior per `BR-10` (financial privacy isolation) and `NFR-SEC-02`. |
-| *Pending* | SingSlot UAT Team | Sprint 1 Scope | *Awaiting formal partner UAT completion from SingSlot.* | Pending | Pending | To be triaged upon receipt of partner review. |
+
+**Internal Audit Summary:**
+- DEF-01 was classified as Not-a-Defect because the observed balanced allocation behavior conforms to the specified decimal precision and allocation contract.
+- DEF-02 was classified as Not-a-Defect because administrators must not access users' personal financial transaction data.
+
+### 3.2 Formal Partner-Reported Findings (SingSlot UAT Team → Whatsss)
+
+The Whatsss team monitors formal findings reported by the SingSlot UAT Team against the deployed Whatsss Cloud Run release `whatsss-00006-9j1` (`https://whatsss-sipqw4logq-as.a.run.app`, baseline tag `v0.1.0-sprint1`).
+
+| Finding ID | Reporter / Source | Linked Requirement | Description & Observation | Classification | Severity | Disposition & Evidence |
+|:---:|:---:|:---:|---|:---:|:---:|---|
+| *None received* | SingSlot UAT Team | N/A | No formal partner-reported defect findings have been recorded in this register at the time of this submission. | N/A | N/A | No partner finding to triage. Update this register if a formal report is received. |
+
+**Partner Finding Status:** No formal partner-reported findings are currently recorded. Internal audit findings DEF-01 and DEF-02 above are not counted as partner submissions.
 
 ---
 

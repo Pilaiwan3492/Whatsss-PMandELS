@@ -217,7 +217,11 @@ The assigned division of testing responsibilities between pair partners is:
 
 ## 5. Evidence Catalog & Screen Captures
 
-The current evidence set in `docs/labs/lab-06/evidence/` contains **exactly 15 readable PNG screenshot files** (`EVD-UAT-01` through `EVD-UAT-15`), corroborated by the 6 initial source screenshots archived in `docs/labs/lab-06/screenshots/` (`EV-UAT03-01` through `EV-UAT04-03`) from PR #41:
+The current evidence set in `docs/labs/lab-06/evidence/` contains exactly 15 PNG screenshot files (`EVD-UAT-01` through `EVD-UAT-15`). These are the consolidated evidence files used by this report.
+
+For traceability, the original six screenshots from PR #41 are preserved separately in `docs/labs/lab-06/screenshots/` under their original evidence IDs (`EV-UAT03-01` through `EV-UAT04-03`). The original files are source evidence and are not counted as additional files in the 15-file consolidated evidence set.
+
+The mapping between the original source evidence and the consolidated evidence is documented below. Original evidence IDs and consolidated evidence IDs must remain distinct.
 
 | Evidence ID | Linked Case | Description | Source File Reference |
 |---|---|---|---|
@@ -236,6 +240,24 @@ The current evidence set in `docs/labs/lab-06/evidence/` contains **exactly 15 r
 | **EVD-UAT-13** | UAT-05 | Customer booking details persisted across browser hard reload | `evidence/uat05-01-customer-details-persisted.png` |
 | **EVD-UAT-14** | UAT-05 | Staff Master Schedule across all 9 rooms showing M01 booked | `evidence/uat05-02-staff-master-schedule.png` |
 | **EVD-UAT-15** | UAT-05 | Staff reservation details modal with authorized PII override | `evidence/uat05-03-staff-booking-detail-modal.png` |
+
+### 5.1 Original Evidence Traceability (PR #41)
+
+The following table identifies the six original screenshots preserved from PR #41. These files retain their original evidence IDs and are separate from the 15 consolidated evidence files listed above.
+
+| Original Evidence ID | UAT Case | Original Screenshot File | Related Consolidated Evidence |
+|---|---|---|---|
+| `EV-UAT03-01` | UAT-03 | [`uat03-01-past-date-picker-disabled.png`](screenshots/uat03-01-past-date-picker-disabled.png) | `EVD-UAT-10` |
+| `EV-UAT03-02` | UAT-03 | [`uat03-02-operating-window-slot12-duration.png`](screenshots/uat03-02-operating-window-slot12-duration.png) | `EVD-UAT-09` |
+| `EV-UAT03-03` | UAT-03 | [`uat03-03-capacity-limit-s01-max4.png`](screenshots/uat03-03-capacity-limit-s01-max4.png) | `EVD-UAT-08` |
+| `EV-UAT04-01` | UAT-04 | [`uat04-01-customer1-my-bookings.png`](screenshots/uat04-01-customer1-my-bookings.png) | Original source evidence |
+| `EV-UAT04-02` | UAT-04 | [`uat04-02-customer1-reservation-detail-200.png`](screenshots/uat04-02-customer1-reservation-detail-200.png) | Original source evidence |
+| `EV-UAT04-03` | UAT-04 | [`uat04-03-customer2-isolated-my-bookings.png`](screenshots/uat04-03-customer2-isolated-my-bookings.png) | `EVD-UAT-11` |
+
+**Evidence ID Convention:**
+- `EV-UATxx-yy` identifies original source screenshots preserved from PR #41.
+- `EVD-UAT-xx` identifies consolidated screenshot evidence files stored in the current PR #42 evidence directory.
+- The two ID formats must not be treated as interchangeable. Where no consolidated copy exists, the original source screenshot remains the direct evidence reference.
 
 ---
 
