@@ -1,4 +1,13 @@
 {
+  "targetApplication": {
+    "name": "SingSlot — Karaoke Room Reservation & Management System",
+    "url": "https://singslot-4o7kwmd5ma-as.a.run.app",
+    "cloudRunRevision": "singslot-00004-6mv",
+    "commitSha": "aa5f109b97c157a143a7a9a94cd58dc02998467e",
+    "gitTag": "v0.1.0-sprint1",
+    "uiBadge": "v1.0.1 - Cloud Verified"
+  },
+  "evidenceFilesCount": 15,
   "UAT-01": {
     "status": "PASS",
     "bookingId": "b717094c-c557-41c8-bb02-850183cbc9ff",
@@ -8,7 +17,7 @@
     "slots": "Slot #4 & Slot #5 (14:00 - 16:00)",
     "partySize": 5,
     "customer": "Alice Customer (customer1@singslot.local)",
-    "testedBy": "Pilaiwan Churdchu & Aphichaya Klinhual",
+    "testedBy": "Pilaiwan Churdchu (@Pilaiwan3492)",
     "testedAt": "2026-11-20T16:25:04.732Z"
   },
   "UAT-02": {
@@ -16,11 +25,12 @@
     "httpStatus": 409,
     "errorCode": "SLOT_CONFLICT",
     "errorMessage": "One or more requested slots are already occupied.",
-    "testedBy": "Aphichaya Klinhual",
+    "testedBy": "Pilaiwan Churdchu (@Pilaiwan3492)",
     "testedAt": "2026-11-20T16:25:18.434Z"
   },
   "UAT-03": {
     "status": "PASS",
+    "sourceReference": "PR #41 (Issue #40) & Phenwatsa/singslot-karaoke#35",
     "pastDateTest": {
       "status": 400,
       "error": {
@@ -42,11 +52,14 @@
         "message": "Duration must be between 1 and 5 contiguous hours and end within operating hours (10:00 - 24:00, slots 0..13)."
       }
     },
-    "testedBy": "Pilaiwan Churdchu",
-    "testedAt": "2026-11-20T16:25:24.798Z"
+    "testedBy": "Aphichaya Klinhual (@Apichaya251400)",
+    "testedAt": "2026-11-20T13:51:00.000Z"
   },
   "UAT-04": {
     "status": "PASS",
+    "sourceReference": "PR #41 (Issue #40) & Phenwatsa/singslot-karaoke#35",
+    "customer1BookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
+    "customer1BookingCode": "BK-20261115-MQRX",
     "crossCustomerProtection": {
       "status": 403,
       "error": {
@@ -62,8 +75,8 @@
       }
     },
     "navRoleGuardVerified": true,
-    "testedBy": "Aphichaya Klinhual",
-    "testedAt": "2026-11-20T16:25:27.228Z"
+    "testedBy": "Aphichaya Klinhual (@Apichaya251400)",
+    "testedAt": "2026-11-20T13:53:00.000Z"
   },
   "UAT-05": {
     "status": "PASS",
@@ -74,7 +87,7 @@
       "status": "CONFIRMED",
       "room": "M01"
     },
-    "testedBy": "Pilaiwan Churdchu & Aphichaya Klinhual",
+    "testedBy": "Pilaiwan Churdchu (@Pilaiwan3492)",
     "testedAt": "2026-11-20T16:25:50.433Z"
   }
 }

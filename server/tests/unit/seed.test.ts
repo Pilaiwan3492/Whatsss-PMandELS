@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import bcrypt from 'bcrypt';
-import { seed, seedStandardAccountsForUser } from '../../prisma/seed.js';
+import { seed, seedStandardAccountsForUser, STANDARD_ACCOUNTS } from '../../prisma/seed.js';
+import { provisionUserB } from '../../prisma/provision-user-b.js';
 
 describe('Unit Test: Production Seed Admin Provisioning & Conflict Handling (TASK 3)', () => {
   const originalEnv = process.env;
@@ -874,5 +875,105 @@ describe('Unit Test: Development/Test Seed Role Enforcement & Non-Destructive Id
     expect(devTxClient.$transaction).toHaveBeenCalledTimes(1);
     expect(committedUsers.size).toBe(0);
     expect(committedAccounts.size).toBe(0);
+  });
+
+  it('Case 25: provisionUserB creates user_other with bcrypt hash and provisions 5 isolated accounts without touching other users', async () => {
+    const accountsStore: any[] = [];
+    const userCreateSpy = vi.fn().mockImplementation(async ({ data }: any) => ({
+      id: 'user-b-uuid',
+      ...data
+    }));
+    const accountUpsertSpy = vi.fn().mockImplementation(async ({ create }: any) => {
+      accountsStore.push(create);
+      return create;
+    });
+    const mockClient: any = {
+      $transaction: vi.fn(async (cb: any) => {
+        const tx = {
+          user: {
+            findUnique: vi.fn().mockResolvedValue(null),
+            create: userCreateSpy
+          },
+          account: {
+            upsert: accountUpsertSpy,
+            findMany: vi.fn().mockImplementation(async () => accountsStore)
+          }
+        };
+        return cb(tx);
+      })
+    };
+
+    const result = await provisionUserB(mockClient, {
+      UAT_USER_B_PASSWORD: 'ValidUserBPassword2026!'
+    } as any);
+
+    expect(result.created).toBe(true);
+    expect(result.username).toBe('user_other');
+    expect(userCreateSpy).toHaveBeenCalledTimes(1);
+
+    const createCall = userCreateSpy.mock.calls[0][0];
+    const savedHash = createCall.data.password_hash;
+
+    expect(savedHash).not.toBe('ValidUserBPassword2026!');
+    expect(await bcrypt.compare('ValidUserBPassword2026!', savedHash)).toBe(true);
+    expect(createCall.data.role).toBe('USER');
+    expect(createCall.data.is_active).toBe(true);
+
+    expect(accountUpsertSpy).toHaveBeenCalledTimes(5);
+    expect(accountsStore).toHaveLength(5);
+    expect(result.accountNames).toHaveLength(5);
+
+    for (const call of accountUpsertSpy.mock.calls) {
+      const upsertArg = call[0];
+      expect(upsertArg.where.user_id_name.user_id).toBe('user-b-uuid');
+      expect(upsertArg.create.user_id).toBe('user-b-uuid');
+    }
+
+    for (const acc of accountsStore) {
+      expect(acc.user_id).toBe('user-b-uuid');
+    }
+
+    for (const std of STANDARD_ACCOUNTS) {
+      const matchingAccounts = accountsStore.filter(
+        (acc) => acc.name === std.name && acc.user_id === 'user-b-uuid'
+      );
+      expect(matchingAccounts).toHaveLength(1);
+      expect(result.accountNames.filter((name) => name === std.name)).toHaveLength(1);
+    }
+  });
+
+  it('Case 26: provisionUserB preserves existing user_other without overwriting password', async () => {
+    const existingAccounts = STANDARD_ACCOUNTS.map((a) => ({
+      name: a.name,
+      type: a.type,
+      user_id: 'existing-user-b-id'
+    }));
+    const createSpy = vi.fn();
+    const mockClient: any = {
+      $transaction: vi.fn(async (cb: any) => {
+        const tx = {
+          user: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'existing-user-b-id',
+              username: 'user_other',
+              role: 'USER',
+              is_active: true,
+              password_hash: '$2b$10$ExistingHash'
+            }),
+            create: createSpy
+          },
+          account: {
+            upsert: vi.fn().mockResolvedValue({}),
+            findMany: vi.fn().mockResolvedValue(existingAccounts)
+          }
+        };
+        return cb(tx);
+      })
+    };
+
+    const result = await provisionUserB(mockClient, {} as any);
+    expect(result.created).toBe(false);
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(result.accountNames).toHaveLength(5);
   });
 });
