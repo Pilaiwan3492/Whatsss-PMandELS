@@ -8,6 +8,7 @@
     "uiBadge": "v1.0.1 - Cloud Verified"
   },
   "evidenceFilesCount": 15,
+  "scopedAcceptanceStatement": "No release-blocking defects were identified within the scope of the five executed Sprint 1 UAT cases (UAT-01 to UAT-05) against the recorded release revision (singslot-00004-6mv).",
   "UAT-01": {
     "status": "PASS",
     "bookingId": "b717094c-c557-41c8-bb02-850183cbc9ff",
@@ -60,6 +61,31 @@
     "sourceReference": "PR #41 (Issue #40) & Phenwatsa/singslot-karaoke#35",
     "customer1BookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
     "customer1BookingCode": "BK-20261115-MQRX",
+    "subCheckA_customerOwnershipIsolation": {
+      "status": "PASS",
+      "endpoint": "GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6",
+      "myBookingsIsolated": true,
+      "myBookingsCount": 0,
+      "crossCustomerProtection": {
+        "status": 403,
+        "error": {
+          "code": "FORBIDDEN",
+          "message": "You are not authorized to view this booking."
+        }
+      }
+    },
+    "subCheckB_staffAuthorizationBoundary": {
+      "status": "PASS",
+      "endpoint": "GET /api/bookings/master?date=2026-11-21",
+      "navRoleGuardVerified": true,
+      "staffEndpointProtection": {
+        "status": 403,
+        "error": {
+          "code": "FORBIDDEN",
+          "message": "Access denied: insufficient permissions"
+        }
+      }
+    },
     "crossCustomerProtection": {
       "status": 403,
       "error": {
@@ -87,6 +113,7 @@
       "status": "CONFIRMED",
       "room": "M01"
     },
+    "syntheticDataNotice": "All customer details (names, emails, phone numbers) are synthetic test fixtures.",
     "testedBy": "Pilaiwan Churdchu (@Pilaiwan3492)",
     "testedAt": "2026-11-20T16:25:50.433Z"
   }

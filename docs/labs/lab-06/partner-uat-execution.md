@@ -50,8 +50,11 @@ The assigned division of testing responsibilities between pair partners is:
 | **UAT-01** | Normal Domain Journey | `FR-01`..`04`, `BR-01`..`03`, `BR-05`, `AC-04a`, `TEST-04a` | `@Pilaiwan3492` | `2026-11-20 23:25` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Logged in as Alice, selected Room `M01` on `2026-11-21`, booked Slots #4 & #5 (`14:00–16:00`, 2 hrs, 5 guests). Confirmed booking `BK-20261121-HPSK` (`b717094c-c557-41c8-bb02-850183cbc9ff`). Timeline matrix updated to Occupied (Red). |
 | **UAT-02** | Business-Rule / Conflict | `FR-03`, `FR-04`, `BR-01`, `BR-02`, `AC-04b`, `TEST-04b` | `@Pilaiwan3492` | `2026-11-20 23:25` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Bob attempted 3-hour booking (`13:00–16:00`) on `M01` overlapping Alice's slots. Server rejected with HTTP 409 `SLOT_CONFLICT`. Modal displayed alert banner. Slot #3 remained open, zero double-booking. |
 | **UAT-03** | Boundary Validation | `FR-03`, `FR-04`, `BR-01`, `BR-03`..`05`, `AC-04c/d`, `TEST-04c/d` | `@Apichaya251400` | `2026-11-20 20:51` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | UI calendar popover disabled past dates (`1–19 Nov 2026` prior to `2026-11-20`), disabled `3/4/5 Hours (Exceeds 24:00)` when `Slot #12 (22:00–23:00)` was selected, and disabled `+` at `4 Guests` on Room `S01` (`id: c0a3cee2-57c6-4bbb-bf71-ae17c03061b9`). Direct `POST /api/bookings/online` boundary calls returned `HTTP 400 Bad Request` with exact error codes `CANNOT_BOOK_PAST_SLOT`, `EXCEEDS_CAPACITY`, and `INVALID_DURATION`. |
-| **UAT-04** | Forbidden Role / Ownership | `FR-01`, `FR-05`, `FR-06`, `BR-07`, `BR-08`, `AC-01c`, `AC-05`, `AC-05b`, `TEST-01c`, `TEST-05`, `TEST-05b` | `@Apichaya251400` | `2026-11-20 20:53` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Customer 1 (`customer1@singslot.local`) owned 2 confirmed bookings (`BK-20261115-MQRX`, UUID `718f0d84-2657-4a87-ad6a-487235d6a1f6` and `BK-20261113-IA4Q`, UUID `a27fc388-3d1b-48ac-a272-f4cfcd109598`). Calling `GET /api/bookings/my` returned `HTTP 200 OK` (`count: 2`). Customer 2 (`customer2@singslot.local`) had zero bookings (`count: 0`, `No Reservations Found`), had no `Master Schedule` button in the navbar, and received `HTTP 403 Forbidden` (`FORBIDDEN`) on both cross-customer `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` and staff `GET /api/bookings/master?date=2026-11-21`. |
+| **UAT-04** | Forbidden Role / Ownership | `FR-01`, `FR-05`, `FR-06`, `BR-07`, `BR-08`, `AC-01c`, `AC-05`, `AC-05b`, `TEST-01c`, `TEST-05`, `TEST-05b` | `@Apichaya251400` | `2026-11-20 20:53` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Sub-checks UAT-04A (Customer Ownership Isolation) and UAT-04B (Customer vs Staff Authorization) verified. Customer 1 owned 2 bookings (`BK-20261115-MQRX` and `BK-20261113-IA4Q`). Customer 2 had zero bookings (`count: 0`). Calling cross-customer detail API (`GET /api/bookings/718f0d84...`) and staff master schedule API (`GET /api/bookings/master?date=2026-11-21`) both returned HTTP 403 Forbidden (`FORBIDDEN`). Master Schedule navbar link hidden for Customer role. |
 | **UAT-05** | State Persistence & Synchronization | `FR-05`, `FR-06`, `BR-07`, `BR-08`, `AC-05`, `AC-06`, `TEST-05`, `TEST-06` | `@Pilaiwan3492` | `2026-11-20 23:25` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Hard reload (`Ctrl+F5`) retained Alice's booking. Staff logged in, accessed Master Schedule across all 9 rooms. Alice's `14:00–16:00` block displayed. Staff clicked block and viewed full details via role override (`BR-07`). |
+
+> **Scoped Acceptance Statement:**  
+> No release-blocking defects were identified within the scope of the five executed Sprint 1 UAT cases (UAT-01 to UAT-05) against the recorded release revision (`singslot-00004-6mv`, commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`).
 
 ---
 
@@ -170,29 +173,54 @@ The assigned division of testing responsibilities between pair partners is:
   - `customer1@singslot.local` (`Alice Customer`, Role: `CUSTOMER`) — Booking Owner
   - `customer2@singslot.local` (`Bob Customer`, Role: `CUSTOMER`) — Unauthorized Third-Party Customer
 
-#### Actual Input Values Used
-- **Customer 1 Pre-existing Target Booking:**
-  - Booking Code: `BK-20261115-MQRX`
-  - Booking ID: `718f0d84-2657-4a87-ad6a-487235d6a1f6`
-  - Room: `L01` (VIP Luxury Suite, capacity 12)
-  - Date & Window: `2026-11-15`, Slots #3–#6 (`13:00 - 17:00`, 4 hrs)
-- **Protected Endpoints Targeted:**
+#### Sub-Checks and Target Endpoints
+- **Target Booking (Customer 1):** Code `BK-20261115-MQRX`, ID `718f0d84-2657-4a87-ad6a-487235d6a1f6`, Room `L01`, `2026-11-15`, Slots #3–#6 (`13:00 - 17:00`, 4 hrs).
+- **Target Endpoints:**
   - `GET /api/bookings/my` (Authenticated user's booking list)
-  - `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` (Cross-customer direct detail access)
-  - `GET /api/bookings/master?date=2026-11-21` (Staff-only master schedule)
+  - `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` (Cross-customer detail endpoint)
+  - `GET /api/bookings/master?date=2026-11-21` (Staff-only master schedule endpoint)
 
-#### Actual Results Observed
-1. **Customer 1 Owner Access (`FR-05`, `AC-05` — Evidence `EV-UAT04-01`, `EV-UAT04-02`):**
-   - Logged in as `customer1@singslot.local`. Opened "My Bookings": `GET /api/bookings/my` returned **`HTTP 200 OK`** (`count: 2`, containing `BK-20261115-MQRX` and `BK-20261113-IA4Q`).
-   - Clicked `BK-20261115-MQRX`: `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` returned **`HTTP 200 OK`**, rendering the full Reservation Detail modal.
-2. **Customer 2 UI List Isolation & Navbar Role Guard (`FR-05`, `AC-05`, `TEST-05` — Evidence `EV-UAT04-03` / `EVD-UAT-11`):**
-   - Signed in as `customer2@singslot.local` (Bob). Top navbar rendered only `Rooms & Slots` and `My Bookings`; `Master Schedule` was not rendered.
-   - Clicked `My Bookings`: returned **`HTTP 200 OK`** with `count: 0, bookings: []` (`No Reservations Found`). Zero records from Customer 1 appeared in Customer 2's list.
-3. **Direct Cross-Customer Ownership API Guard (`GET /api/bookings/:id` — `BR-07`, `AC-05b`, `TEST-05b` — Evidence `EVD-UAT-12`):**
-   - Executing `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` with Customer 2's Bearer token returned **`HTTP 403 Forbidden`** (`FORBIDDEN` — *"You are not authorized to view this booking."*). Zero customer PII leaked.
-4. **Direct Staff Master Schedule API Guard (`GET /api/bookings/master` — `BR-08`, `AC-01c`, `TEST-01c` — Evidence `EVD-UAT-12`):**
-   - Executing `GET /api/bookings/master?date=2026-11-21` with Customer 2's Bearer token returned **`HTTP 403 Forbidden`** (`FORBIDDEN` — *"Access denied: insufficient permissions"*).
-* **Execution Status:** **`PASS`**
+#### Detailed Verification by Sub-Check
+
+##### Sub-Check UAT-04A: Customer Ownership Isolation (`BR-07`, `AC-05b`, `TEST-05b`)
+- **Actor:** Customer 2 (`customer2@singslot.local`, Bob Customer)
+- **Target Resource:** Customer 1's booking (`BK-20261115-MQRX`, ID `718f0d84-2657-4a87-ad6a-487235d6a1f6`)
+- **Expected Result:** Customer 2 cannot access Customer 1's booking. `GET /api/bookings/my` returns only Customer 2's bookings (`count: 0`). Calling the direct detail endpoint returns HTTP 403 Forbidden (`FORBIDDEN`). Zero customer PII leaked.
+- **Actual Result Observed:**
+  1. Signed in as Customer 2 (Bob). Navigated to "My Bookings": `GET /api/bookings/my` returned **`HTTP 200 OK`** with `count: 0, bookings: []` (`No Reservations Found`). Zero records from Customer 1 appeared. (Evidence `EV-UAT04-03` / `EVD-UAT-11`).
+  2. Directly called `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` with Customer 2's Bearer token. Server returned **`HTTP 403 Forbidden`** with body:
+     ```json
+     {
+       "success": false,
+       "error": {
+         "code": "FORBIDDEN",
+         "message": "You are not authorized to view this booking."
+       }
+     }
+     ```
+     (Evidence `EVD-UAT-12`).
+- **Disposition:** **`PASS`** — Ownership boundary strictly enforced.
+
+##### Sub-Check UAT-04B: Customer vs Staff Authorization Boundary (`BR-08`, `AC-01c`, `TEST-01c`)
+- **Actor:** Customer 2 (`customer2@singslot.local`, Role: `CUSTOMER`)
+- **Target Resource:** Staff Master Schedule (`GET /api/bookings/master?date=2026-11-21`)
+- **Expected Result:** A Customer role is denied operational staff privileges. The UI navigation bar must not render the `Master Schedule` button. Calling the endpoint directly returns HTTP 403 Forbidden (`FORBIDDEN`).
+- **Actual Result Observed:**
+  1. In the UI navbar for Customer 2, only `Rooms & Slots` and `My Bookings` were visible; `Master Schedule` was completely omitted. (Evidence `EV-UAT04-03` / `EVD-UAT-11`).
+  2. Directly called `GET /api/bookings/master?date=2026-11-21` with Customer 2's Bearer token. Server returned **`HTTP 403 Forbidden`** with body:
+     ```json
+     {
+       "success": false,
+       "error": {
+         "code": "FORBIDDEN",
+         "message": "Access denied: insufficient permissions"
+       }
+     }
+     ```
+     (Evidence `EVD-UAT-12`).
+- **Disposition:** **`PASS`** — Role-based staff operational boundary strictly enforced.
+
+* **Overall Case Status:** **`PASS`**
 
 ---
 
@@ -210,8 +238,11 @@ The assigned division of testing responsibilities between pair partners is:
 1. **Persistence Across Reloads (`FR-05`, `AC-05` — Evidence `EVD-UAT-13`):** Re-authenticated as Alice (`customer1@singslot.local`) and opened "My Bookings". Performed hard browser reload (`Ctrl + F5`). Session and reservation persisted intact. Clicked Alice's booking card: modal opened showing `CONFIRMED` status, booking code `BK-20261121-HPSK`, Room `M01`, `14:00 - 16:00 (2 hrs)`, 5 guests, and discrete slot badges (`Slot #4`, `Slot #5`).
 2. **Staff Role & Navigation Access (`FR-06`, `BR-08`):** Signed out Alice and signed in as Staff (`staff@singslot.local`). Top navbar rendered "Cashier Staff", role label "Staff Manager", and exposed the "Master Schedule" button.
 3. **Staff Master Schedule Synchronization (`AC-06`, `TEST-06` — Evidence `EVD-UAT-14`):** Clicked "Master Schedule", selected `21/11/2026`. Global schedule loaded all 9 rooms (`S01–S03`, `M01–M03`, `L01–L03`). Room `M01` showed the continuous reserved block `14:00–16:00` attributed to Alice Customer.
-4. **Staff Override Detail Access (`BR-07` — Evidence `EVD-UAT-15`):** Clicked the occupied block. Staff Booking Detail modal opened via authorized staff override (`GET /api/bookings/:id`), displaying full customer contact details (`Alice Customer`, phone `0898765432`, `5 Guests`, `Slots #4 & #5`).
+4. **Staff Override Detail Access (`BR-07` — Evidence `EVD-UAT-15`):** Clicked the occupied block. Staff Booking Detail modal opened via authorized staff override (`GET /api/bookings/:id`), displaying customer contact details (`Alice Customer`, phone `0898765432`, `5 Guests`, `Slots #4 & #5`).
 * **Execution Status:** **`PASS`**
+
+> **Synthetic Test Data & Privacy Notice:**  
+> All customer names (`Alice Customer`), email addresses (`customer1@singslot.local`), and contact numbers (`0898765432`) displayed in the reservation details modal and master schedule are synthetic test fixtures provisioned for the UAT exercise. No real personal identifiable information (PII) is involved or exposed.
 
 ---
 
@@ -261,13 +292,14 @@ The following table identifies the six original screenshots preserved from PR #4
 
 ---
 
-## 6. Zero Defect Finding Confirmation (Outgoing to SingSlot)
+## 6. Zero Release-Blocking Defect Finding Confirmation (Outgoing to SingSlot)
 
 Based on the independent execution of all 5 agreed UAT test cases (`UAT-01` through `UAT-05`), the Whatsss UAT Team confirms:
 - **Total Cases Executed:** 5
-- **Passing Cases:** 5 (`100%`)
+- **Passing Cases:** 5 (`100%` within executed scope)
 - **Failing Cases:** 0
 - **Blocked Cases:** 0
 - **Outgoing Release-Blocking Defects:** **0**
 
-The SingSlot application satisfies all agreed Sprint 1 acceptance criteria and business rules without release-blocking defects.
+**Formal Scope Statement:**  
+No release-blocking defects were identified within the scope of the five executed Sprint 1 UAT cases (UAT-01 to UAT-05) against the recorded release revision (`singslot-00004-6mv`, commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`). This evaluation is strictly limited to the five executed test cases and does not imply that unexecuted features or the entire application are defect-free.
