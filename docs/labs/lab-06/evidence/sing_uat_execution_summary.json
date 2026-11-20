@@ -46,7 +46,17 @@
         "message": "Party size (6) exceeds room capacity (4)."
       }
     },
-    "invalidDurationTest": {
+    "maxDurationTest": {
+      "durationHours": 6,
+      "status": 400,
+      "error": {
+        "code": "INVALID_DURATION",
+        "message": "Duration must be between 1 and 5 contiguous hours and end within operating hours (10:00 - 24:00, slots 0..13)."
+      }
+    },
+    "operatingWindowOverflowTest": {
+      "startSlot": 12,
+      "durationHours": 3,
       "status": 400,
       "error": {
         "code": "INVALID_DURATION",

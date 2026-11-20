@@ -57,21 +57,27 @@ This register separates findings identified through internal audit and handoff v
 
 The following findings were identified through our team's internal audit and handoff verification of Whatsss. They were not submitted as formal defect reports by the SingSlot UAT Team.
 
-| Finding ID | Reporter / Source | Related Test Case | Tested Endpoint / Operation | Expected Behavior | Actual Observed Behavior | HTTP Status | Evidence Reference | Classification Rationale | Disposition |
-|:---:|:---:|:---:|---|---|---|:---:|---|---|:---:|
-| **DEF-01** | Internal Audit / Handoff Verification | `UAT-S1-01` (Step 3: Multi-Split Expense Allocation) | `POST /api/transactions/expense` | Balanced multi-line expense allocation ($\sum \text{allocations.amount} = \text{total\_amount}$) accepted atomically per `BR-05` and `BR-06`. | Balanced allocation accepted; allocation lines created matching total amount. | `201 Created` (API) / `200 OK` (UI receipt) | Lab 5 baseline evidence `docs/labs/lab-05/evidence/c04-03-transaction-creation-recorded.png`; Unit test `server/tests/unit/transaction.test.ts` (`TEST-ALLOC-01`). *(Formal Lab 6 Cloud Run UAT evidence `A-EV-03` is pending partner execution by SingSlot).* | Conforms strictly to `BR-05` and `BR-06`. The observation verified mathematical balance and line creation, not a failure of decimal precision. | **Not-a-Defect** |
-| **DEF-02** | Internal Audit / Handoff Verification | `UAT-S1-04` (Sub-check 4A: Administrator Denial of Financial Data) | `GET /api/accounts`, `GET /api/transactions`, UI `/dashboard` as `ADMIN` | Platform administrator possessing zero financial accounts is denied access to personal ledgers (`BR-10`, `NFR-SEC-02`, `AC-02-2`). | Server returns HTTP 403 Forbidden; UI hides navigation links and redirects to `/access-denied` (`Access Forbidden (403)` — `Security Policy (BR-10)`). | `403 Forbidden` | Lab 5 baseline evidence `docs/labs/lab-05/evidence/c04-05-br10-admin-access-denied-403.png`; Integration test `server/tests/integration/auth.test.ts` (`TEST-AUTH-ADMIN-DENIED`). *(Formal Lab 6 Cloud Run UAT evidence `A-EV-05` is pending partner execution by SingSlot).* | Expected security behavior. The HTTP 403 Forbidden response enforces the mandatory administrative isolation boundary required by `BR-10` and `NFR-SEC-02`. | **Not-a-Defect** |
+| Finding ID | Reporter / Source | Related Test Case | Tested Endpoint / Operation | Expected Behavior | Observed API Response | Observed UI Observation | Evidence Reference | Classification Rationale | Disposition |
+|:---:|:---:|:---:|---|---|:---:|---|---|---|:---:|
+| **DEF-01** | Internal Audit / Handoff Verification | `UAT-S1-01` (Step 3: Multi-Split Expense Allocation) | `POST /api/transactions/expense` | Balanced multi-line expense allocation ($\sum \text{allocations.amount} = \text{total\_amount}$) accepted atomically per `BR-05` and `BR-06`. | `HTTP 201 Created` | Transaction receipt displayed successfully | Lab 5 baseline evidence `docs/labs/lab-05/evidence/c04-03-transaction-creation-recorded.png`; Unit test `server/tests/unit/transaction.test.ts` (`TEST-ALLOC-01`). *(Formal Lab 6 Cloud Run UAT evidence `A-EV-03` is pending partner execution by SingSlot).* | Conforms strictly to `BR-05` and `BR-06`. The observation verified mathematical balance and line creation, not a failure of decimal precision. | **Not-a-Defect** |
+| **DEF-02** | Internal Audit / Handoff Verification | `UAT-S1-04` (Sub-check 4A: Administrator Denial of Financial Data) | `GET /api/accounts`, `GET /api/transactions`, UI `/dashboard` as `ADMIN` | Platform administrator possessing zero financial accounts is denied access to personal ledgers (`BR-10`, `NFR-SEC-02`, `AC-02-2`). | `HTTP 403 Forbidden` | Access denied / redirect to `/access-denied` (`Access Forbidden (403)` — `Security Policy (BR-10)`) | Lab 5 baseline evidence `docs/labs/lab-05/evidence/c04-05-br10-admin-access-denied-403.png`; Integration test `server/tests/integration/auth.test.ts` (`TEST-AUTH-ADMIN-DENIED`). *(Formal Lab 6 Cloud Run UAT evidence `A-EV-05` is pending partner execution by SingSlot).* | Expected security behavior. The HTTP 403 Forbidden response enforces the mandatory administrative isolation boundary required by `BR-10` and `NFR-SEC-02`. | **Not-a-Defect** |
 
 **Internal Audit Summary & Evidence Traceability:**
 
 - **DEF-01 (Balanced Multi-Split Allocation):**
   - *Tested Endpoint:* `POST /api/transactions/expense`
-  - *Requirement:* `BR-05` (atomic multi-line allocation creation) and `BR-06` (allocation balance validation).
+  - *Requirement Reference:* `BR-05` (atomic multi-line allocation creation) and `BR-06` (allocation balance validation).
+  - *API Response:* `HTTP 201 Created`
+  - *UI Observation:* Transaction receipt displayed successfully.
   - *Classification:* **Not-a-Defect**. The system successfully accepted a valid, balanced expense allocation where the split lines equaled the total amount (฿1,000 Dining + ฿2,000 Grocery = ฿3,000 Total). The observed behavior satisfies the contract. Direct Lab 6 partner UAT execution evidence for Whatsss (`A-EV-03`) remains pending partner execution by SingSlot; historical baseline evidence is referenced above.
+  - *Final Disposition:* Not-a-Defect.
 - **DEF-02 (Administrator Denial of Financial Ledgers):**
   - *Tested Endpoint:* `GET /api/accounts`, `GET /api/transactions`, `GET /api/reports/summary`, UI `/dashboard` as `ADMIN`.
-  - *Requirement:* `BR-10` (administrator financial ledger denial) and `NFR-SEC-02` (backend authorization guard).
-  - *Classification:* **Not-a-Defect**. When an authenticated Administrator attempts to query personal financial endpoints or open the user dashboard, the system rejects the request with HTTP `403 Forbidden` and displays `Access Forbidden (403) — Security Policy (BR-10)`. This response enforces the agreed security boundary. Direct Lab 6 partner UAT execution evidence for Whatsss (`A-EV-05`) remains pending partner execution by SingSlot; historical baseline evidence is referenced above.
+  - *Requirement Reference:* `BR-10` (administrator financial ledger denial) and `NFR-SEC-02` (backend authorization guard).
+  - *API Response:* `HTTP 403 Forbidden`
+  - *UI Observation:* Access denied / application redirects to `/access-denied` displaying `Access Forbidden (403) — Security Policy (BR-10)` and hides financial navigation links.
+  - *Classification:* **Not-a-Defect**. When an authenticated Administrator attempts to query personal financial endpoints or open the user dashboard, the system rejects the request with HTTP `403 Forbidden`. This response enforces the agreed security boundary. Direct Lab 6 partner UAT execution evidence for Whatsss (`A-EV-05`) remains pending partner execution by SingSlot; historical baseline evidence is referenced above.
+  - *Final Disposition:* Not-a-Defect.
 
 ### 3.2 Formal Partner-Reported Findings (SingSlot UAT Team → Whatsss)
 
