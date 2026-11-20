@@ -1,0 +1,80 @@
+{
+  "UAT-01": {
+    "status": "PASS",
+    "bookingId": "b717094c-c557-41c8-bb02-850183cbc9ff",
+    "bookingCode": "BK-20261121-HPSK",
+    "room": "M01",
+    "date": "2026-11-21",
+    "slots": "Slot #4 & Slot #5 (14:00 - 16:00)",
+    "partySize": 5,
+    "customer": "Alice Customer (customer1@singslot.local)",
+    "testedBy": "Pilaiwan Churdchu & Aphichaya Klinhual",
+    "testedAt": "2026-11-20T16:25:04.732Z"
+  },
+  "UAT-02": {
+    "status": "PASS",
+    "httpStatus": 409,
+    "errorCode": "SLOT_CONFLICT",
+    "errorMessage": "One or more requested slots are already occupied.",
+    "testedBy": "Aphichaya Klinhual",
+    "testedAt": "2026-11-20T16:25:18.434Z"
+  },
+  "UAT-03": {
+    "status": "PASS",
+    "pastDateTest": {
+      "status": 400,
+      "error": {
+        "code": "CANNOT_BOOK_PAST_SLOT",
+        "message": "Cannot book slots in the past or currently in progress."
+      }
+    },
+    "overCapacityTest": {
+      "status": 400,
+      "error": {
+        "code": "EXCEEDS_CAPACITY",
+        "message": "Party size (6) exceeds room capacity (4)."
+      }
+    },
+    "invalidDurationTest": {
+      "status": 400,
+      "error": {
+        "code": "INVALID_DURATION",
+        "message": "Duration must be between 1 and 5 contiguous hours and end within operating hours (10:00 - 24:00, slots 0..13)."
+      }
+    },
+    "testedBy": "Pilaiwan Churdchu",
+    "testedAt": "2026-11-20T16:25:24.798Z"
+  },
+  "UAT-04": {
+    "status": "PASS",
+    "crossCustomerProtection": {
+      "status": 403,
+      "error": {
+        "code": "FORBIDDEN",
+        "message": "You are not authorized to view this booking."
+      }
+    },
+    "staffEndpointProtection": {
+      "status": 403,
+      "error": {
+        "code": "FORBIDDEN",
+        "message": "Access denied: insufficient permissions"
+      }
+    },
+    "navRoleGuardVerified": true,
+    "testedBy": "Aphichaya Klinhual",
+    "testedAt": "2026-11-20T16:25:27.228Z"
+  },
+  "UAT-05": {
+    "status": "PASS",
+    "aliceBookingPersisted": true,
+    "staffMasterScheduleCount": 1,
+    "staffOverrideDetail": {
+      "bookingCode": "BK-20261121-HPSK",
+      "status": "CONFIRMED",
+      "room": "M01"
+    },
+    "testedBy": "Pilaiwan Churdchu & Aphichaya Klinhual",
+    "testedAt": "2026-11-20T16:25:50.433Z"
+  }
+}
