@@ -136,7 +136,17 @@ In compliance with course security rules (**R-12**), secret passwords provided p
        }
      }
      ```
-   - **API Check 4 — Operating Window Overflow (`startSlot: 12, durationHours: 3`, `BR-03`):** Returned **`HTTP 400 Bad Request`** with `code: "INVALID_DURATION"` and the same message. Zero bookings or slot records were created on `2026-11-21`.
+   - **API Check 4 — Operating Window Overflow (`startSlot: 12, durationHours: 3` -> end slot `14 > 13`, `BR-03`):** Returned **`HTTP 400 Bad Request`** with full JSON response:
+     ```json
+     {
+       "success": false,
+       "error": {
+         "code": "INVALID_DURATION",
+         "message": "Duration must be between 1 and 5 contiguous hours and end within operating hours (10:00 - 24:00, slots 0..13)."
+       }
+     }
+     ```
+     Zero bookings or slot records were created on `2026-11-21`.
 5. **Non-Blocking UI Wording Observation:**
    - `uat-cases.md` Step 1 refers to the room card button as `"Book This Suite"`, whereas the live UI renders the button label as **`"Book Room"`**. This is a minor documentation wording difference and not a functional defect.
 
@@ -174,12 +184,116 @@ In compliance with course security rules (**R-12**), secret passwords provided p
 
 #### Actual Results Observed
 1. **Customer 1 (`Alice Customer`) Owner Verification (`FR-05` — Evidence `EV-UAT04-01` & `EV-UAT04-02`):**
-   - Logged in as `customer1@singslot.local` and opened `My Bookings`. `GET /api/bookings/my` returned `HTTP 200 OK` with `count: 2` (`BK-20261115-MQRX` and `BK-20261113-IA4Q`).
-   - Clicking `View Details` on `BK-20261115-MQRX` sent `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6`, which returned **`HTTP 200 OK`** and opened the `Reservation Detail` modal displaying `BK-20261115-MQRX`, `CONFIRMED`, `L01 VIP Luxury`, `2026-11-15`, `13:00 - 17:00 (4 Hours Total)`, `Alice Customer`, `5 Guests`, `0898765432`, and `Reserved Hourly Slots` (`Slot #3`, `Slot #4`, `Slot #5`, `Slot #6`).
+   - Logged in as `customer1@singslot.local` and opened `My Bookings`. `GET /api/bookings/my` returned **`HTTP 200 OK`** with `count: 2` (`BK-20261115-MQRX` and `BK-20261113-IA4Q`):
+     ```json
+     {
+       "success": true,
+       "count": 2,
+       "bookings": [
+         {
+           "id": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
+           "bookingCode": "BK-20261115-MQRX",
+           "userId": "6fe8f594-deac-4426-8c4f-7f03a17d8a6e",
+           "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
+           "bookingDate": "2026-11-15",
+           "startSlot": 3,
+           "durationHours": 4,
+           "partySize": 5,
+           "channel": "ONLINE",
+           "customerName": "Alice Customer",
+           "customerPhone": "0898765432",
+           "status": "CONFIRMED",
+           "timeRange": "13:00 - 17:00"
+         },
+         {
+           "id": "a27fc388-3d1b-48ac-a272-f4cfcbdd494b",
+           "bookingCode": "BK-20261113-IA4Q",
+           "userId": "6fe8f594-deac-4426-8c4f-7f03a17d8a6e",
+           "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
+           "bookingDate": "2026-11-13",
+           "startSlot": 11,
+           "durationHours": 3,
+           "partySize": 4,
+           "channel": "ONLINE",
+           "customerName": "Alice Customer",
+           "customerPhone": "0898765432",
+           "status": "CONFIRMED",
+           "timeRange": "21:00 - 24:00"
+         }
+       ]
+     }
+     ```
+   - Clicking `View Details` on `BK-20261115-MQRX` sent `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` with Customer 1's Bearer token, which returned **`HTTP 200 OK`** with the full owner JSON payload below and opened the `Reservation Detail` modal displaying `BK-20261115-MQRX`, `CONFIRMED`, `L01 VIP Luxury`, `2026-11-15`, `13:00 - 17:00 (4 Hours Total)`, `Alice Customer`, `5 Guests`, `0898765432`, and `Reserved Hourly Slots` (`Slot #3`, `Slot #4`, `Slot #5`, `Slot #6`):
+     ```json
+     {
+       "success": true,
+       "booking": {
+         "id": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
+         "bookingCode": "BK-20261115-MQRX",
+         "userId": "6fe8f594-deac-4426-8c4f-7f03a17d8a6e",
+         "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
+         "bookingDate": "2026-11-15",
+         "startSlot": 3,
+         "durationHours": 4,
+         "partySize": 5,
+         "channel": "ONLINE",
+         "customerName": "Alice Customer",
+         "customerPhone": "0898765432",
+         "status": "CONFIRMED",
+         "createdAt": "2026-11-14T15:02:37.291Z",
+         "updatedAt": "2026-11-14T15:02:37.291Z",
+         "room": {
+           "id": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
+           "roomNumber": "L01",
+           "type": "LARGE",
+           "capacity": 12,
+           "description": "VIP Luxury suite for up to 12 guests"
+         },
+         "slots": [
+           {
+             "id": "e70116f6-2ba9-4064-b2c9-e515ca2cc80d",
+             "bookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
+             "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
+             "bookingDate": "2026-11-15",
+             "slotIndex": 3
+           },
+           {
+             "id": "507a6f44-1e44-44f3-aeff-c33edb9d55eb",
+             "bookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
+             "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
+             "bookingDate": "2026-11-15",
+             "slotIndex": 4
+           },
+           {
+             "id": "aa987a99-95c9-4f7d-92a4-61e4b2b3fde0",
+             "bookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
+             "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
+             "bookingDate": "2026-11-15",
+             "slotIndex": 5
+           },
+           {
+             "id": "88286464-c276-4571-b9f8-04f439be0402",
+             "bookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
+             "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
+             "bookingDate": "2026-11-15",
+             "slotIndex": 6
+           }
+         ],
+         "timeRange": "13:00 - 17:00"
+       }
+     }
+     ```
 2. **Customer 2 (`Bob Customer`) UI List Isolation & Navbar Role Guard (`FR-05`, `AC-05`, `TEST-05` — Evidence `EV-UAT04-03`):**
    - Logged out of `Alice Customer` and signed in as `customer2@singslot.local` (`BC Bob Customer • Customer`).
    - Inspected the top navigation bar: only **`Rooms & Slots`** and **`My Bookings`** were rendered; the Staff-only **`Master Schedule`** button was not rendered for `CUSTOMER`.
-   - Clicked **`My Bookings`**: `GET /api/bookings/my` returned `HTTP 200 OK` with `{"success":true,"count":0,"bookings":[]}`.
+   - Clicked **`My Bookings`**: `GET /api/bookings/my` returned **`HTTP 200 OK`** with full JSON response:
+     ```json
+     {
+       "success": true,
+       "count": 0,
+       "bookings": []
+     }
+     ```
    - The UI rendered **`No Reservations Found`** (`"You haven't reserved any karaoke suites yet. Browse our rooms and real-time availability matrix to book your session!"`). None of Customer 1's reservations (`BK-20261115-MQRX` or `BK-20261113-IA4Q`) appeared in Customer 2's list.
 3. **Direct Cross-Customer Ownership API Guard (`GET /api/bookings/:id` — `BR-07`, `AC-05b`, `TEST-05b`):**
    - Executing `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` with Customer 2's Bearer token returned **`HTTP 403 Forbidden`** with exact JSON body:
