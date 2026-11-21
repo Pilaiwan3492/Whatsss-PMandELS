@@ -6,58 +6,81 @@
 > **Defect Resolution Owner:** Aphichaya Klinhual (`@Apichaya251400`)  
 > **Peer Reviewer:** Pilaiwan Churdchu (`@Pilaiwan3492`)  
 > **Linked Tracking Issue:** [Issue #37 (`ISSUE 16` — Part D Defect Resolution)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/37)  
-> **Source Partner Defect Report:** [Issue #38 Comment `#7063056757` by SingSlot UAT Team (`@lephirada` & `@Phenwatsa`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38#issuecomment-7063056757)
+> **Source Partner Defect Report:** [Issue #38 Comment `#7063056757` by SingSlot UAT Team (`@lephirada` & `@Phenwatsa`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38#issuecomment-7063056757)  
+> **Active Pull Request:** [PR #43 (`fix/37-defect-resolution-part-d -> staging-lab5`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/43)
 
 ---
 
-## 1. Executive Summary of Resolved Partner Findings
+## 1. Part D Workflow Status Tracker (Strict Stage Separation)
 
-Following the independent UAT execution and security inspection conducted by the **SingSlot UAT Team (`@lephirada` & `@Phenwatsa`)** against our live Cloud Run deployment (`https://whatsss-sipqw4logq-as.a.run.app`, Revision `whatsss-00020-65k`, Commit `ba2f9dd`), our team formally triaged and resolved the release-blocking security defect **`DEF-OUT-01`** along with all four code-inspection hardening recommendations (`AUDIT-01` through `AUDIT-04`):
+> **Status Statement:**  
+> Implementation and automated regression testing are completed. Peer review, release, Cloud Run redeployment, live health verification, and independent Partner retesting remain pending.
 
-| Finding ID | Classification & Severity | Linked Requirement & UAT Case | Root Cause Summary | Fix Implemented & Verification File | Status |
-|:---:|:---:|:---:|---|---|:---:|
-| **`DEF-OUT-01`** | **Accepted Defect**<br>**Critical (Release-Blocking)** | `UAT-S1-04` (Sub-check 4A)<br>`BR-10`, `AC-02-2`, `NFR-SEC-02` | `server/src/middlewares/roleGuard.ts` normalized trailing slashes (`path.replace(/\/+$/, '')`) without lowercasing `path` before prefix matching against `/api/accounts`, `/api/transactions`, `/api/reports`. Because Express routes are case-insensitive by default, mixed-case requests (e.g., `GET /api/Accounts` or `GET /api/Reports/summary`) bypassed `roleGuard` when authenticated as `ADMIN`. | Lowercased both `prefix` and `path` prior to prefix comparison in `server/src/middlewares/roleGuard.ts`:<br>`const normalizedPath = path.toLowerCase().replace(/\/+$/, '');`<br>Verified via **RED → GREEN** tests in `server/tests/unit/roleGuard.test.ts` and `server/tests/integration/access.test.ts`. | **FIXED & VERIFIED (GREEN)** |
-| **`DEF-OUT-02`** | **Not-a-Defect**<br>*(Advisory)* | `AC-01-5`, `FR-01` | `POST /api/auth/logout` returns `HTTP 200 OK` with `Max-Age=0` cookie clearing when called without a session cookie. | Confirmed intentional idempotent logout contract verified in `server/tests/integration/content-type.test.ts` (Case A & D) so expired browser tabs can safely clear cookies. | **NO CODE CHANGE REQUIRED (BY DESIGN)** |
-| **`AUDIT-01`** | **Accepted Defect**<br>**Minor (Hardening)** | `UAT-S1-03`<br>`AC-03-3`, `BR-02` | `server/src/services/income.service.ts` line 376 locked only `[primaryAccount.id]` (`Checking Bank`), omitting `incomeAccount.id` (`Salary`), unlike `expense.service.ts` which locks both primary and target accounts. | Updated `server/src/services/income.service.ts` line 376 to atomically lock both accounts:<br>`await lockAccounts(tx, [primaryAccount.id, incomeAccount.id], userId);`<br>Verified in `server/tests/integration/income.test.ts` (`TEST-OPEN-04`). | **FIXED & VERIFIED (GREEN)** |
-| **`AUDIT-02`** | **Accepted Defect**<br>**Minor (Hardening)** | `FR-01`, `AC-01-2` | `server/src/controllers/auth.controller.ts` checked `!username || !password` without verifying `typeof username === 'string' && typeof password === 'string'`. | Added explicit string type and non-empty `.trim()` guard in `server/src/controllers/auth.controller.ts` returning `HTTP 401 INVALID_CREDENTIALS`. Verified in `server/tests/unit/roleGuard.test.ts`. | **FIXED & VERIFIED (GREEN)** |
-| **`AUDIT-03`** | **Accepted Defect**<br>**Minor (Hardening)** | `NFR-SEC-03` (`TEST-SEC-06`) | `JSON_BODY_REQUIRED_ENDPOINTS` in `server/src/middlewares/contentType.ts` omitted `/api/transactions/income`, `/api/transactions/expense`, and `/api/transactions/repayment`. | Added all transaction creation endpoints to `JSON_BODY_REQUIRED_ENDPOINTS` in `server/src/middlewares/contentType.ts`. Verified in `server/tests/unit/roleGuard.test.ts`. | **FIXED & VERIFIED (GREEN)** |
-| **`AUDIT-04`** | **Enhancement / Hardening**<br>**Minor** | `UAT-S1-02` (Sub-check 2D)<br>`BR-07`, `AC-07-2` | `client/src/components/RepaymentForm.tsx` evaluated `isExceedingDebt = amountCents > debtCents && debtCents > 0`, omitting the client-side over-repayment warning when `debtCents === 0`. | Simplified condition in `client/src/components/RepaymentForm.tsx` line 92 to `const isExceedingDebt = amountCents > debtCents;`. Verified across all 55 frontend tests (`RepaymentForm.test.tsx`). | **FIXED & VERIFIED (GREEN)** |
-
----
-
-## 2. Release-Blocking Defect Resolution Walkthrough (`DEF-OUT-01`)
-
-### 2.1 Defect Specification & Root Cause Analysis
-* **Defect ID:** `DEF-OUT-01`
-* **Title:** Case-Sensitivity Authorization Bypass in `roleGuard.ts` Allowing `ADMIN` Access to Mixed-Case Financial Endpoints
-* **Reported By:** SingSlot UAT Team (`@lephirada` & `@Phenwatsa`) in [Issue #38 Comment `#7063056757`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38#issuecomment-7063056757)
-* **Linked Requirements:** `BR-10` (*Administrative Financial Privacy Barrier*), `AC-02-2`, `NFR-SEC-02`, `UAT-S1-04` (Sub-check 4A)
-* **Root Cause:**
-  In `server/src/middlewares/roleGuard.ts` (lines 15–24), the middleware checked whether the request targeted a financial route by comparing `path.replace(/\/+$/, '')` against lowercase prefixes (`'/api/accounts'`, `'/api/transactions'`, `'/api/reports'`) using case-sensitive string equality (`===` and `.startsWith()`). Because Express 4 `express.Router()` defaults to case-insensitive routing (`caseSensitive: false`), a request from an authenticated `ADMIN` to `/api/Accounts` or `/api/Reports/summary` did not match the lowercase prefix in `roleGuard.ts` (`'/api/Accounts' !== '/api/accounts'`), bypassed the `403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN` check, and was subsequently matched and served by the Express router (`HTTP 200 OK`).
+| Activity Stage | Meaning & Verification Criteria | Current Stage Status | Evidence / Reference |
+|---|---|:---:|---|
+| **1. Code Fix Completed** | Defective source code corrected on branch `fix/37-defect-resolution-part-d` | **COMPLETED** | `server/src/middlewares/roleGuard.ts`, `server/src/services/income.service.ts`, `server/src/controllers/auth.controller.ts`, `server/src/middlewares/contentType.ts`, `client/src/components/RepaymentForm.tsx` |
+| **2. Regression RED → GREEN** | Reproducing test fails (**RED**) against defective implementation (`d5202f8`) and passes (**GREEN**) against corrected implementation alongside full backend (`154/154` unit) and frontend (`56/56`) suites | **COMPLETED** | `server/tests/unit/roleGuard.test.ts`, `server/tests/integration/access.test.ts`, `server/tests/integration/auth.test.ts`, `server/tests/integration/income.test.ts`, `server/tests/integration/content-type.test.ts`, `client/src/components/RepaymentForm.test.tsx`; Screenshots `EVD-PARTD-01` & `EVD-PARTD-02` |
+| **3. PR Approved (`R-09`)** | Substantive peer review and approval of [PR #43](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/43) by `@Pilaiwan3492` with passing GitHub Actions CI | **PENDING** | Awaiting final re-review and approval by `@Pilaiwan3492` on [PR #43](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/43) |
+| **4. Release Completed** | Approved fix merged into `staging-lab5` and promoted to `main` | **PENDING** | Blocked until Stage 3 (`PR #43` peer approval) is completed |
+| **5. Redeployment Completed** | Corrected container image deployed to Cloud Run service `whatsss` (`asia-southeast1`) via `deploy/release.sh` | **PENDING** | Blocked until Stage 4 (Release) is completed |
+| **6. Health Verification Completed** | Live `/api/health` and `/api/ready` probes verified against the new Cloud Run revision and commit SHA | **PENDING** | Blocked until Stage 5 (Cloud Run Redeployment) is completed |
+| **7. Partner Retest Completed** | Independent retest and updated Sprint 1 Acceptance Decision recorded by SingSlot UAT Team (`@lephirada` & `@Phenwatsa`) on [Issue #38](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38) | **PENDING** | Blocked until Stage 6 (Health Verification) and partner retest notification |
 
 ---
 
-### 2.2 Step 1 — Automated Reproducing Test (`RED` Before Code Fix)
+## 2. Executive Summary of All Six Partner Findings (`DEF-OUT-01`, `DEF-OUT-02`, `AUDIT-01`..`04`)
 
-Before modifying `server/src/middlewares/roleGuard.ts`, we authored an automated reproducing test suite in [`server/tests/unit/roleGuard.test.ts`](../../../server/tests/unit/roleGuard.test.ts) (and mirrored in [`server/tests/integration/access.test.ts`](../../../server/tests/integration/access.test.ts)) asserting that `roleGuard` rejects `ADMIN` requests across mixed-case and uppercase financial route variations (`/api/Accounts`, `/api/Reports/summary`, `/api/Transactions`, `/API/ACCOUNTS`) with `HTTP 403` and `error.code === 'ADMIN_FINANCIAL_ACCESS_FORBIDDEN'`.
+| Finding ID | Final Classification & Severity | Linked Requirement & UAT Case | Code Change Implemented | Regression Test Verification |
+|:---:|:---:|:---:|---|---|
+| **`DEF-OUT-01`** | **Accepted Defect**<br>**Critical (Release-Blocking)** | `UAT-S1-04` (Sub-check 4A)<br>`BR-10`, `AC-02-2`, `NFR-SEC-02` | Lowercased both `prefix` and `path` prior to stripping trailing slashes in `server/src/middlewares/roleGuard.ts`:<br>`const normalizedPrefix = prefix.toLowerCase().replace(/\/+$/, '');`<br>`const normalizedPath = path.toLowerCase().replace(/\/+$/, '');` | **`server/tests/unit/roleGuard.test.ts`** (`DEF-OUT-01 Regression`) and **`server/tests/integration/access.test.ts`** (`DEF-OUT-01 Regression`): verifies `/api/Accounts`, `/api/Accounts/`, `/API/ACCOUNTS`, `/api/Reports/summary`, `/api/Transactions` return `403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN` for `ADMIN` with zero financial payload, while allowing `USER` (`200 OK`) and preserving non-financial `ADMIN` routes (`/api/auth/me` -> `200 OK`). |
+| **`DEF-OUT-02`** | **Not-a-Defect**<br>*(By Design / Idempotent Contract)* | `AC-01-5`, `FR-01`, SDS Section 8 | **No production code change required.** `POST /api/auth/logout` is intentionally idempotent per `docs/sprints/sprint-1/feature-contracts.md` (`AC-01-5`) and `server/src/routes/auth.routes.ts` so expired or unauthenticated browser tabs can clear cookies deterministically without client errors. | **`server/tests/integration/auth.test.ts`** & **`server/tests/unit/roleGuard.test.ts`** (`TEST-AUTH-LOGOUT-UNAUTHENTICATED`): sends `POST /api/auth/logout` **without any session cookie or Authorization header**, asserting `HTTP 200 OK`, `Set-Cookie: token=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax`, zero user PII leakage, and no session creation (`GET /api/auth/me` -> `401`). Authenticated logout test (`TEST-AUTH-05`) is retained. |
+| **`AUDIT-01`** | **Accepted Defect**<br>**Minor (Code Audit Hardening)** | `UAT-S1-03`<br>`AC-03-3`, `BR-02` | Updated `server/src/services/income.service.ts` line 376 to lock both primary `CASH` and target `INCOME` accounts inside `prismaClient.$transaction`:<br>`await lockAccounts(tx, [primaryAccount.id, incomeAccount.id], userId);` | **`server/tests/unit/roleGuard.test.ts`** (`AUDIT-01 Hardening`) and **`server/tests/integration/income.test.ts`** (`TEST-OPEN-04`): initializes `Checking Bank` and `Salary` with `is_opening_locked = false`, commits an Income transaction, asserts both accounts have `is_opening_locked === true`, and verifies subsequent `PATCH /api/accounts/:id/opening-balance` on both `Checking Bank` and `Salary` returns `HTTP 422 OPENING_BALANCE_LOCKED`. |
+| **`AUDIT-02`** | **Accepted Defect**<br>**Minor (Code Audit Hardening)** | `FR-01`, `AC-01-2` | Updated `server/src/controllers/auth.controller.ts` line 10 to validate string types without trimming the password:<br>`if (typeof username !== 'string' \|\| typeof password !== 'string' \|\| !username.trim() \|\| !password)` | **`server/tests/integration/auth.test.ts`** & **`server/tests/unit/roleGuard.test.ts`** (`AUDIT-02 Hardening`): tests Object username (`{ $gt: '' }`), Array username (`['user_demo']`), Number password (`12345`), empty username (`""`), whitespace-only username (`"   "`), and empty password (`""`), asserting `HTTP 401 INVALID_CREDENTIALS` with no stack trace while valid login (`TEST-AUTH-01`) continues to pass. |
+| **`AUDIT-03`** | **Accepted Defect**<br>**Minor (Code Audit Hardening)** | `NFR-SEC-03` (`TEST-SEC-06`) | Added `'/api/transactions/income'`, `'/transactions/income'`, `'/api/transactions/expense'`, `'/transactions/expense'`, `'/api/transactions/repayment'`, and `'/transactions/repayment'` to `JSON_BODY_REQUIRED_ENDPOINTS` in `server/src/middlewares/contentType.ts`. | **`server/tests/integration/content-type.test.ts`** & **`server/tests/unit/roleGuard.test.ts`** (`AUDIT-03 Hardening` Tests A–E): executes actual middleware/HTTP requests verifying Test A (missing body -> `400 MISSING_REQUEST_BODY`), Test B (body without Content-Type -> `400 INVALID_CONTENT_TYPE`), Test C (`text/plain` -> `400 INVALID_CONTENT_TYPE`), Test D (valid `application/json` including `{}` passes middleware to field validation), Test E (uppercase & trailing slash variants `/api/Transactions/Income/`, `/API/TRANSACTIONS/EXPENSE`), and confirms `GET /api/transactions` is not blocked. |
+| **`AUDIT-04`** | **Enhancement / Hardening**<br>**Minor** | `UAT-S1-02` (Sub-check 2D)<br>`BR-07`, `AC-07-2` | Updated `client/src/components/RepaymentForm.tsx` line 92 from `amountCents > debtCents && debtCents > 0` to:<br>`const isExceedingDebt = amountCents > debtCents;` | **`client/src/components/RepaymentForm.test.tsx`** (`TEST-UI-REPAY-11 (AUDIT-04 Regression)`): configures target credit card with `current_balance: 0.0` (`0.00 THB` debt) and bank balance `30000.0`, enters `100.00`, asserts inline `Exceeds debt` warning renders, `Confirm Repayment` button is disabled, and `recordRepayment()` is never called, while existing tests `TEST-UI-REPAY-01`..`10` (full/partial/over-debt/insufficient-cash) all pass. |
 
-#### Command Executed (RED):
-```powershell
-cd server
-npx vitest run tests/unit/roleGuard.test.ts
-```
+---
 
-#### Actual Failure Output Observed (RED — Verbatim Stdout on Defective Commit `d5202f8`):
+## 3. Detailed Walkthrough & RED-to-GREEN Evidence (`DEF-OUT-01` & Part D Suite)
+
+### 3.1 Step 1 — Defective Baseline Identification
+* **Defective Baseline Commit SHA:** `d5202f8b0c70422493f204207c92bb67bb590a5c` (`d5202f8`, head of `staging-lab5` prior to `fix/37-defect-resolution-part-d`, matching the `roleGuard.ts` implementation deployed on Cloud Run revision `whatsss-00020-65k` / commit `ba2f9dd`).
+* **Defective Implementation in `server/src/middlewares/roleGuard.ts` (at `d5202f8`):**
+  ```ts
+  const normalizedPrefix = prefix.replace(/\/+$/, '');
+  const normalizedPath = path.replace(/\/+$/, '');
+  return (
+    normalizedPath === normalizedPrefix ||
+    normalizedPath.startsWith(`${normalizedPrefix}/`)
+  );
+  ```
+* **Test Environment:** Windows 11 / Node.js `v24.14.0` / Vitest `v1.6.1` (`server/` working directory).
+* **How RED Was Executed:** The new regression test file `server/tests/unit/roleGuard.test.ts` (containing 8 unit tests covering `DEF-OUT-01`, `DEF-OUT-02`, and `AUDIT-01`..`03`) was authored in the working tree first and executed against the unmodified defective `server/src/middlewares/roleGuard.ts` implementation from `d5202f8` before applying `.toLowerCase()`.
+
+---
+
+### 3.2 Step 2 — Automated Reproducing Test Execution (`RED` on Defective `roleGuard.ts`)
+
+* **Test Name:** `Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN from mixed-case and uppercase financial routes (/api/Accounts, /api/Accounts/, /API/ACCOUNTS, /api/Reports/summary, /api/Transactions)`
+* **Test File:** `server/tests/unit/roleGuard.test.ts`
+* **Exact Command Executed:**
+  ```powershell
+  cd server
+  npx vitest run tests/unit/roleGuard.test.ts
+  ```
+* **Expected Failing Assertion:** `expect(res.statusCode).toBe(403)` fails on `/api/Accounts` because the un-lowercased path bypasses `roleGuard`, leaving `res.statusCode` at `200` and calling `next()`.
+
+#### Actual Verbatim Terminal Output (RED):
 ```text
  RUN  v1.6.1 C:/Users/User/Downloads/group_work_specs_v1/Whatsss-PMandELS/server
 
- ❯ tests/unit/roleGuard.test.ts  (6 tests | 1 failed) 16ms
-   ❯ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, AUDIT-02, AUDIT-03) > DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN from mixed-case and uppercase financial routes (/api/Accounts, /api/Reports/summary, /api/Transactions, /API/ACCOUNTS)
+ ❯ tests/unit/roleGuard.test.ts  (8 tests | 1 failed) 15ms
+   ❯ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN from mixed-case and uppercase financial routes (/api/Accounts, /api/Accounts/, /API/ACCOUNTS, /api/Reports/summary, /api/Transactions)
      → expected 200 to be 403 // Object.is equality
 
 ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
 
- FAIL  tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, AUDIT-02, AUDIT-03) > DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN from mixed-case and uppercase financial routes (/api/Accounts, /api/Reports/summary, /api/Transactions, /API/ACCOUNTS)
+ FAIL  tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN from mixed-case and uppercase financial routes (/api/Accounts, /api/Accounts/, /API/ACCOUNTS, /api/Reports/summary, /api/Transactions)
 AssertionError: expected 200 to be 403 // Object.is equality
 
 - Expected
@@ -66,30 +89,28 @@ AssertionError: expected 200 to be 403 // Object.is equality
 - 403
 + 200
 
- ❯ tests/unit/roleGuard.test.ts:67:30
-     65|       const { req, res, next } = createMockReqRes(route, route, 'ADMIN…
-     66|       roleGuard(req, res, next);
-     67|       expect(res.statusCode).toBe(403);
+ ❯ tests/unit/roleGuard.test.ts:84:30
+     82|       const { req, res, next } = createMockReqRes(route, route, 'ADMIN…
+     83|       roleGuard(req, res, next);
+     84|       expect(res.statusCode).toBe(403);
        |                              ^
-     68|       expect(res.body).toEqual({
-     69|         success: false,
+     85|       expect(res.body).toEqual({
+     86|         success: false,
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
 
  Test Files  1 failed (1)
-      Tests  1 failed | 5 passed (6)
-   Start at  20:42:04
-   Duration  974ms (transform 80ms, setup 0ms, collect 431ms, tests 16ms, environment 0ms, prepare 258ms)
+      Tests  1 failed | 7 passed (8)
+   Start at  21:53:48
+   Duration  812ms (transform 86ms, setup 0ms, collect 411ms, tests 15ms, environment 0ms, prepare 217ms)
 ```
 
-#### Visual Evidence (`EVD-PARTD-01` — RED Reproducing Test Failure):
-![EVD-PARTD-01: Automated Reproducing Test Failure (RED) for DEF-OUT-01](./evidence/partd-01-def-out-01-red-test.png)
+#### Visual Evidence (`EVD-PARTD-01` — Verbatim RED Output):
+![EVD-PARTD-01: Verbatim RED Failure Output on Defective roleGuard.ts](./evidence/partd-01-def-out-01-red-test.png)
 
 ---
 
-### 2.3 Step 2 — Minimal Code Fix (`server/src/middlewares/roleGuard.ts`)
-
-We updated `server/src/middlewares/roleGuard.ts` to normalize both the configured prefix and the incoming request path to lowercase (`.toLowerCase()`) prior to stripping trailing slashes and evaluating prefix equality:
+### 3.3 Step 3 — Code Fix Applied (`server/src/middlewares/roleGuard.ts`)
 
 ```diff
 --- a/server/src/middlewares/roleGuard.ts
@@ -107,112 +128,126 @@ We updated `server/src/middlewares/roleGuard.ts` to normalize both the configure
          normalizedPath.startsWith(`${normalizedPrefix}/`)
 ```
 
-In addition, we applied the four defense-in-depth hardening fixes identified by the SingSlot team's code inspection:
-1. **`AUDIT-01` (`server/src/services/income.service.ts`):**
-   ```diff
-   - await lockAccounts(tx, [primaryAccount.id], userId);
-   + await lockAccounts(tx, [primaryAccount.id, incomeAccount.id], userId);
-   ```
-2. **`AUDIT-02` (`server/src/controllers/auth.controller.ts`):**
-   ```diff
-   - if (!username || !password) {
-   + if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password) {
-   ```
-3. **`AUDIT-03` (`server/src/middlewares/contentType.ts`):**
-   Added `'/api/transactions/income'`, `'/transactions/income'`, `'/api/transactions/expense'`, `'/transactions/expense'`, `'/api/transactions/repayment'`, and `'/transactions/repayment'` to `JSON_BODY_REQUIRED_ENDPOINTS`.
-4. **`AUDIT-04` (`client/src/components/RepaymentForm.tsx`):**
-   ```diff
-   - const isExceedingDebt = amountCents > debtCents && debtCents > 0;
-   + const isExceedingDebt = amountCents > debtCents;
-   ```
-
 ---
 
-### 2.4 Step 3 — Automated Regression Verification (`GREEN` After Code Fix)
+### 3.4 Step 4 & Step 5 — Automated Regression Verification (`GREEN` After Fix & Full Suite Run)
 
-After applying the fix, we re-ran `tests/unit/roleGuard.test.ts`, the entire backend unit test suite (`10` test files, `152` tests), the backend TypeScript compiler (`npm run build`), the entire frontend test suite (`7` test files, `55` tests), and the frontend production Vite build (`npm run build`).
+* **Exact Commands Executed:**
+  ```powershell
+  cd server
+  npx vitest run tests/unit/roleGuard.test.ts --reporter=verbose
+  npx vitest run tests/unit
+  npm run build
 
-#### Commands Executed (GREEN):
-```powershell
-cd server
-npx vitest run tests/unit/roleGuard.test.ts
-npx vitest run tests/unit
-npm run build
+  cd ../client
+  npx vitest run
+  npm run build
+  ```
 
-cd ../client
-npx vitest run
-npm run build
-```
-
-#### Actual Passing Output Observed (GREEN — Verbatim Stdout):
+#### Actual Verbatim Terminal Output (GREEN — Backend Unit Suite `154 passed (154)`):
 ```text
  RUN  v1.6.1 C:/Users/User/Downloads/group_work_specs_v1/Whatsss-PMandELS/server
 
- ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, AUDIT-02, AUDIT-03) > blocks ADMIN from lowercase financial endpoints (/api/accounts, /api/transactions, /api/reports/summary) with 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN
- ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, AUDIT-02, AUDIT-03) > DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN from mixed-case and uppercase financial routes (/api/Accounts, /api/Reports/summary, /api/Transactions, /API/ACCOUNTS)
- ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, AUDIT-02, AUDIT-03) > allows USER role to proceed through financial routes regardless of path casing
- ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, AUDIT-02, AUDIT-03) > does not block ADMIN on non-financial routes (/api/auth/me, /api/accountsXYZ)
- ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, AUDIT-02, AUDIT-03) > AUDIT-02 Hardening: rejects non-string username or password payloads with 401 INVALID_CREDENTIALS without unhandled rejection
- ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, AUDIT-02, AUDIT-03) > AUDIT-03 Hardening: enforces JSON body requirement on transaction creation endpoints
+ ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > blocks ADMIN from lowercase financial endpoints (/api/accounts, /api/transactions, /api/reports/summary) with 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN
+ ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN from mixed-case and uppercase financial routes (/api/Accounts, /api/Accounts/, /API/ACCOUNTS, /api/Reports/summary, /api/Transactions)
+ ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > allows USER role to proceed through financial routes regardless of path casing
+ ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > does not block ADMIN on non-financial routes (/api/auth/me, /api/accountsXYZ)
+ ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > TEST-AUTH-LOGOUT-UNAUTHENTICATED (DEF-OUT-02 Verification, AC-01-5): unauthenticated POST /api/auth/logout without cookie returns 200 OK and clears token cookie with configured attributes
+ ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > AUDIT-01 Hardening (AC-03-3): recordIncome locks both primary Checking Bank and target Salary accounts atomically, and rolls back locks on transaction failure
+ ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > AUDIT-02 Hardening: rejects non-string, empty, or whitespace-only username and non-string or empty password with 401 INVALID_CREDENTIALS
+ ✓ tests/unit/roleGuard.test.ts > Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03) > AUDIT-03 Hardening: requireJsonContentType middleware rejects missing body (400 MISSING_REQUEST_BODY), missing/wrong Content-Type (400 INVALID_CONTENT_TYPE), and passes valid application/json across transaction routes and case/slash variants
 
  Test Files  1 passed (1)
-      Tests  6 passed (6)
-   Start at  20:42:49
-   Duration  760ms (transform 67ms, setup 0ms, collect 382ms, tests 7ms, environment 0ms, prepare 197ms)
+      Tests  8 passed (8)
+   Start at  21:56:08
+   Duration  770ms (transform 79ms, setup 0ms, collect 368ms, tests 10ms, environment 0ms, prepare 219ms)
 
  RUN  v1.6.1 C:/Users/User/Downloads/group_work_specs_v1/Whatsss-PMandELS/server
 
- ✓ tests/unit/seed.test.ts  (36 tests) 1317ms
- ✓ tests/unit/testSafety.test.ts  (27 tests) 180ms
- ✓ tests/unit/config.test.ts  (23 tests) 98ms
- ✓ tests/unit/health.test.ts  (11 tests) 48ms
- ✓ tests/unit/balance.test.ts  (5 tests) 47ms
- ✓ tests/unit/splitAllocation.test.ts  (15 tests) 14ms
- ✓ tests/unit/accountLock.test.ts  (9 tests) 31ms
- ✓ tests/unit/roleGuard.test.ts  (6 tests) 22ms
- ✓ tests/unit/decimal.test.ts  (16 tests) 18ms
- ✓ tests/unit/password.test.ts  (4 tests) 812ms
+ ✓ tests/unit/seed.test.ts  (36 tests) 1279ms
+ ✓ tests/unit/testSafety.test.ts  (27 tests) 174ms
+ ✓ tests/unit/config.test.ts  (23 tests) 100ms
+ ✓ tests/unit/roleGuard.test.ts  (8 tests) 21ms
+ ✓ tests/unit/health.test.ts  (11 tests) 50ms
+ ✓ tests/unit/balance.test.ts  (5 tests) 31ms
+ ✓ tests/unit/splitAllocation.test.ts  (15 tests) 12ms
+ ✓ tests/unit/accountLock.test.ts  (9 tests) 18ms
+ ✓ tests/unit/decimal.test.ts  (16 tests) 16ms
+ ✓ tests/unit/password.test.ts  (4 tests) 500ms
 
  Test Files  10 passed (10)
-      Tests  152 passed (152)
-   Start at  20:42:52
-   Duration  18.62s (transform 758ms, setup 2ms, collect 6.01s, tests 2.59s, environment 4ms, prepare 6.04s)
+      Tests  154 passed (154)
+   Start at  21:56:11
+   Duration  16.75s (transform 748ms, setup 0ms, collect 5.60s, tests 2.20s, environment 4ms, prepare 5.51s)
 ```
 
-> whatsss-server@0.1.0 build
-> tsc (Exited with code 0)
-
+#### Actual Verbatim Terminal Output (GREEN — Frontend Client Suite `56 passed (56)`):
+```text
  RUN  v1.6.1 C:/Users/User/Downloads/group_work_specs_v1/Whatsss-PMandELS/client
 
- ✓ src/components/IncomeForm.test.tsx  (8 tests) 574ms
- ✓ src/components/RepaymentForm.test.tsx  (10 tests) 705ms
- ✓ src/components/ExpenseForm.test.tsx  (13 tests) 1239ms
- ✓ src/pages/TransactionHistoryPage.test.tsx  (5 tests) 426ms
- ✓ src/components/ProtectedRoute.test.tsx  (4 tests) 259ms
- ✓ src/pages/DashboardPage.test.tsx  (7 tests) 535ms
- ✓ src/pages/AccountListPage.test.tsx  (8 tests) 741ms
+ ✓ src/components/IncomeForm.test.tsx  (8 tests) 599ms
+ ✓ src/components/RepaymentForm.test.tsx  (11 tests) 745ms
+ ✓ src/components/ProtectedRoute.test.tsx  (4 tests) 269ms
+ ✓ src/pages/TransactionHistoryPage.test.tsx  (5 tests) 443ms
+ ✓ src/components/ExpenseForm.test.tsx  (13 tests) 1243ms
+ ✓ src/pages/DashboardPage.test.tsx  (7 tests) 551ms
+ ✓ src/pages/AccountListPage.test.tsx  (8 tests) 801ms
 
  Test Files  7 passed (7)
-      Tests  55 passed (55)
-
-> whatsss-client@0.1.0 build
-> tsc -b && vite build (✓ built in 1.01s)
+      Tests  56 passed (56)
+   Start at  21:54:42
+   Duration  6.96s (transform 1.48s, setup 2ms, collect 12.89s, tests 4.65s, environment 22.42s, prepare 2.18s)
 ```
 
-*(Note: All full-stack integration test suites including `server/tests/integration/access.test.ts` and `server/tests/integration/income.test.ts` also execute automatically inside the GitHub Actions CI Docker pipeline on PR push.)*
+*(Note on Full-Stack Integration Tests: In `.github/workflows/ci-docker.yml` lines 83–91, the `Run Backend Automated Tests` step executes `npm test` (`vitest run`) against a live `postgres:16-alpine` service container, running all 10 unit test files, all 17 integration test files—including `access.test.ts`, `auth.test.ts`, `income.test.ts`, and `content-type.test.ts`—and the E2E suite `golden-journey.test.ts`.)*
 
-#### Visual Evidence (`EVD-PARTD-02` — GREEN Regression Test Verification):
-![EVD-PARTD-02: Automated Regression Verification (GREEN) for DEF-OUT-01 and Full Test Suite](./evidence/partd-02-def-out-01-green-test.png)
+#### Visual Evidence (`EVD-PARTD-02` — Verbatim GREEN Output):
+![EVD-PARTD-02: Verbatim GREEN Passing Output After Fixing DEF-OUT-01 and AUDIT-01..03](./evidence/partd-02-def-out-01-green-test.png)
 
 ---
 
-## 3. Redeployment & Partner Retest Handoff Protocol
+## 4. Detailed Technical Documentation for Findings `DEF-OUT-02` & `AUDIT-01`..`04`
 
-1. **Pull Request & Peer Review (`R-09`):**
-   - Branch `fix/37-defect-resolution-part-d` is submitted as a Pull Request into `staging-lab5` by `@Apichaya251400` and reviewed/approved by `@Pilaiwan3492`.
-2. **Cloud Run Redeployment:**
-   - Upon merge, the updated image is deployed to GCP Cloud Run (`https://whatsss-sipqw4logq-as.a.run.app`, service `whatsss` in `asia-southeast1`) via `deploy/release.sh`.
-3. **Independent Partner Retest Verification:**
-   - The SingSlot UAT Team (`@lephirada` & `@Phenwatsa`) is notified on [Issue #38](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38) with the new Cloud Run Revision and Commit SHA to re-verify that:
-     - Authenticated `ADMIN` requests to `/api/Accounts`, `/api/Reports/summary`, and `/api/Transactions` now deterministically return **`HTTP 403 Forbidden` (`ADMIN_FINANCIAL_ACCESS_FORBIDDEN`)** with zero financial payload.
-     - All previously passing UAT cases (`UAT-S1-01` through `UAT-S1-05`) continue to pass without regression.
+### 4.1 `DEF-OUT-02`: Unauthenticated `POST /api/auth/logout` (`Not-a-Defect`)
+* **Partner Observation:** Calling `POST /api/auth/logout` without attaching a session cookie returned `HTTP 200 OK` with a `Set-Cookie: token=; Max-Age=0` header.
+* **Requirement & Contract Analysis (`AC-01-5`, `FR-01`):**
+  In [`docs/sprints/sprint-1/feature-contracts.md`](../../sprints/sprint-1/feature-contracts.md) (lines 33, 39, 46), `AC-01-5` specifies:
+  > *"Calling `POST /api/auth/logout` clears session cookie with matching attributes; subsequent protected calls return `401 Unauthorized` (`TEST-AUTH-05`, `FR-01`)."*
+  In [`server/src/routes/auth.routes.ts`](../../../server/src/routes/auth.routes.ts) (line 9), `router.post('/logout', logout)` intentionally omits `authGuard` so that logout operates idempotently (also verified by `server/tests/integration/content-type.test.ts` Case A & D). If a user's JWT cookie has already expired or was cleared in another tab, clicking "Logout" must still succeed (`200 OK`) and instruct the browser to clear the cookie rather than failing with `401 Unauthorized`.
+* **Direct Unauthenticated Regression Verification (`TEST-AUTH-LOGOUT-UNAUTHENTICATED`):**
+  Added `TEST-AUTH-LOGOUT-UNAUTHENTICATED` in `server/tests/integration/auth.test.ts` and `server/tests/unit/roleGuard.test.ts` which sends `POST /api/auth/logout` **with zero cookies and zero Authorization headers**, confirming:
+  1. `HTTP 200 OK` with `{ "success": true, "data": { "message": "Logged out successfully" } }`.
+  2. `Set-Cookie` clears `token=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax`.
+  3. Zero user profile data or tokens are returned, and no session is created (`GET /api/auth/me` returns `401 UNAUTHORIZED`).
+* **Final Classification:** **`Not-a-Defect`**.
+
+### 4.2 `AUDIT-01`: Income Target Account (`Salary`) Opening Balance Lock (`AC-03-3`)
+* **Implementation:** In `server/src/services/income.service.ts` (line 376), inside `prismaClient.$transaction(async (tx) => { ... })`, after validating that both `primaryAccount` (`CASH`) and `incomeAccount` (`INCOME`) exist and belong to `userId`, both accounts are locked atomically:
+  ```ts
+  await lockAccounts(tx, [primaryAccount.id, incomeAccount.id], userId);
+  ```
+* **Regression Verification:**
+  - `server/tests/unit/roleGuard.test.ts` (`AUDIT-01 Hardening`): verifies both `Checking Bank` and `Salary` transition from `is_opening_locked: false` to `true` inside `$transaction`.
+  - `server/tests/integration/income.test.ts` (`TEST-OPEN-04`): verifies that after `POST /api/transactions/income` commits (`201 Created`), calling `PATCH /api/accounts/${CHECKING_ID}/opening-balance` AND `PATCH /api/accounts/${SALARY_ID}/opening-balance` both return **`HTTP 422 Unprocessable Entity` (`OPENING_BALANCE_LOCKED`)** without mutating either opening balance, while `TEST-INC-ATOM` verifies full rollback on transaction failure.
+
+### 4.3 `AUDIT-02`: Login Payload Type Validation (`FR-01`, `AC-01-2`)
+* **Implementation:** In `server/src/controllers/auth.controller.ts` (line 10):
+  ```ts
+  if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password)
+  ```
+  Note that `password` is **not** trimmed so valid passwords containing leading/trailing spaces are preserved without modification.
+* **Regression Verification:** Verified in `server/tests/integration/auth.test.ts` and `server/tests/unit/roleGuard.test.ts` (`AUDIT-02 Hardening`) across Object username, Array username, Number password, empty string username, whitespace-only username, and empty string password—all returning `HTTP 401 INVALID_CREDENTIALS` with zero stack trace exposure.
+
+### 4.4 `AUDIT-03`: Required JSON Body for Transaction Creation Endpoints (`NFR-SEC-03`)
+* **Implementation:** Added `/api/transactions/income`, `/transactions/income`, `/api/transactions/expense`, `/transactions/expense`, `/api/transactions/repayment`, and `/transactions/repayment` to `JSON_BODY_REQUIRED_ENDPOINTS` in `server/src/middlewares/contentType.ts`.
+* **Distinction Verified in Integration & Middleware Tests (`server/tests/integration/content-type.test.ts` & `server/tests/unit/roleGuard.test.ts`):**
+  - **Test A (No Request Body):** `POST` without body -> `HTTP 400 Bad Request` (`MISSING_REQUEST_BODY`).
+  - **Test B (Body Present, Missing `Content-Type`):** `POST` with payload and no `Content-Type` -> `HTTP 400 Bad Request` (`INVALID_CONTENT_TYPE`).
+  - **Test C (Body Present, Wrong Media Type `text/plain`):** `POST` with `Content-Type: text/plain` -> `HTTP 400 Bad Request` (`INVALID_CONTENT_TYPE`).
+  - **Test D (Valid `application/json` Body):** `POST` with `Content-Type: application/json` and `{}` passes `requireJsonContentType` and proceeds to controller field validation; valid payloads proceed to `201 Created`.
+  - **Test E (Case & Trailing-Slash Variants):** `/api/Transactions/Income/`, `/API/TRANSACTIONS/EXPENSE`, `/api/Transactions/Repayment/` are normalized and enforced identically, while `GET /api/transactions` is unaffected.
+
+### 4.5 `AUDIT-04`: Zero-Debt Over-Repayment Warning in `RepaymentForm.tsx` (`BR-07`)
+* **Implementation:** Changed `client/src/components/RepaymentForm.tsx` line 92 to `const isExceedingDebt = amountCents > debtCents;`.
+* **Regression Verification (`client/src/components/RepaymentForm.test.tsx`):**
+  Added **`TEST-UI-REPAY-11 (AUDIT-04 Regression)`** with `Visa Credit Card` at `current_balance: 0.0` (`0.00 THB` debt) and `Checking Bank` at `30000.0 THB`. Entering `100.00` displays the `Exceeds debt` warning, keeps `Confirm Repayment` disabled (`submitBtn.disabled === true`), and prevents `recordRepayment()` from being invoked on click. All existing tests (`TEST-UI-REPAY-01` through `TEST-UI-REPAY-10`) continue to pass (`11/11` in `RepaymentForm.test.tsx`, `56/56` across client suite).

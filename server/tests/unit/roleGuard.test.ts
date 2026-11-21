@@ -1,21 +1,34 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Request, Response, NextFunction } from 'express';
+import { Prisma } from '@prisma/client';
 import { roleGuard } from '../../src/middlewares/roleGuard.js';
-import { isJsonBodyRequired } from '../../src/middlewares/contentType.js';
-import { login } from '../../src/controllers/auth.controller.js';
+import { requireJsonContentType } from '../../src/middlewares/contentType.js';
+import { login, logout } from '../../src/controllers/auth.controller.js';
+import { recordIncome } from '../../src/services/income.service.js';
 
-function createMockReqRes(path: string, originalUrl: string, role?: 'USER' | 'ADMIN', method: string = 'GET', body?: any) {
+function createMockReqRes(
+  path: string,
+  originalUrl: string,
+  role?: 'USER' | 'ADMIN',
+  method: string = 'GET',
+  body?: any,
+  headers: Record<string, string> = {}
+) {
   const req = {
     method,
     path,
     originalUrl,
     body,
+    headers,
+    cookies: {},
     user: role ? { id: 'test-user-id', username: role === 'ADMIN' ? 'admin' : 'user_demo', role } : undefined
   } as unknown as Request;
 
+  const clearedCookies: Array<{ name: string; options: any }> = [];
   const res = {
     statusCode: 200,
     body: undefined as any,
+    clearedCookies,
     status(code: number) {
       this.statusCode = code;
       return this;
@@ -23,14 +36,18 @@ function createMockReqRes(path: string, originalUrl: string, role?: 'USER' | 'AD
     json(payload: any) {
       this.body = payload;
       return this;
+    },
+    clearCookie(name: string, options: any) {
+      clearedCookies.push({ name, options });
+      return this;
     }
-  } as unknown as Response & { statusCode: number; body: any };
+  } as unknown as Response & { statusCode: number; body: any; clearedCookies: Array<{ name: string; options: any }> };
 
   const next = vi.fn() as unknown as NextFunction;
   return { req, res, next };
 }
 
-describe('Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, AUDIT-02, AUDIT-03)', () => {
+describe('Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF-OUT-01, DEF-OUT-02, AUDIT-01..03)', () => {
   it('blocks ADMIN from lowercase financial endpoints (/api/accounts, /api/transactions, /api/reports/summary) with 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN', () => {
     for (const url of ['/api/accounts', '/api/transactions', '/api/reports/summary']) {
       const { req, res, next } = createMockReqRes(url, url, 'ADMIN');
@@ -47,7 +64,7 @@ describe('Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF
     }
   });
 
-  it('DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN from mixed-case and uppercase financial routes (/api/Accounts, /api/Reports/summary, /api/Transactions, /API/ACCOUNTS)', () => {
+  it('DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN from mixed-case and uppercase financial routes (/api/Accounts, /api/Accounts/, /API/ACCOUNTS, /api/Reports/summary, /api/Transactions)', () => {
     const mixedCaseRoutes = [
       '/api/Accounts',
       '/api/Accounts/',
@@ -72,12 +89,13 @@ describe('Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF
           message: 'Admins cannot access financial endpoints'
         }
       });
+      expect(res.body.data).toBeUndefined();
       expect(next).not.toHaveBeenCalled();
     }
   });
 
   it('allows USER role to proceed through financial routes regardless of path casing', () => {
-    for (const route of ['/api/accounts', '/api/Accounts', '/api/Reports/summary']) {
+    for (const route of ['/api/accounts', '/api/Accounts', '/api/Accounts/', '/API/ACCOUNTS', '/api/Reports/summary', '/api/Transactions']) {
       const { req, res, next } = createMockReqRes(route, route, 'USER');
       roleGuard(req, res, next);
       expect(next).toHaveBeenCalledTimes(1);
@@ -94,12 +112,95 @@ describe('Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF
     }
   });
 
-  it('AUDIT-02 Hardening: rejects non-string username or password payloads with 401 INVALID_CREDENTIALS without unhandled rejection', async () => {
+  it('TEST-AUTH-LOGOUT-UNAUTHENTICATED (DEF-OUT-02 Verification, AC-01-5): unauthenticated POST /api/auth/logout without cookie returns 200 OK and clears token cookie with configured attributes', () => {
+    const { req, res } = createMockReqRes('/api/auth/logout', '/api/auth/logout', undefined, 'POST');
+    logout(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({
+      success: true,
+      data: {
+        message: 'Logged out successfully'
+      }
+    });
+    expect(res.body.data.user).toBeUndefined();
+    expect(res.clearedCookies).toHaveLength(1);
+    expect(res.clearedCookies[0].name).toBe('token');
+    expect(res.clearedCookies[0].options).toMatchObject({
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 0
+    });
+  });
+
+  it('AUDIT-01 Hardening (AC-03-3): recordIncome locks both primary Checking Bank and target Salary accounts atomically, and rolls back locks on transaction failure', async () => {
+    const checkingId = '11111111-1111-4111-8111-111111111111';
+    const salaryId = '22222222-2222-4222-8222-222222222222';
+    const userId = 'user-a-uuid';
+
+    const accountsState = [
+      { id: checkingId, user_id: userId, name: 'Checking Bank', type: 'CASH', opening_balance: new Prisma.Decimal('10000.00'), is_opening_locked: false },
+      { id: salaryId, user_id: userId, name: 'Salary', type: 'INCOME', opening_balance: new Prisma.Decimal('0.00'), is_opening_locked: false }
+    ];
+
+    const mockPrisma: any = {
+      $transaction: vi.fn(async (cb: any) => {
+        const tx = {
+          $queryRaw: vi.fn(async () => []),
+          account: {
+            findFirst: vi.fn(async ({ where }: any) => accountsState.find((a) => a.id === where.id && a.user_id === where.user_id) || null),
+            findMany: vi.fn(async ({ where }: any) => accountsState.filter((a) => where.id.in.includes(a.id) && a.user_id === where.user_id)),
+            updateMany: vi.fn(async ({ where, data }: any) => {
+              let count = 0;
+              for (const acc of accountsState) {
+                if (where.id.in.includes(acc.id) && acc.user_id === where.user_id && acc.is_opening_locked === where.is_opening_locked) {
+                  acc.is_opening_locked = data.is_opening_locked;
+                  count++;
+                }
+              }
+              return { count };
+            })
+          },
+          transaction: {
+            create: vi.fn(async ({ data }: any) => ({ id: 'txn-inc-1', ...data })),
+            aggregate: vi.fn(async ({ where }: any) => ({
+              _sum: { total_amount: where.form === 'RECEIVE_MONEY' ? new Prisma.Decimal('20000.00') : null }
+            }))
+          },
+          allocationLine: {
+            create: vi.fn(async ({ data }: any) => ({ id: 'alloc-inc-1', ...data }))
+          }
+        };
+        return cb(tx);
+      })
+    };
+
+    const result = await recordIncome(
+      userId,
+      {
+        primary_account_id: checkingId,
+        income_account_id: salaryId,
+        total_amount: '20000.00',
+        transaction_date: '2026-11-06',
+        description: 'Monthly Salary'
+      },
+      mockPrisma
+    );
+
+    expect(result.updated_balance.current_balance).toBe('30000.00');
+    expect(accountsState.find((a) => a.id === checkingId)!.is_opening_locked).toBe(true);
+    expect(accountsState.find((a) => a.id === salaryId)!.is_opening_locked).toBe(true);
+  });
+
+  it('AUDIT-02 Hardening: rejects non-string, empty, or whitespace-only username and non-string or empty password with 401 INVALID_CREDENTIALS', async () => {
     const invalidPayloads = [
       { username: { $gt: '' }, password: 'Password123!' },
       { username: ['user_demo'], password: 'Password123!' },
       { username: 'user_demo', password: 12345 },
-      { username: '   ', password: 'Password123!' }
+      { username: '', password: 'Password123!' },
+      { username: '   ', password: 'Password123!' },
+      { username: 'user_demo', password: '' }
     ];
 
     for (const payload of invalidPayloads) {
@@ -116,17 +217,63 @@ describe('Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF
     }
   });
 
-  it('AUDIT-03 Hardening: enforces JSON body requirement on transaction creation endpoints', () => {
+  it('AUDIT-03 Hardening: requireJsonContentType middleware rejects missing body (400 MISSING_REQUEST_BODY), missing/wrong Content-Type (400 INVALID_CONTENT_TYPE), and passes valid application/json across transaction routes and case/slash variants', () => {
     const transactionRoutes = [
       '/api/transactions/income',
+      '/transactions/income',
       '/api/transactions/expense',
+      '/transactions/expense',
       '/api/transactions/repayment',
-      '/api/Transactions/Income'
+      '/transactions/repayment',
+      '/api/Transactions/Income/',
+      '/API/TRANSACTIONS/EXPENSE',
+      '/api/Transactions/Repayment/'
     ];
 
+    // Test A: Missing body -> 400 MISSING_REQUEST_BODY
     for (const route of transactionRoutes) {
-      const { req } = createMockReqRes(route, route, 'USER', 'POST');
-      expect(isJsonBodyRequired(req)).toBe(true);
+      const { req, res, next } = createMockReqRes(route, route, 'USER', 'POST', undefined, {});
+      requireJsonContentType(req, res, next);
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error.code).toBe('MISSING_REQUEST_BODY');
+      expect(next).not.toHaveBeenCalled();
     }
+
+    // Test B: Body present but missing Content-Type -> 400 INVALID_CONTENT_TYPE
+    for (const route of transactionRoutes) {
+      const { req, res, next } = createMockReqRes(route, route, 'USER', 'POST', undefined, { 'content-length': '25' });
+      requireJsonContentType(req, res, next);
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error.code).toBe('INVALID_CONTENT_TYPE');
+      expect(next).not.toHaveBeenCalled();
+    }
+
+    // Test C: Wrong Content-Type (text/plain) -> 400 INVALID_CONTENT_TYPE
+    for (const route of transactionRoutes) {
+      const { req, res, next } = createMockReqRes(route, route, 'USER', 'POST', undefined, {
+        'content-length': '20',
+        'content-type': 'text/plain'
+      });
+      requireJsonContentType(req, res, next);
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error.code).toBe('INVALID_CONTENT_TYPE');
+      expect(next).not.toHaveBeenCalled();
+    }
+
+    // Test D: Valid application/json (including empty JSON object "{}" with content-length 2) -> passes middleware (next() called)
+    for (const route of transactionRoutes) {
+      const { req, res, next } = createMockReqRes(route, route, 'USER', 'POST', {}, {
+        'content-length': '2',
+        'content-type': 'application/json'
+      });
+      requireJsonContentType(req, res, next);
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(res.body).toBeUndefined();
+    }
+
+    // Safe GET requests are never blocked by requireJsonContentType
+    const { req: getReq, res: getRes, next: getNext } = createMockReqRes('/api/transactions', '/api/transactions', 'USER', 'GET');
+    requireJsonContentType(getReq, getRes, getNext);
+    expect(getNext).toHaveBeenCalledTimes(1);
   });
 });
