@@ -29,11 +29,17 @@
 
 In compliance with course security rules (**R-12**), secret passwords provided privately by the SingSlot Product Team are excluded from this repository and PDF report.
 
+The assigned division of testing responsibilities between pair partners is:
+
 | Account Label | Login Email | Role | Assigned UAT Cases | Assigned UAT Tester |
 | :--- | :--- | :---: | :--- | :--- |
 | **Customer 1 (Alice Customer)** | `customer1@singslot.local` | `CUSTOMER` | `UAT-01`, `UAT-03`, `UAT-04`, `UAT-05` | `@Pilaiwan3492` (`UAT-01`, `UAT-05`) / `@Apichaya251400` (`UAT-03`, `UAT-04`) |
 | **Customer 2 (Bob Customer)** | `customer2@singslot.local` | `CUSTOMER` | `UAT-02`, `UAT-03`, `UAT-04` | `@Pilaiwan3492` (`UAT-02`) / `@Apichaya251400` (`UAT-03`, `UAT-04`) |
 | **Staff (Cashier Staff)** | `staff@singslot.local` | `STAFF` | `UAT-05` | `@Pilaiwan3492` (`UAT-05`) |
+
+* **Individual Ownership per Project Issue Backlog:**
+  - **Issue #38 (`ISSUE 17`):** Owned by **Pilaiwan Churdchu (`@Pilaiwan3492`)** covering `UAT-01`, `UAT-02`, and `UAT-05`.
+  - **Issue #40 (`ISSUE 18`):** Owned by **Aphichaya Klinhual (`@Apichaya251400`)** covering `UAT-03` and `UAT-04`.
 
 ---
 
@@ -41,34 +47,85 @@ In compliance with course security rules (**R-12**), secret passwords provided p
 
 | Case ID | Category | Requirement & Contract Ref | Tested By | Date & Time (ICT) | Tested Version / Revision | Status | Actual Result Summary |
 | :---: | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-| **UAT-01** | Normal Domain Journey | `FR-01`..`04`, `BR-01`, `AC-04a`, `TEST-04a` | `@Pilaiwan3492` | *(To be recorded in Issue #38)* | `singslot-00004-6mv` (`aa5f109`) | *(Pending Issue #38)* | *(To be completed by `@Pilaiwan3492` under Issue #38)* |
-| **UAT-02** | Business-Rule / Conflict | `FR-03`, `FR-04`, `BR-01`, `BR-02`, `AC-04b`, `TEST-04b` | `@Pilaiwan3492` | *(To be recorded in Issue #38)* | `singslot-00004-6mv` (`aa5f109`) | *(Pending Issue #38)* | *(To be completed by `@Pilaiwan3492` under Issue #38)* |
+| **UAT-01** | Normal Domain Journey | `FR-01`..`04`, `BR-01`..`03`, `BR-05`, `AC-04a`, `TEST-04a` | `@Pilaiwan3492` | `2026-11-20 23:25` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Logged in as Alice, selected Room `M01` on `2026-11-21`, booked Slots #4 & #5 (`14:00–16:00`, 2 hrs, 5 guests). Confirmed booking `BK-20261121-HPSK` (`b717094c-c557-41c8-bb02-850183cbc9ff`). Timeline matrix updated to Occupied (Red). |
+| **UAT-02** | Business-Rule / Conflict | `FR-03`, `FR-04`, `BR-01`, `BR-02`, `AC-04b`, `TEST-04b` | `@Pilaiwan3492` | `2026-11-20 23:25` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Bob attempted 3-hour booking (`13:00–16:00`) on `M01` overlapping Alice's slots. Server rejected with HTTP 409 `SLOT_CONFLICT`. Modal displayed alert banner. Slot #3 remained open, zero double-booking. |
 | **UAT-03** | Boundary Validation | `FR-03`, `FR-04`, `BR-01`, `BR-03`..`05`, `AC-04c/d`, `TEST-04c/d` | `@Apichaya251400` | `2026-11-20 20:51` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | UI calendar popover disabled past dates (`1–19 Nov 2026` prior to `2026-11-20`), disabled `3/4/5 Hours (Exceeds 24:00)` when `Slot #12 (22:00–23:00)` was selected, and disabled `+` at `4 Guests` on Room `S01` (`id: c0a3cee2-57c6-4bbb-bf71-ae17c03061b9`). Direct `POST /api/bookings/online` boundary calls returned `HTTP 400 Bad Request` with exact error codes `CANNOT_BOOK_PAST_SLOT`, `EXCEEDS_CAPACITY`, and `INVALID_DURATION`. |
-| **UAT-04** | Forbidden Role / Ownership | `FR-01`, `FR-05`, `FR-06`, `BR-07`, `BR-08`, `AC-01c`, `AC-05`, `AC-05b`, `TEST-01c`, `TEST-05`, `TEST-05b` | `@Apichaya251400` | `2026-11-20 20:53` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Customer 1 (`customer1@singslot.local`) owned 2 confirmed bookings (`BK-20261115-MQRX`, UUID `718f0d84-2657-4a87-ad6a-487235d6a1f6` and `BK-20261113-IA4Q`, UUID `a27fc388-3d1b-48ac-a272-f4cfcbdd494b`) and opened `Reservation Detail` (`HTTP 200 OK`). Customer 2 (`customer2@singslot.local`) saw `0` bookings (`No Reservations Found`), had no `Master Schedule` button in the navbar, received `HTTP 403 FORBIDDEN` (`"You are not authorized to view this booking."`) on `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6`, and received `HTTP 403 FORBIDDEN` (`"Access denied: insufficient permissions"`) on `GET /api/bookings/master?date=2026-11-21`. |
-| **UAT-05** | State / History / Persistence | `FR-05`, `FR-06`, `BR-07`, `BR-08`, `AC-05`, `AC-06`, `TEST-05`, `TEST-06` | `@Pilaiwan3492` | *(To be recorded in Issue #38)* | `singslot-00004-6mv` (`aa5f109`) | *(Pending Issue #38)* | *(To be completed by `@Pilaiwan3492` under Issue #38)* |
+| **UAT-04** | Forbidden Role / Ownership | `FR-01`, `FR-05`, `FR-06`, `BR-07`, `BR-08`, `AC-01c`, `AC-05`, `AC-05b`, `TEST-01c`, `TEST-05`, `TEST-05b` | `@Apichaya251400` | `2026-11-20 20:53` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Sub-checks UAT-04A (Customer Ownership Isolation) and UAT-04B (Customer vs Staff Authorization) verified. Customer 1 owned 2 bookings (`BK-20261115-MQRX` and `BK-20261113-IA4Q`). Customer 2 had zero bookings (`count: 0`). Calling cross-customer detail API (`GET /api/bookings/718f0d84...`) and staff master schedule API (`GET /api/bookings/master?date=2026-11-21`) both returned HTTP 403 Forbidden (`FORBIDDEN`). Master Schedule navbar link hidden for Customer role. |
+| **UAT-05** | State Persistence & Synchronization | `FR-05`, `FR-06`, `BR-07`, `BR-08`, `AC-05`, `AC-06`, `TEST-05`, `TEST-06` | `@Pilaiwan3492` | `2026-11-20 23:25` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Hard reload (`Ctrl+F5`) retained Alice's booking. Staff logged in, accessed Master Schedule across all 9 rooms. Alice's `14:00–16:00` block displayed. Staff clicked block and viewed full details via role override (`BR-07`). |
+
+> **Scoped Execution Statement:**  
+> All 5 agreed Sprint 1 UAT cases (`UAT-01` to `UAT-05`) passed within their executed live UI/API scope against release revision `singslot-00004-6mv` (commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`). Subsequent code-level concurrency, schema, and security inspection identified 4 additional outgoing findings (`DEF-SS-01`–`DEF-SS-04`), formally reported at [`Phenwatsa/singslot-karaoke#35` (comment `7060029335`)](https://github.com/Phenwatsa/singslot-karaoke/issues/35#issuecomment-7060029335) and tracked in [`defect-triage.md`](defect-triage.md).
 
 ---
 
-## 4. Detailed UAT Case Execution Logs
+## 4. Detailed Case-by-Case Execution & Verification
 
 ### 🧪 Case `UAT-01`: End-to-End Online Booking Flow (Normal Domain Journey)
-* **Assigned Tester:** `@Pilaiwan3492` (Tracked under [Issue #38](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38))
-* **Status:** *(To be populated by `@Pilaiwan3492` in Issue #38 PR)*
+* **Category:** Normal Domain Journey
+* **Requirement Reference:** `FR-01` (Authentication), `FR-02` (Room Catalog), `FR-03` (Availability Query), `FR-04` (Online Booking), `BR-01` (Contiguous Slot Rule: 1–5 consecutive hours), `BR-02` (Exclusive Room Lock), `BR-03` (Operating Hours Boundary: 10:00–24:00, slots 0..13), `BR-05` (Capacity Limit), `AC-01`, `AC-02`, `AC-03`, `AC-04a`, `TEST-01`, `TEST-02`, `TEST-03`, `TEST-04a`
+* **Assigned Tester:** `@Pilaiwan3492` (Pilaiwan Churdchu)
+* **Date & Time Executed:** `2026-11-20 23:25:04 ICT (UTC+7)`
+* **Tested App Version / Commit:** `https://singslot-4o7kwmd5ma-as.a.run.app` | Cloud Run Revision: `singslot-00004-6mv` | Commit SHA: `aa5f109b97c157a143a7a9a94cd58dc02998467e` | Git Tag: `v0.1.0-sprint1` | UI Badge: `v1.0.1 - Cloud Verified`
+* **Role & Account Used:** `customer1@singslot.local` (Alice Customer, Role: `CUSTOMER`)
+
+#### Actual Input Values Used
+- **Account:** `customer1@singslot.local`
+- **Target Date:** `2026-11-21` (Tomorrow)
+- **Room:** `M01` (`MEDIUM`, max capacity 8)
+- **Start Slot:** `Slot #4` (`14:00 – 15:00`)
+- **Duration:** `2 Hours` (`14:00 – 16:00`, spanning Slot #4 & Slot #5)
+- **Party Size:** `5 Guests`
+
+#### Actual Results Observed
+1. **Catalog Rendering & User Session (`FR-01`, `FR-02`, `AC-02` — Evidence `EVD-UAT-01`):** Navigated to live app, clicked "Sign In", authenticated as Alice Customer. Top navbar rendered Alice Customer with role "Customer". Room catalog displayed all 9 rooms across Small (`S01–S03`), Medium (`M01–M03`), and Large (`L01–L03`) tiers.
+2. **Timeline Availability Matrix (`FR-03`, `AC-03` — Evidence `EVD-UAT-02`):** Switched to "Time Slot Matrix", opened date popover, selected `21/11/2026`. Verified Room `M01` showed Slot #4 and Slot #5 marked as green "Open".
+3. **Modal Configuration (`BR-01`, `BR-05` — Evidence `EVD-UAT-03`):** Clicked Slot #4 (14:00–15:00) in Room `M01`. In booking modal, selected `2 Hours` duration. The calculated window showed `14:00 - 16:00 (2 hrs)`. Incremented party size to `5 Guests`.
+4. **Confirmation Receipt (`FR-04`, `AC-04a`, `TEST-04a` — Evidence `EVD-UAT-04`):** Clicked "CONFIRM RESERVATION (14:00 - 16:00)". Received HTTP 201 Created. Modal transitioned to confirmation receipt displaying unique Booking Code **`BK-20261121-HPSK`** (ID: `b717094c-c557-41c8-bb02-850183cbc9ff`), Room `M01`, `21/11/2026`, `14:00 - 16:00`, 5 guests.
+5. **Timeline Refresh (`AC-03` — Evidence `EVD-UAT-05`):** Clicked "Done & Return to Schedule". Time Slot Matrix refreshed, and Room `M01` Slots #4 & #5 now visibly displayed as occupied/red.
+* **Execution Status:** **`PASS`**
 
 ---
 
 ### 🧪 Case `UAT-02`: Slot Overlap Conflict Prevention (Business-Rule / Conflict)
-* **Assigned Tester:** `@Pilaiwan3492` (Tracked under [Issue #38](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38))
-* **Status:** *(To be populated by `@Pilaiwan3492` in Issue #38 PR)*
+* **Category:** Business-Rule or Boundary Case
+* **Requirement Reference:** `FR-03` (Availability Query), `FR-04` (Online Booking), `BR-01` (Contiguous Slot Rule), `BR-02` (Exclusive Room Lock), `AC-03`, `AC-04b`, `TEST-03`, `TEST-04b`
+* **Assigned Tester:** `@Pilaiwan3492` (Pilaiwan Churdchu)
+* **Date & Time Executed:** `2026-11-20 23:25:18 ICT (UTC+7)`
+* **Precondition:** Room `M01` Slots #4 & #5 (`14:00–16:00`) occupied by Alice's booking `BK-20261121-HPSK`.
+* **Role & Account Used:** `customer2@singslot.local` (Bob Customer, Role: `CUSTOMER`)
+
+#### Actual Input Values Used
+- **Account:** `customer2@singslot.local`
+- **Target Date:** `2026-11-21`
+- **Room:** `M01`
+- **Attempted Start Slot:** `Slot #3` (`13:00 – 14:00`, open)
+- **Attempted Duration:** `3 Hours` (`13:00 – 16:00`, overlapping occupied Slots #4 & #5)
+- **Party Size:** `4 Guests`
+
+#### Actual Results Observed
+1. **Conflict Setup in UI (`AC-03` — Evidence `EVD-UAT-06`):** Signed in as Bob (`customer2@singslot.local`). In Time Slot Matrix for `21/11/2026`, confirmed `M01` Slots #4 & #5 were locked/occupied. Clicked open `Slot #3` (13:00–14:00), selected `3 Hours` duration (`13:00 – 16:00`), set party size to 4 guests.
+2. **Conflict Rejection Banner (`BR-01`, `BR-02`, `AC-04b`, `TEST-04b` — Evidence `EVD-UAT-07`):** Clicked "CONFIRM RESERVATION (13:00 - 16:00)". The server rejected the request with **HTTP 409 Conflict** (`SLOT_CONFLICT`). The UI modal displayed an alert banner: *"One or more requested slots are already occupied."*
+3. **Direct API Conflict Check:** Sent identical payload to `POST /api/bookings/online` via fetch:
+   ```json
+   {
+     "success": false,
+     "error": {
+       "code": "SLOT_CONFLICT",
+       "message": "One or more requested slots are already occupied."
+     }
+   }
+   ```
+4. **Integrity Verified:** Zero duplicate bookings created. Slot #3 remained open/green, and Slots #4 & #5 remained strictly committed to Alice.
+* **Execution Status:** **`PASS`**
 
 ---
 
 ### 🧪 Case `UAT-03`: Past Slot, Operating Window & Capacity Boundary Enforcement (Boundary Validation)
-* **Case ID:** `UAT-03`
-* **Category:** Business-Rule / Boundary Validation Case
-* **Requirement & Contract Traceability:** `FR-03` (Availability Query), `FR-04` (Online Booking), `BR-01` (Contiguous Slot Rule: 1–5 hours), `BR-03` (Operating Hours Boundary: 10:00–24:00, slots `0..13`), `BR-04` (Past Slot Rejection in `Asia/Bangkok`), `BR-05` (Capacity Limit), `AC-04c`, `AC-04d`, `TEST-04c`, `TEST-04d`
-* **Tester:** `@Apichaya251400`
-* **Date & Time Executed:** `2026-11-20 20:50–20:54 ICT (UTC+7)`
+* **Category:** Business-Rule or Boundary Case
+* **Requirement Reference:** `FR-03` (Availability Query), `FR-04` (Online Booking), `BR-01` (Contiguous Slot Rule: 1–5 hours), `BR-03` (Operating Hours Boundary: 10:00–24:00, slots `0..13`), `BR-04` (Past Slot Rejection in `Asia/Bangkok`), `BR-05` (Capacity Limit), `AC-04c`, `AC-04d`, `TEST-04c`, `TEST-04d`
+* **Assigned Tester:** `@Apichaya251400` (Aphichaya Klinhual, tracked under [Issue #40](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/40) / [PR #41](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/41))
+* **Partner Issue Cross-Reference:** [`Phenwatsa/singslot-karaoke#35`](https://github.com/Phenwatsa/singslot-karaoke/issues/35)
+* **Date & Time Executed:** `2026-11-20 20:51 ICT (UTC+7)`
 * **Tested App Version / Commit:** `https://singslot-4o7kwmd5ma-as.a.run.app` | Cloud Run Revision: `singslot-00004-6mv` | Commit SHA: `aa5f109b97c157a143a7a9a94cd58dc02998467e` | Git Tag: `v0.1.0-sprint1` | UI Badge: `v1.0.1 - Cloud Verified`
 * **Roles & Accounts Used:**
   - `customer1@singslot.local` (`Alice Customer`, Role: `CUSTOMER`) for interactive UI boundary verification.
@@ -84,219 +141,54 @@ In compliance with course security rules (**R-12**), secret passwords provided p
      - Operating Window Overflow (`startSlot: 12, durationHours: 3` -> end slot `14 > 13`): `{ "roomId": "c0a3cee2-57c6-4bbb-bf71-ae17c03061b9", "bookingDate": "2026-11-21", "startSlot": 12, "durationHours": 3, "partySize": 2 }`
 3. **Boundary Input B (Capacity Limit — `BR-05`, `AC-04d`, `TEST-04d`):**
    - In Room `S01` (`max 4 pax`) booking modal, clicked `+` on `Party Size (Guests)` from `2` -> `3` -> `4`.
-   - Direct API payload sent to `POST /api/bookings/online`:
-     - `{ "roomId": "c0a3cee2-57c6-4bbb-bf71-ae17c03061b9", "bookingDate": "2026-11-21", "startSlot": 0, "durationHours": 1, "partySize": 6 }`
+   - Direct API payload sent to `POST /api/bookings/online`: `{ "roomId": "c0a3cee2-57c6-4bbb-bf71-ae17c03061b9", "bookingDate": "2026-11-21", "startSlot": 0, "durationHours": 1, "partySize": 6 }`
 4. **Boundary Input C (Past Date Rejection — `BR-04`, `AC-04c`, `TEST-04c`):**
    - Opened `Booking Date` calendar popover (`November 2026`) on `2026-11-20` (`Asia/Bangkok`) and inspected dates `1` through `19`.
-   - Direct API payload sent to `POST /api/bookings/online`:
-     - `{ "roomId": "c0a3cee2-57c6-4bbb-bf71-ae17c03061b9", "bookingDate": "2026-11-19", "startSlot": 0, "durationHours": 1, "partySize": 2 }`
+   - Direct API payload sent to `POST /api/bookings/online`: `{ "roomId": "c0a3cee2-57c6-4bbb-bf71-ae17c03061b9", "bookingDate": "2026-11-19", "startSlot": 0, "durationHours": 1, "partySize": 2 }`
 
 #### Actual Results Observed
-1. **UI Past Date Picker Guard (`BR-04` — Evidence `EV-UAT03-01`):**
-   - Clicking the `Booking Date` field inside the `Reserve a Karaoke Room` modal for Room `S01` opened the `November 2026` calendar popover.
-   - All calendar day buttons prior to the current `Asia/Bangkok` date (`1` through `19` November 2026) had `disabled` attributes and muted styling, preventing user selection of past dates. Dates from `20` November 2026 onward were enabled.
-2. **UI Operating Window & Max Duration Boundary (`BR-01`, `BR-03` — Evidence `EV-UAT03-02`):**
-   - At `Start Time Slot = Slot #0 (10:00 - 11:00)`, the `Duration (1–5 Hours)` dropdown offered `1 Hour`, `2 Hours`, `3 Hours`, `4 Hours`, and `5 Hours` (no option `> 5` hours existed in the UI).
-   - After changing `Start Time Slot` to `Slot #12 (22:00 - 23:00)`, the dropdown dynamically updated and disabled options that would extend beyond `24:00` (`Slot #13`):
-     - `1 Hour` (`value="1"`, `disabled=false`)
-     - `2 Hours` (`value="2"`, `disabled=false`) — `Calculated Time Window` displayed `22:00 - 24:00` (`2 hrs`, `2 contiguous hours reserved`)
-     - `3 Hours (Exceeds 24:00)` (`value="3"`, `disabled=true`)
-     - `4 Hours (Exceeds 24:00)` (`value="4"`, `disabled=true`)
-     - `5 Hours (Exceeds 24:00)` (`value="5"`, `disabled=true`)
-3. **UI Capacity Limit Stepper (`BR-05`, `AC-04d` — Evidence `EV-UAT03-03`):**
-   - On Room `S01` (`SMALL • max 4 pax`), clicking the `+` button incremented `Party Size (Guests)` from default `2` up to `4`. At `4`, the `+` button became disabled (`disabled=true`) with helper text `Room capacity: up to 4 guests`.
+1. **UI Past Date Picker Guard (`BR-04` — Evidence `EV-UAT03-01` / `EVD-UAT-10`):**
+   - Calendar popover (`November 2026`) disabled all dates prior to `2026-11-20` (`1` through `19` November 2026 had `disabled` attributes and muted styling). Dates from `20` November onward were selectable.
+2. **UI Operating Window & Max Duration Boundary (`BR-01`, `BR-03` — Evidence `EV-UAT03-02` / `EVD-UAT-09`):**
+   - At `Slot #12 (22:00 - 23:00)`, options `1 Hour` and `2 Hours` were selectable (`22:00 - 24:00`), whereas options `3 Hours (Exceeds 24:00)`, `4 Hours (Exceeds 24:00)`, and `5 Hours (Exceeds 24:00)` were disabled.
+3. **UI Capacity Limit Stepper (`BR-05`, `AC-04d` — Evidence `EV-UAT03-03` / `EVD-UAT-08`):**
+   - On Room `S01` (`SMALL • max 4 pax`), clicking `+` incremented party size up to `4`. At `4`, the `+` button disabled with helper text `Room capacity: up to 4 guests`.
 4. **Direct Backend API Boundary Enforcement (`POST /api/bookings/online`):**
-   - **API Check 1 — Past Date (`bookingDate: "2026-11-19"`, `BR-04` / `AC-04c` / `TEST-04c`):** Returned **`HTTP 400 Bad Request`**:
-     ```json
-     {
-       "success": false,
-       "error": {
-         "code": "CANNOT_BOOK_PAST_SLOT",
-         "message": "Cannot book slots in the past or currently in progress."
-       }
-     }
-     ```
-   - **API Check 2 — Over-Capacity (`partySize: 6` on Room `S01` with `capacity: 4`, `BR-05` / `AC-04d` / `TEST-04d`):** Returned **`HTTP 400 Bad Request`**:
-     ```json
-     {
-       "success": false,
-       "error": {
-         "code": "EXCEEDS_CAPACITY",
-         "message": "Party size (6) exceeds room capacity (4)."
-       }
-     }
-     ```
-   - **API Check 3 — Exceed Max Duration (`durationHours: 6`, `BR-01`):** Returned **`HTTP 400 Bad Request`**:
-     ```json
-     {
-       "success": false,
-       "error": {
-         "code": "INVALID_DURATION",
-         "message": "Duration must be between 1 and 5 contiguous hours and end within operating hours (10:00 - 24:00, slots 0..13)."
-       }
-     }
-     ```
-   - **API Check 4 — Operating Window Overflow (`startSlot: 12, durationHours: 3` -> end slot `14 > 13`, `BR-03`):** Returned **`HTTP 400 Bad Request`** with full JSON response:
-     ```json
-     {
-       "success": false,
-       "error": {
-         "code": "INVALID_DURATION",
-         "message": "Duration must be between 1 and 5 contiguous hours and end within operating hours (10:00 - 24:00, slots 0..13)."
-       }
-     }
-     ```
-     Zero bookings or slot records were created on `2026-11-21`.
-5. **Non-Blocking UI Wording Observation:**
-   - `uat-cases.md` Step 1 refers to the room card button as `"Book This Suite"`, whereas the live UI renders the button label as **`"Book Room"`**. This is a minor documentation wording difference and not a functional defect.
-
+   - Past Date (`bookingDate: "2026-11-19"`): Returned **`HTTP 400 Bad Request`** (`CANNOT_BOOK_PAST_SLOT` — *"Cannot book slots in the past or currently in progress."*).
+   - Over-Capacity (`partySize: 6` on `S01`): Returned **`HTTP 400 Bad Request`** (`EXCEEDS_CAPACITY` — *"Party size (6) exceeds room capacity (4)."*).
+   - Exceed Max Duration (`durationHours: 6`): Returned **`HTTP 400 Bad Request`** (`INVALID_DURATION` — *"Duration must be between 1 and 5 contiguous hours and end within operating hours (10:00 - 24:00, slots 0..13)."*).
+   - Operating Window Overflow (`startSlot: 12, durationHours: 3`): Returned **`HTTP 400 Bad Request`** (`INVALID_DURATION`).
 * **Execution Status:** **`PASS`**
-
-#### Screenshot Evidence for `UAT-03`
-- **`EV-UAT03-01` — Past Date Picker Guard (`BR-04`):**  
-  ![EV-UAT03-01: Past Date Picker Guard on Room S01 (Nov 1–19 disabled prior to 2026-11-20)](./screenshots/uat03-01-past-date-picker-disabled.png)
-- **`EV-UAT03-02` — Operating Window Boundary at `Slot #12 (22:00 – 23:00)` (`BR-01`, `BR-03`):**  
-  ![EV-UAT03-02: Operating Window Boundary at Slot #12 (22:00–24:00 max 2 hrs)](./screenshots/uat03-02-operating-window-slot12-duration.png)
-- **`EV-UAT03-03` — Capacity Limit Stepper on Room `S01` (`max 4 pax`) (`BR-05`, `AC-04d`):**  
-  ![EV-UAT03-03: Capacity Limit Stepper on Room S01 (+ disabled at 4 guests)](./screenshots/uat03-03-capacity-limit-s01-max4.png)
 
 ---
 
 ### 🧪 Case `UAT-04`: Customer Data Isolation & Staff Authorization Boundary (Forbidden Role / Ownership)
-* **Case ID:** `UAT-04`
-* **Category:** Forbidden Role / Cross-Customer Ownership Case
-* **Requirement & Contract Traceability:** `FR-01` (Authentication & RBAC), `FR-05` (My Bookings & Booking Detail Ownership), `FR-06` (Staff Master Schedule Restriction), `BR-07` (Data Isolation & Ownership), `BR-08` (Staff Operational Boundary), `AC-01c`, `AC-05`, `AC-05b`, `TEST-01c`, `TEST-05`, `TEST-05b`
-* **Tester:** `@Apichaya251400`
-* **Date & Time Executed:** `2026-11-20 20:51–20:55 ICT (UTC+7)`
+* **Category:** Forbidden Role / Ownership Case
+* **Requirement Reference:** `FR-01` (Authentication), `FR-05` (Customer My Bookings & Booking Detail), `FR-06` (Staff Master Schedule Access Restriction), `BR-07` (Data Isolation & Ownership Boundary), `BR-08` (Staff Operational Boundary), `AC-01c`, `AC-05`, `AC-05b`, `TEST-01c`, `TEST-05`, `TEST-05b`
+* **Assigned Tester:** `@Apichaya251400` (Aphichaya Klinhual, tracked under [Issue #40](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/40) / [PR #41](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/41))
+* **Partner Issue Cross-Reference:** [`Phenwatsa/singslot-karaoke#35`](https://github.com/Phenwatsa/singslot-karaoke/issues/35)
+* **Date & Time Executed:** `2026-11-20 20:53 ICT (UTC+7)`
 * **Tested App Version / Commit:** `https://singslot-4o7kwmd5ma-as.a.run.app` | Cloud Run Revision: `singslot-00004-6mv` | Commit SHA: `aa5f109b97c157a143a7a9a94cd58dc02998467e` | Git Tag: `v0.1.0-sprint1` | UI Badge: `v1.0.1 - Cloud Verified`
 * **Roles & Accounts Used:**
-  - **Customer 1 (Owner):** `customer1@singslot.local` (`Alice Customer`, Role: `CUSTOMER`)
-  - **Customer 2 (Unauthorized Customer):** `customer2@singslot.local` (`Bob Customer`, Role: `CUSTOMER`)
+  - `customer1@singslot.local` (`Alice Customer`, Role: `CUSTOMER`) — Booking Owner
+  - `customer2@singslot.local` (`Bob Customer`, Role: `CUSTOMER`) — Unauthorized Third-Party Customer
 
-#### Actual Input Values Used
-1. **Customer 1 Confirmed Reservation Records (from `GET /api/bookings/my` as `customer1@singslot.local`):**
-   - Primary target booking ID tested: **`718f0d84-2657-4a87-ad6a-487235d6a1f6`** (`bookingCode: "BK-20261115-MQRX"`, Room `L01`, `bookingDate: "2026-11-15"`, `13:00 - 17:00`, `4h`, `partySize: 5`, `status: "CONFIRMED"`)
-   - Second existing booking owned by Customer 1: **`a27fc388-3d1b-48ac-a272-f4cfcbdd494b`** (`bookingCode: "BK-20261113-IA4Q"`, Room `L01`, `bookingDate: "2026-11-13"`, `21:00 - 24:00`, `3h`, `partySize: 4`, `status: "CONFIRMED"`)
-2. **Unauthorized Requests Executed as Customer 2 (`customer2@singslot.local`):**
-   - UI Navigation to `My Bookings` (`GET /api/bookings/my`) and inspection of top navigation bar items.
-   - Direct Cross-Customer Ownership API Request: `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` with Customer 2's JWT Bearer token.
-   - Direct Staff Master Schedule API Request: `GET /api/bookings/master?date=2026-11-21` with Customer 2's JWT Bearer token.
+#### Sub-Checks and Target Endpoints
+- **Target Booking (Customer 1):** Code `BK-20261115-MQRX`, ID `718f0d84-2657-4a87-ad6a-487235d6a1f6`, Room `L01`, `2026-11-15`, Slots #3–#6 (`13:00 - 17:00`, 4 hrs).
+- **Target Endpoints:**
+  - `GET /api/bookings/my` (Authenticated user's booking list)
+  - `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` (Cross-customer detail endpoint)
+  - `GET /api/bookings/master?date=2026-11-21` (Staff-only master schedule endpoint)
 
-#### Actual Results Observed
-1. **Customer 1 (`Alice Customer`) Owner Verification (`FR-05` — Evidence `EV-UAT04-01` & `EV-UAT04-02`):**
-   - Logged in as `customer1@singslot.local` and opened `My Bookings`. `GET /api/bookings/my` returned **`HTTP 200 OK`** with `count: 2` (`BK-20261115-MQRX` and `BK-20261113-IA4Q`):
-     ```json
-     {
-       "success": true,
-       "count": 2,
-       "bookings": [
-         {
-           "id": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
-           "bookingCode": "BK-20261115-MQRX",
-           "userId": "6fe8f594-deac-4426-8c4f-7f03a17d8a6e",
-           "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
-           "bookingDate": "2026-11-15",
-           "startSlot": 3,
-           "durationHours": 4,
-           "partySize": 5,
-           "channel": "ONLINE",
-           "customerName": "Alice Customer",
-           "customerPhone": "0898765432",
-           "status": "CONFIRMED",
-           "timeRange": "13:00 - 17:00"
-         },
-         {
-           "id": "a27fc388-3d1b-48ac-a272-f4cfcbdd494b",
-           "bookingCode": "BK-20261113-IA4Q",
-           "userId": "6fe8f594-deac-4426-8c4f-7f03a17d8a6e",
-           "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
-           "bookingDate": "2026-11-13",
-           "startSlot": 11,
-           "durationHours": 3,
-           "partySize": 4,
-           "channel": "ONLINE",
-           "customerName": "Alice Customer",
-           "customerPhone": "0898765432",
-           "status": "CONFIRMED",
-           "timeRange": "21:00 - 24:00"
-         }
-       ]
-     }
-     ```
-   - Clicking `View Details` on `BK-20261115-MQRX` sent `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` with Customer 1's Bearer token, which returned **`HTTP 200 OK`** with the full owner JSON payload below and opened the `Reservation Detail` modal displaying `BK-20261115-MQRX`, `CONFIRMED`, `L01 VIP Luxury`, `2026-11-15`, `13:00 - 17:00 (4 Hours Total)`, `Alice Customer`, `5 Guests`, `0898765432`, and `Reserved Hourly Slots` (`Slot #3`, `Slot #4`, `Slot #5`, `Slot #6`):
-     ```json
-     {
-       "success": true,
-       "booking": {
-         "id": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
-         "bookingCode": "BK-20261115-MQRX",
-         "userId": "6fe8f594-deac-4426-8c4f-7f03a17d8a6e",
-         "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
-         "bookingDate": "2026-11-15",
-         "startSlot": 3,
-         "durationHours": 4,
-         "partySize": 5,
-         "channel": "ONLINE",
-         "customerName": "Alice Customer",
-         "customerPhone": "0898765432",
-         "status": "CONFIRMED",
-         "createdAt": "2026-11-14T15:02:37.291Z",
-         "updatedAt": "2026-11-14T15:02:37.291Z",
-         "room": {
-           "id": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
-           "roomNumber": "L01",
-           "type": "LARGE",
-           "capacity": 12,
-           "description": "VIP Luxury suite for up to 12 guests"
-         },
-         "slots": [
-           {
-             "id": "e70116f6-2ba9-4064-b2c9-e515ca2cc80d",
-             "bookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
-             "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
-             "bookingDate": "2026-11-15",
-             "slotIndex": 3
-           },
-           {
-             "id": "507a6f44-1e44-44f3-aeff-c33edb9d55eb",
-             "bookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
-             "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
-             "bookingDate": "2026-11-15",
-             "slotIndex": 4
-           },
-           {
-             "id": "aa987a99-95c9-4f7d-92a4-61e4b2b3fde0",
-             "bookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
-             "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
-             "bookingDate": "2026-11-15",
-             "slotIndex": 5
-           },
-           {
-             "id": "88286464-c276-4571-b9f8-04f439be0402",
-             "bookingId": "718f0d84-2657-4a87-ad6a-487235d6a1f6",
-             "roomId": "c45b4260-4c28-4dbd-b719-c8c5079756cf",
-             "bookingDate": "2026-11-15",
-             "slotIndex": 6
-           }
-         ],
-         "timeRange": "13:00 - 17:00"
-       }
-     }
-     ```
-2. **Customer 2 (`Bob Customer`) UI List Isolation & Navbar Role Guard (`FR-05`, `AC-05`, `TEST-05` — Evidence `EV-UAT04-03`):**
-   - Logged out of `Alice Customer` and signed in as `customer2@singslot.local` (`BC Bob Customer • Customer`).
-   - Inspected the top navigation bar: only **`Rooms & Slots`** and **`My Bookings`** were rendered; the Staff-only **`Master Schedule`** button was not rendered for `CUSTOMER`.
-   - Clicked **`My Bookings`**: `GET /api/bookings/my` returned **`HTTP 200 OK`** with full JSON response:
-     ```json
-     {
-       "success": true,
-       "count": 0,
-       "bookings": []
-     }
-     ```
-   - The UI rendered **`No Reservations Found`** (`"You haven't reserved any karaoke suites yet. Browse our rooms and real-time availability matrix to book your session!"`). None of Customer 1's reservations (`BK-20261115-MQRX` or `BK-20261113-IA4Q`) appeared in Customer 2's list.
-3. **Direct Cross-Customer Ownership API Guard (`GET /api/bookings/:id` — `BR-07`, `AC-05b`, `TEST-05b`):**
-   - Executing `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` with Customer 2's Bearer token returned **`HTTP 403 Forbidden`** with exact JSON body:
+#### Detailed Verification by Sub-Check
+
+##### Sub-Check UAT-04A: Customer Ownership Isolation (`BR-07`, `AC-05b`, `TEST-05b`)
+- **Actor:** Customer 2 (`customer2@singslot.local`, Bob Customer)
+- **Target Resource:** Customer 1's booking (`BK-20261115-MQRX`, ID `718f0d84-2657-4a87-ad6a-487235d6a1f6`)
+- **Expected Result:** Customer 2 cannot access Customer 1's booking. `GET /api/bookings/my` returns only Customer 2's bookings (`count: 0`). Calling the direct detail endpoint returns HTTP 403 Forbidden (`FORBIDDEN`). Zero customer PII leaked.
+- **Actual Result Observed:**
+  1. Signed in as Customer 2 (Bob). Navigated to "My Bookings": `GET /api/bookings/my` returned **`HTTP 200 OK`** with `count: 0, bookings: []` (`No Reservations Found`). Zero records from Customer 1 appeared. (Evidence `EV-UAT04-03` / `EVD-UAT-11`).
+  2. Directly called `GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` with Customer 2's Bearer token. Server returned **`HTTP 403 Forbidden`** with body:
      ```json
      {
        "success": false,
@@ -306,9 +198,16 @@ In compliance with course security rules (**R-12**), secret passwords provided p
        }
      }
      ```
-   - Zero customer PII, phone numbers, booking codes, or slot allocations from Customer 1 were leaked.
-4. **Direct Staff Master Schedule API Guard (`GET /api/bookings/master` — `BR-08`, `AC-01c`, `TEST-01c`):**
-   - Executing `GET /api/bookings/master?date=2026-11-21` with Customer 2's Bearer token returned **`HTTP 403 Forbidden`** with exact JSON body:
+     (Evidence `EVD-UAT-12`).
+- **Disposition:** **`PASS`** — Ownership boundary strictly enforced.
+
+##### Sub-Check UAT-04B: Customer vs Staff Authorization Boundary (`BR-08`, `AC-01c`, `TEST-01c`)
+- **Actor:** Customer 2 (`customer2@singslot.local`, Role: `CUSTOMER`)
+- **Target Resource:** Staff Master Schedule (`GET /api/bookings/master?date=2026-11-21`)
+- **Expected Result:** A Customer role is denied operational staff privileges. The UI navigation bar must not render the `Master Schedule` button. Calling the endpoint directly returns HTTP 403 Forbidden (`FORBIDDEN`).
+- **Actual Result Observed:**
+  1. In the UI navbar for Customer 2, only `Rooms & Slots` and `My Bookings` were visible; `Master Schedule` was completely omitted. (Evidence `EV-UAT04-03` / `EVD-UAT-11`).
+  2. Directly called `GET /api/bookings/master?date=2026-11-21` with Customer 2's Bearer token. Server returned **`HTTP 403 Forbidden`** with body:
      ```json
      {
        "success": false,
@@ -318,20 +217,93 @@ In compliance with course security rules (**R-12**), secret passwords provided p
        }
      }
      ```
-   - *(Observation: HTTP status `403` and `error.code: "FORBIDDEN"` match `BR-08`, `AC-01c`, and `contracts.md`. The middleware returns `error.message: "Access denied: insufficient permissions"` rather than the illustrative string `"Staff privileges required."` shown in `uat-cases.md`.)*
+     (Evidence `EVD-UAT-12`).
+- **Disposition:** **`PASS`** — Role-based staff operational boundary strictly enforced.
 
-* **Execution Status:** **`PASS`**
-
-#### Screenshot Evidence for `UAT-04`
-- **`EV-UAT04-01` — Customer 1 (`Alice Customer`) "My Bookings" View (`GET /api/bookings/my` -> `count: 2`):**  
-  ![EV-UAT04-01: Customer 1 My Bookings view](./screenshots/uat04-01-customer1-my-bookings.png)
-- **`EV-UAT04-02` — Customer 1 Owner Access to `Reservation Detail` (`GET /api/bookings/718f0d84-2657-4a87-ad6a-487235d6a1f6` -> `200 OK`):**  
-  ![EV-UAT04-02: Customer 1 Reservation Detail modal](./screenshots/uat04-02-customer1-reservation-detail-200.png)
-- **`EV-UAT04-03` — Customer 2 (`Bob Customer`) Isolated "My Bookings" View (`count: 0`, No `Master Schedule` button in navbar):**  
-  ![EV-UAT04-03: Customer 2 isolated My Bookings view](./screenshots/uat04-03-customer2-isolated-my-bookings.png)
+* **Overall Case Status:** **`PASS`**
 
 ---
 
 ### 🧪 Case `UAT-05`: State Synchronization & History Persistence (State / History / Persistence)
-* **Assigned Tester:** `@Pilaiwan3492` (Tracked under [Issue #38](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38))
-* **Status:** *(To be populated by `@Pilaiwan3492` in Issue #38 PR)*
+* **Category:** State / History / Persistence Case
+* **Requirement Reference:** `FR-05` (Customer My Bookings & Booking Detail), `FR-06` (Staff Master Schedule), `BR-07` (Staff Override to Inspect Any Booking), `BR-08` (Staff Operational Boundary), `AC-05`, `AC-06`, `TEST-05`, `TEST-06`
+* **Assigned Tester:** `@Pilaiwan3492` (Pilaiwan Churdchu)
+* **Date & Time Executed:** `2026-11-20 23:25:50 ICT (UTC+7)`
+* **Synthetic Inputs:**
+  - Booking ID: `b717094c-c557-41c8-bb02-850183cbc9ff` (`BK-20261121-HPSK`)
+  - Target Date: `2026-11-21`
+  - Staff Account: `staff@singslot.local` (Cashier Staff)
+
+#### Actual Results Observed
+1. **Persistence Across Reloads (`FR-05`, `AC-05` — Evidence `EVD-UAT-13`):** Re-authenticated as Alice (`customer1@singslot.local`) and opened "My Bookings". Performed hard browser reload (`Ctrl + F5`). Session and reservation persisted intact. Clicked Alice's booking card: modal opened showing `CONFIRMED` status, booking code `BK-20261121-HPSK`, Room `M01`, `14:00 - 16:00 (2 hrs)`, 5 guests, and discrete slot badges (`Slot #4`, `Slot #5`).
+2. **Staff Role & Navigation Access (`FR-06`, `BR-08`):** Signed out Alice and signed in as Staff (`staff@singslot.local`). Top navbar rendered "Cashier Staff", role label "Staff Manager", and exposed the "Master Schedule" button.
+3. **Staff Master Schedule Synchronization (`AC-06`, `TEST-06` — Evidence `EVD-UAT-14`):** Clicked "Master Schedule", selected `21/11/2026`. Global schedule loaded all 9 rooms (`S01–S03`, `M01–M03`, `L01–L03`). Room `M01` showed the continuous reserved block `14:00–16:00` attributed to Alice Customer.
+4. **Staff Override Detail Access (`BR-07` — Evidence `EVD-UAT-15`):** Clicked the occupied block. Staff Booking Detail modal opened via authorized staff override (`GET /api/bookings/:id`), displaying customer contact details (`Alice Customer`, phone `0898765432`, `5 Guests`, `Slots #4 & #5`).
+* **Execution Status:** **`PASS`**
+
+> **Synthetic Test Data & Privacy Notice:**  
+> All customer names (`Alice Customer`), email addresses (`customer1@singslot.local`), and contact numbers (`0898765432`) displayed in the reservation details modal and master schedule are synthetic test fixtures provisioned for the UAT exercise. No real personal identifiable information (PII) is involved or exposed.
+
+---
+
+## 5. Evidence Catalog & Screen Captures
+
+The current evidence set in `docs/labs/lab-06/evidence/` contains exactly 15 PNG screenshot files (`EVD-UAT-01` through `EVD-UAT-15`). These are the consolidated evidence files used by this report.
+
+For traceability, the original six screenshots from PR #41 are preserved separately in `docs/labs/lab-06/screenshots/` under their original evidence IDs (`EV-UAT03-01` through `EV-UAT04-03`). The original files are source evidence and are not counted as additional files in the 15-file consolidated evidence set.
+
+The mapping between the original source evidence and the consolidated evidence is documented below. Original evidence IDs and consolidated evidence IDs must remain distinct.
+
+| Evidence ID | Linked Case | Description | Source File Reference |
+|---|---|---|---|
+| **EVD-UAT-01** | UAT-01 | Browse Rooms catalog with 9 suites and logged-in user Alice | `evidence/uat01-01-browse-rooms-catalog.png` |
+| **EVD-UAT-02** | UAT-01 | Time Slot Matrix for `21/11/2026` showing M01 Slots #4 & #5 open | `evidence/uat01-02-matrix-before-booking.png` |
+| **EVD-UAT-03** | UAT-01 | Booking modal configured: M01, 2 hrs (14:00–16:00), 5 guests | `evidence/uat01-03-booking-modal-filled.png` |
+| **EVD-UAT-04** | UAT-01 | Booking confirmation receipt showing code `BK-20261121-HPSK` | `evidence/uat01-04-booking-confirmation-receipt.png` |
+| **EVD-UAT-05** | UAT-01 | Time Slot Matrix refreshed with M01 Slots #4 & #5 locked (Red) | `evidence/uat01-05-matrix-after-booking-occupied.png` |
+| **EVD-UAT-06** | UAT-02 | Bob's attempt to book 3-hour overlapping slot (13:00–16:00) | `evidence/uat02-01-conflict-attempt-filled.png` |
+| **EVD-UAT-07** | UAT-02 | Overlap conflict rejection banner (HTTP 409 `SLOT_CONFLICT`) | `evidence/uat02-02-conflict-rejection-banner.png` |
+| **EVD-UAT-08** | UAT-03 | Capacity stepper disabled at 4 guests on Small Suite S01 | `evidence/uat03-01-capacity-boundary.png` *(cf. `screenshots/uat03-03-capacity-limit-s01-max4.png`)* |
+| **EVD-UAT-09** | UAT-03 | Operating window boundary guard past midnight (Slot 12) | `evidence/uat03-02-operating-window-boundary.png` *(cf. `screenshots/uat03-02-operating-window-slot12-duration.png`)* |
+| **EVD-UAT-10** | UAT-03 | Date picker popup with past calendar days disabled | `evidence/uat03-03-past-date-picker-boundary.png` *(cf. `screenshots/uat03-01-past-date-picker-disabled.png`)* |
+| **EVD-UAT-11** | UAT-04 | Bob's My Bookings screen excluding Alice's reservation | `evidence/uat04-01-my-bookings-isolated.png` *(cf. `screenshots/uat04-03-customer2-isolated-my-bookings.png`)* |
+| **EVD-UAT-12** | UAT-04 | Terminal / API verification of 403 Forbidden on cross-data & staff | `evidence/uat04-02-cross-customer-and-staff-403-rejection.png` |
+| **EVD-UAT-13** | UAT-05 | Customer booking details persisted across browser hard reload | `evidence/uat05-01-customer-details-persisted.png` |
+| **EVD-UAT-14** | UAT-05 | Staff Master Schedule across all 9 rooms showing M01 booked | `evidence/uat05-02-staff-master-schedule.png` |
+| **EVD-UAT-15** | UAT-05 | Staff reservation details modal with authorized PII override | `evidence/uat05-03-staff-booking-detail-modal.png` |
+
+### 5.1 Original Evidence Traceability (PR #41)
+
+The following table identifies the six original screenshots preserved from PR #41. These files retain their original evidence IDs and are separate from the 15 consolidated evidence files listed above.
+
+| Original Evidence ID | UAT Case | Original Screenshot File | Related Consolidated Evidence |
+|---|---|---|---|
+| `EV-UAT03-01` | UAT-03 | [`uat03-01-past-date-picker-disabled.png`](screenshots/uat03-01-past-date-picker-disabled.png) | `EVD-UAT-10` |
+| `EV-UAT03-02` | UAT-03 | [`uat03-02-operating-window-slot12-duration.png`](screenshots/uat03-02-operating-window-slot12-duration.png) | `EVD-UAT-09` |
+| `EV-UAT03-03` | UAT-03 | [`uat03-03-capacity-limit-s01-max4.png`](screenshots/uat03-03-capacity-limit-s01-max4.png) | `EVD-UAT-08` |
+| `EV-UAT04-01` | UAT-04 | [`uat04-01-customer1-my-bookings.png`](screenshots/uat04-01-customer1-my-bookings.png) | Original source evidence |
+| `EV-UAT04-02` | UAT-04 | [`uat04-02-customer1-reservation-detail-200.png`](screenshots/uat04-02-customer1-reservation-detail-200.png) | Original source evidence |
+| `EV-UAT04-03` | UAT-04 | [`uat04-03-customer2-isolated-my-bookings.png`](screenshots/uat04-03-customer2-isolated-my-bookings.png) | `EVD-UAT-11` |
+
+**Evidence ID Convention:**
+- `EV-UATxx-yy` identifies original source screenshots preserved from PR #41.
+- `EVD-UAT-xx` identifies consolidated screenshot evidence files stored in the current PR #42 evidence directory.
+- The two ID formats must not be treated as interchangeable. Where no consolidated copy exists, the original source screenshot remains the direct evidence reference.
+
+---
+
+## 6. Outgoing Findings & Scope Summary (To SingSlot)
+
+Based on the independent execution of all 5 agreed UAT test cases (`UAT-01` through `UAT-05`) and subsequent source-level concurrency, schema, and security inspection of release `singslot-00004-6mv` (commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`):
+- **Total UAT Cases Executed:** 5
+- **Passing UAT Cases:** 5 (`100%` within executed live UI/API scope)
+- **Failing UAT Cases:** 0
+- **Blocked UAT Cases:** 0
+- **Outgoing Code/Audit Defect Reports Filed:** **4** (`DEF-SS-01` to `DEF-SS-04`) — posted at [`Phenwatsa/singslot-karaoke#35#issuecomment-7060029335`](https://github.com/Phenwatsa/singslot-karaoke/issues/35#issuecomment-7060029335) and detailed in [`docs/labs/lab-06/defect-triage.md`](defect-triage.md#2-outgoing-findings-register-partner-application-singslot):
+  - `DEF-SS-01` (**Critical**): TOCTOU race condition between `BookingSlot` and `RoomBlock` outside `prisma.$transaction`.
+  - `DEF-SS-02` (**High / Latent**): `CANCELLED` booking status would permanently lock `booking_slots` due to unconditional `@@unique([roomId, bookingDate, slotIndex])`.
+  - `DEF-SS-03` (**High**): Unhandled `P2002` `HTTP 500` crash on 4-char `bookingCode` collision.
+  - `DEF-SS-04` (**Medium**): Permissive wildcard `cors()` and JWT stored in `localStorage`.
+
+**Formal Scope Statement:**  
+All five executed Sprint 1 UAT cases (`UAT-01` to `UAT-05`) passed during live functional testing. The four outgoing findings (`DEF-SS-01`–`DEF-SS-04`) were identified via independent source-level inspection of the exact deployed commit (`aa5f109b97c157a143a7a9a94cd58dc02998467e`) and submitted to the SingSlot team for triage and retest verification.
