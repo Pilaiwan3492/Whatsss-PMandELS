@@ -371,8 +371,8 @@ To ensure robust security, avoid token leakage, and eliminate token storage inco
    * Browser requests include the cookie automatically when the client configures `axios` or `fetch` with `credentials: 'include'`.
    * `GET /api/auth/me` validates the cookie JWT and returns the user's public profile and verified role (`FR-02`).
 
-6. **Session Termination with Matching Attributes:**
-   * `POST /api/auth/logout` clears the authentication cookie by returning an expired cookie (`Max-Age=0`) with exact matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production). Subsequent requests to protected endpoints return `401 Unauthorized` (`FR-01`).
+6. **Session Termination with Matching Attributes (Idempotent Logout):**
+   * `POST /api/auth/logout` clears the authentication cookie by returning an expired cookie (`Max-Age=0`) with exact matching attributes (`HttpOnly`, `SameSite=Lax`, `Path=/`, and conditional `Secure` in production). Logout is idempotent and returns `200 OK` even when no active session cookie is present, without creating a new session or exposing private user information. Subsequent requests to protected endpoints return `401 Unauthorized` (`AC-01-5`, `FR-01`).
 
 7. **Sequential Middleware Pipeline Order:**
    Every HTTP request flows through a deterministic, ordered sequence of middleware layers:
@@ -410,7 +410,7 @@ To ensure robust security, avoid token leakage, and eliminate token storage inco
 | Resource Domain / Operation | `USER` | `ADMIN` | Unauthenticated Request |
 |---|:---:|:---:|:---:|
 | Authenticate (`/api/auth/login`) | Allowed | Allowed | Allowed |
-| Terminate Session (`/api/auth/logout`) | Allowed | Allowed | `401 Unauthorized` |
+| Terminate Session (`/api/auth/logout`) | Allowed | Allowed | Allowed (Idempotent `200 OK` Cookie Clear) |
 | Get Current User (`/api/auth/me`) | Allowed (Own Profile) | Allowed (Own Profile) | `401 Unauthorized` |
 | View Platform User Directory (`/api/admin/users`) | `403 Forbidden` | Planned (Sprint 2) | `401 Unauthorized` |
 | Financial Accounts (`/api/accounts/*`) | Allowed (Own Accounts Only) | **`403 Forbidden`** | `401 Unauthorized` |

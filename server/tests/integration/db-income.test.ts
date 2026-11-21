@@ -149,7 +149,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
   // -------------------------------------------------------------------------
   // 1. Live TEST-INC-01: Full Round-Trip Income Processing
   // -------------------------------------------------------------------------
-  it('records salary of 20000.00 THB in live PostgreSQL, creates 1 allocation line, and atomically locks opening balance (TEST-INC-01, AC-04-1, BR-03)', async (ctx) => {
+  it('records salary of 20000.00 THB in live PostgreSQL, creates 1 allocation line, and atomically locks opening balance on both primary Checking Bank and target Salary accounts (TEST-INC-01, AC-04-1, AC-03-3, BR-03)', async (ctx) => {
     if (!isDbConnected) {
       ctx.skip();
       return;
@@ -161,8 +161,9 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
       expect.fail('Failed to locate demoCheckingAccount or demoSalaryAccount in live PostgreSQL');
     }
 
-    // Snapshot checking account state before mutation
+    // Snapshot checking and salary account states before mutation
     const checkingSnap = await snapshotAccount(demoCheckingAccount.id);
+    const salarySnap = await snapshotAccount(demoSalaryAccount.id);
     const createdTxnIds: string[] = [];
 
     // Register cleanup before mutation so cleanup runs even if request or assertion fails
@@ -172,6 +173,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
         await prisma.transaction.deleteMany({ where: { id: { in: createdTxnIds } } });
       }
       await restoreAccount(checkingSnap);
+      await restoreAccount(salarySnap);
     });
 
     // Submit live income transaction
@@ -214,11 +216,15 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     expect(persistedTxn!.allocation_lines[0].target_account_id).toBe(demoSalaryAccount.id);
     expect(persistedTxn!.allocation_lines[0].amount.equals(new Prisma.Decimal('20000.00'))).toBe(true);
 
-    // Direct database assertion on opening balance lock
+    // Direct database assertion on opening balance lock for BOTH Checking Bank and Salary (AUDIT-01 / AC-03-3)
     const updatedChecking = await prisma.account.findUnique({
       where: { id: demoCheckingAccount.id }
     });
+    const updatedSalary = await prisma.account.findUnique({
+      where: { id: demoSalaryAccount.id }
+    });
     expect(updatedChecking!.is_opening_locked).toBe(true);
+    expect(updatedSalary!.is_opening_locked).toBe(true);
 
     // Live Summary Assertion (BR-02, BR-03)
     const summaryRes = await request(app)
@@ -228,7 +234,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     expect(summaryRes.status).toBe(200);
     expect(summaryRes.body.data.total_income).toBe(20000.00);
 
-    // Opening balance modification is blocked (AC-03-3)
+    // Opening balance modification is blocked on primary Checking Bank (AC-03-3)
     const patchRes = await request(app)
       .patch(`/api/accounts/${demoCheckingAccount.id}/opening-balance`)
       .set('Cookie', demoUserSessionCookie)
@@ -237,12 +243,22 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
 
     expect(patchRes.status).toBe(422);
     expect(patchRes.body.error.code).toBe('OPENING_BALANCE_LOCKED');
+
+    // Opening balance modification is also blocked on target Salary account (AUDIT-01, AC-03-3)
+    const patchSalaryRes = await request(app)
+      .patch(`/api/accounts/${demoSalaryAccount.id}/opening-balance`)
+      .set('Cookie', demoUserSessionCookie)
+      .set('Origin', TRUSTED_ORIGIN)
+      .send({ opening_balance: 5000.00 });
+
+    expect(patchSalaryRes.status).toBe(422);
+    expect(patchSalaryRes.body.error.code).toBe('OPENING_BALANCE_LOCKED');
   });
 
   // -------------------------------------------------------------------------
-  // 2. AllocationLine failure in recordIncome rolls back Transaction in live PostgreSQL
+  // 2. AllocationLine failure in recordIncome rolls back Transaction and both Account locks in live PostgreSQL (AUDIT-01, TEST-INC-ATOM)
   // -------------------------------------------------------------------------
-  it('rolls back the Transaction in live PostgreSQL when AllocationLine creation fails in recordIncome (TEST-INC-ATOM)', async (ctx) => {
+  it('rolls back the Transaction and both Checking Bank and Salary opening balance locks in live PostgreSQL when AllocationLine creation fails in recordIncome (TEST-INC-ATOM, AUDIT-01)', async (ctx) => {
     if (!isDbConnected) {
       ctx.skip();
       return;
@@ -252,9 +268,22 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     }
 
     const checkingSnap = await snapshotAccount(demoCheckingAccount.id);
+    const salarySnap = await snapshotAccount(demoSalaryAccount.id);
     pendingCleanups.push(async () => {
       await restoreAccount(checkingSnap);
+      await restoreAccount(salarySnap);
     });
+
+    // Explicitly ensure both Checking Bank and Salary are unlocked (is_opening_locked = false) in live PostgreSQL before the test
+    await prisma.account.updateMany({
+      where: { id: { in: [demoCheckingAccount.id, demoSalaryAccount.id] } },
+      data: { is_opening_locked: false }
+    });
+
+    const beforeChecking = await prisma.account.findUnique({ where: { id: demoCheckingAccount.id } });
+    const beforeSalary = await prisma.account.findUnique({ where: { id: demoSalaryAccount.id } });
+    expect(beforeChecking!.is_opening_locked).toBe(false);
+    expect(beforeSalary!.is_opening_locked).toBe(false);
 
     const description = `Live Rollback Alloc Test ${Date.now()}`;
     let allocFailureInjected = false;
@@ -313,13 +342,17 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     expect(allocFailureInjected).toBe(true);
     expect(errorCaught).toBe(true);
 
-    // Verify in live PostgreSQL that Transaction was completely rolled back
+    // Verify in live PostgreSQL that neither Transaction nor AllocationLine remains persisted
     const foundTxn = await prisma.transaction.findFirst({ where: { user_id: demoUserId, description } });
     expect(foundTxn).toBeNull();
+    const foundAllocs = await prisma.allocationLine.findMany({ where: { notes: description } });
+    expect(foundAllocs).toHaveLength(0);
 
-    // Verify opening balance lock state was rolled back to original state
-    const currentAcc = await prisma.account.findUnique({ where: { id: demoCheckingAccount.id } });
-    expect(currentAcc!.is_opening_locked).toBe(checkingSnap.is_opening_locked);
+    // Verify in live PostgreSQL that BOTH Checking Bank and Salary locks were rolled back to false
+    const currentChecking = await prisma.account.findUnique({ where: { id: demoCheckingAccount.id } });
+    const currentSalary = await prisma.account.findUnique({ where: { id: demoSalaryAccount.id } });
+    expect(currentChecking!.is_opening_locked).toBe(false);
+    expect(currentSalary!.is_opening_locked).toBe(false);
   });
 
   // -------------------------------------------------------------------------
@@ -335,8 +368,10 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     }
 
     const checkingSnap = await snapshotAccount(demoCheckingAccount.id);
+    const salarySnap = await snapshotAccount(demoSalaryAccount.id);
     pendingCleanups.push(async () => {
       await restoreAccount(checkingSnap);
+      await restoreAccount(salarySnap);
     });
 
     const description = `Live Rollback Lock Test ${Date.now()}`;
@@ -417,13 +452,15 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
 
     // 1. Capture original snapshot BEFORE any update
     const checkingSnap = await snapshotAccount(demoCheckingAccount.id);
+    const salarySnap = await snapshotAccount(demoSalaryAccount.id);
     pendingCleanups.push(async () => {
       await restoreAccount(checkingSnap);
+      await restoreAccount(salarySnap);
     });
 
-    // 2. Ensure account is initially unlocked
-    await prisma.account.update({
-      where: { id: demoCheckingAccount.id },
+    // 2. Ensure accounts are initially unlocked
+    await prisma.account.updateMany({
+      where: { id: { in: [demoCheckingAccount.id, demoSalaryAccount.id] } },
       data: { is_opening_locked: false }
     });
 
@@ -441,9 +478,11 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
 
     expect(res.status).toBe(400);
 
-    // Verify in live PostgreSQL that is_opening_locked remains false
+    // Verify in live PostgreSQL that is_opening_locked remains false on both accounts
     const afterAcc = await prisma.account.findUnique({ where: { id: demoCheckingAccount.id } });
+    const afterSalary = await prisma.account.findUnique({ where: { id: demoSalaryAccount.id } });
     expect(afterAcc!.is_opening_locked).toBe(false);
+    expect(afterSalary!.is_opening_locked).toBe(false);
   });
 
   // -------------------------------------------------------------------------
@@ -460,6 +499,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
 
     // 1. Capture pristine original account snapshot BEFORE any update or mutation
     const originalCheckingSnap = await snapshotAccount(demoCheckingAccount.id);
+    const originalSalarySnap = await snapshotAccount(demoSalaryAccount.id);
     const createdTxnIds: string[] = [];
 
     // 2. Register cleanup BEFORE starting mutations so cleanup runs even if requests or assertions fail
@@ -469,6 +509,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
         await prisma.transaction.deleteMany({ where: { id: { in: createdTxnIds } } });
       }
       await restoreAccount(originalCheckingSnap);
+      await restoreAccount(originalSalarySnap);
     });
 
     // 3. Reset checking account to unlocked with known baseline balance (10000.00)
@@ -555,12 +596,14 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     const testDecimals = ['0.01', '0.29', '100.10', '9999999999.99'];
     const decimalTxnIds: string[] = [];
     const checkingSnap = await snapshotAccount(demoCheckingAccount.id);
+    const salarySnap = await snapshotAccount(demoSalaryAccount.id);
     pendingCleanups.push(async () => {
       if (decimalTxnIds.length > 0) {
         await prisma.allocationLine.deleteMany({ where: { transaction_id: { in: decimalTxnIds } } });
         await prisma.transaction.deleteMany({ where: { id: { in: decimalTxnIds } } });
       }
       await restoreAccount(checkingSnap);
+      await restoreAccount(salarySnap);
     });
 
     for (const val of testDecimals) {
@@ -610,6 +653,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
 
     // Capture pristine baseline snapshot
     const baselineSnap = await snapshotAccount(demoCheckingAccount.id);
+    const baselineSalarySnap = await snapshotAccount(demoSalaryAccount.id);
     const trackedTxnIds: string[] = [];
 
     // Register cleanup tasks using the exact queue structure used by the suite
@@ -618,6 +662,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     // Task 1: Restore account baseline
     isolatedQueue.push(async function restoreAccountBaselineTask() {
       await restoreAccount(baselineSnap);
+      await restoreAccount(baselineSalarySnap);
     });
 
     // Task 2: Purge exact transaction and allocation records
@@ -800,6 +845,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
 
     // 3. Record a legitimate income transaction for User B and verify User A's transactions & summary never include User B's data
     const otherCheckingSnap = await snapshotAccount(otherChecking!.id);
+    const otherSalarySnap = await snapshotAccount(otherSalary!.id);
     const createdOtherTxnIds: string[] = [];
     pendingCleanups.push(async () => {
       if (createdOtherTxnIds.length > 0) {
@@ -807,6 +853,7 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
         await prisma.transaction.deleteMany({ where: { id: { in: createdOtherTxnIds } } });
       }
       await restoreAccount(otherCheckingSnap);
+      await restoreAccount(otherSalarySnap);
     });
 
     const userABaselineSummary = await request(app)
