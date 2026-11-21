@@ -432,10 +432,16 @@ describe('Integration Test: PostgreSQL Live Database Income Processing (WP-03)',
     // Assert neither Transaction nor AllocationLine exists in PostgreSQL
     const foundTxn = await prisma.transaction.findFirst({ where: { user_id: demoUserId, description } });
     expect(foundTxn).toBeNull();
+    const foundAllocs = await prisma.allocationLine.findMany({ where: { notes: description } });
+    expect(foundAllocs).toHaveLength(0);
 
     const currentAcc = await prisma.account.findUnique({ where: { id: demoCheckingAccount.id } });
     expect(currentAcc!.is_opening_locked).toBe(checkingSnap.is_opening_locked);
     expect(currentAcc!.opening_balance.equals(checkingSnap.opening_balance)).toBe(true);
+
+    const currentSalary = await prisma.account.findUnique({ where: { id: demoSalaryAccount.id } });
+    expect(currentSalary!.is_opening_locked).toBe(salarySnap.is_opening_locked);
+    expect(currentSalary!.opening_balance.equals(salarySnap.opening_balance)).toBe(true);
   });
 
   // -------------------------------------------------------------------------

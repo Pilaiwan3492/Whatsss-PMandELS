@@ -276,6 +276,7 @@ To ensure transparent verification in `.github/workflows/ci-docker.yml` (`Run Ba
        - `currentSalary!.is_opening_locked === false`
        - `prisma.transaction.findFirst({ where: { user_id: demoUserId, description } }) === null`
        - `prisma.allocationLine.findMany({ where: { notes: description } })` has length `0`.
+     - **Account-Locking Failure Rollback Test (`rolls back Transaction and AllocationLine in live PostgreSQL when account locking fails in recordIncome`):** Injects an `account.updateMany` failure inside `prisma.$transaction` and queries live PostgreSQL after rollback to confirm `foundTxn === null`, `foundAllocs` has length `0`, and both `Checking Bank` (`currentAcc`) and `Salary` (`currentSalary`) preserve their exact original `is_opening_locked` and `opening_balance` snapshot values.
   2. **Mocked Unit & Supertest HTTP Integration (`server/tests/unit/partDHardening.test.ts` & `server/tests/integration/income.test.ts`):**
      - Provides fast unit and HTTP-layer regression tests (`TEST-OPEN-04` and `TEST-INC-ATOM`) simulating the same commit and failure-rollback flows in-memory.
 
