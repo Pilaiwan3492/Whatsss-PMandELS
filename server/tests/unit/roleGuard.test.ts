@@ -191,6 +191,87 @@ describe('Unit Test: roleGuard Middleware & Part D Security/Audit Hardening (DEF
     expect(result.updated_balance.current_balance).toBe('30000.00');
     expect(accountsState.find((a) => a.id === checkingId)!.is_opening_locked).toBe(true);
     expect(accountsState.find((a) => a.id === salaryId)!.is_opening_locked).toBe(true);
+
+    // Sub-check B: Simulate allocationLine.create failure and verify transactional rollback
+    // Reset both accounts to unlocked and track committed transactions/allocations
+    accountsState[0].is_opening_locked = false;
+    accountsState[1].is_opening_locked = false;
+    const committedTransactions: any[] = [];
+    const committedAllocations: any[] = [];
+
+    const failingMockPrisma: any = {
+      $transaction: vi.fn(async (cb: any) => {
+        // Snapshot before interactive transaction begins
+        const snapshotLocks = accountsState.map((a) => ({ id: a.id, is_opening_locked: a.is_opening_locked }));
+        const stagedTransactions: any[] = [];
+        const stagedAllocations: any[] = [];
+
+        const tx = {
+          $queryRaw: vi.fn(async () => []),
+          account: {
+            findFirst: vi.fn(async ({ where }: any) => accountsState.find((a) => a.id === where.id && a.user_id === where.user_id) || null),
+            findMany: vi.fn(async ({ where }: any) => accountsState.filter((a) => where.id.in.includes(a.id) && a.user_id === where.user_id)),
+            updateMany: vi.fn(async ({ where, data }: any) => {
+              let count = 0;
+              for (const acc of accountsState) {
+                if (where.id.in.includes(acc.id) && acc.user_id === where.user_id && acc.is_opening_locked === where.is_opening_locked) {
+                  acc.is_opening_locked = data.is_opening_locked;
+                  count++;
+                }
+              }
+              return { count };
+            })
+          },
+          transaction: {
+            create: vi.fn(async ({ data }: any) => {
+              const rec = { id: 'txn-inc-rollback', ...data };
+              stagedTransactions.push(rec);
+              return rec;
+            }),
+            aggregate: vi.fn()
+          },
+          allocationLine: {
+            create: vi.fn(async () => {
+              throw new Error('Simulated allocationLine.create database failure');
+            })
+          }
+        };
+
+        try {
+          const res = await cb(tx);
+          committedTransactions.push(...stagedTransactions);
+          committedAllocations.push(...stagedAllocations);
+          return res;
+        } catch (err) {
+          // Prisma interactive $transaction rollback restores mutated row state
+          for (const snap of snapshotLocks) {
+            const acc = accountsState.find((a) => a.id === snap.id)!;
+            acc.is_opening_locked = snap.is_opening_locked;
+          }
+          throw err;
+        }
+      })
+    };
+
+    await expect(
+      recordIncome(
+        userId,
+        {
+          primary_account_id: checkingId,
+          income_account_id: salaryId,
+          total_amount: '20000.00',
+          transaction_date: '2026-11-06',
+          description: 'Failed Salary Rollback Test'
+        },
+        failingMockPrisma
+      )
+    ).rejects.toThrow('Simulated allocationLine.create database failure');
+
+    // Verify neither Checking Bank nor Salary remains locked and zero records were committed
+    expect(accountsState.find((a) => a.id === checkingId)!.is_opening_locked).toBe(false);
+    expect(accountsState.find((a) => a.id === salaryId)!.is_opening_locked).toBe(false);
+    expect(committedTransactions).toHaveLength(0);
+    expect(committedAllocations).toHaveLength(0);
   });
 
   it('AUDIT-02 Hardening: rejects non-string, empty, or whitespace-only username and non-string or empty password with 401 INVALID_CREDENTIALS', async () => {
