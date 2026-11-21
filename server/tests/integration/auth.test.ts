@@ -128,6 +128,35 @@ describe('Feature F-01: Authentication Behavior (Mocked Prisma)', () => {
       expect(res.body.success).toBe(false);
       expect(res.body.error.code).toBe('INVALID_CREDENTIALS');
     });
+
+    it('AUDIT-02 Hardening: rejects non-string, empty, or whitespace-only username and non-string or empty password with 401 INVALID_CREDENTIALS without stack trace', async () => {
+      const invalidCases = [
+        { label: 'Object username', payload: { username: { $gt: '' }, password: DEMO_PASSWORD } },
+        { label: 'Array username', payload: { username: ['user_demo'], password: DEMO_PASSWORD } },
+        { label: 'Number password', payload: { username: 'user_demo', password: 12345 } },
+        { label: 'Empty string username', payload: { username: '', password: DEMO_PASSWORD } },
+        { label: 'Whitespace-only username', payload: { username: '   ', password: DEMO_PASSWORD } },
+        { label: 'Empty string password', payload: { username: 'user_demo', password: '' } }
+      ];
+
+      for (const tc of invalidCases) {
+        const res = await request(app)
+          .post('/api/auth/login')
+          .set('Origin', CLIENT_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .send(tc.payload);
+
+        expect(res.status, `Expected 401 for ${tc.label}`).toBe(401);
+        expect(res.body).toEqual({
+          success: false,
+          error: {
+            code: 'INVALID_CREDENTIALS',
+            message: 'Invalid username or password'
+          }
+        });
+        expect(res.headers['set-cookie']).toBeUndefined();
+      }
+    });
   });
 
   describe('TEST-AUTH-03: Session Introspection (AC-01-3)', () => {
@@ -190,6 +219,39 @@ describe('Feature F-01: Authentication Behavior (Mocked Prisma)', () => {
         .get('/api/auth/me')
         .set('Cookie', clearedTokenCookie);
 
+      expect(meRes.status).toBe(401);
+      expect(meRes.body.error.code).toBe('UNAUTHORIZED');
+    });
+
+    it('TEST-AUTH-LOGOUT-UNAUTHENTICATED (DEF-OUT-02 Verification, AC-01-5): returns 200 OK and idempotently clears token cookie when called without any session cookie or Authorization header', async () => {
+      // Do NOT attach any Cookie or Authorization header
+      const logoutRes = await request(app)
+        .post('/api/auth/logout')
+        .set('Origin', CLIENT_ORIGIN);
+
+      expect(logoutRes.status).toBe(200);
+      expect(logoutRes.body).toEqual({
+        success: true,
+        data: {
+          message: 'Logged out successfully'
+        }
+      });
+      // Confirm no private user profile or session token is returned
+      expect(logoutRes.body.data.user).toBeUndefined();
+      expect(logoutRes.body.data.token).toBeUndefined();
+
+      // Confirm cookie-clearing header is present with matching configured attributes
+      const logoutCookies = logoutRes.headers['set-cookie'];
+      expect(logoutCookies).toBeDefined();
+      const clearedTokenCookie = logoutCookies.find((c: string) => c.startsWith('token=;'));
+      expect(clearedTokenCookie).toBeDefined();
+      expect(clearedTokenCookie).toMatch(/Max-Age=0/i);
+      expect(clearedTokenCookie).toContain('Path=/');
+      expect(clearedTokenCookie).toContain('HttpOnly');
+      expect(clearedTokenCookie).toMatch(/SameSite=Lax/i);
+
+      // Confirm the operation did not create a session
+      const meRes = await request(app).get('/api/auth/me');
       expect(meRes.status).toBe(401);
       expect(meRes.body.error.code).toBe('UNAUTHORIZED');
     });

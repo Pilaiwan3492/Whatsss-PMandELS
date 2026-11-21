@@ -180,9 +180,33 @@ vi.mock('../../src/prisma.js', () => {
     }
   };
 
-  const prismaMock = {
+    const prismaMock = {
     $transaction: vi.fn(async (callback) => {
-      return callback(txClient);
+      // Snapshot account lock/balance state and transaction/allocation arrays to emulate atomic PostgreSQL rollback on error
+      const accountSnapshots = mockAccounts.map((a) => ({
+        id: a.id,
+        opening_balance: new Prisma.Decimal(a.opening_balance.toString()),
+        is_opening_locked: a.is_opening_locked,
+        updated_at: a.updated_at
+      }));
+      const txnLengthBefore = mockTransactions.length;
+      const allocLengthBefore = mockAllocationLines.length;
+
+      try {
+        return await callback(txClient);
+      } catch (err) {
+        for (const snap of accountSnapshots) {
+          const acc = mockAccounts.find((a) => a.id === snap.id);
+          if (acc) {
+            acc.opening_balance = snap.opening_balance;
+            acc.is_opening_locked = snap.is_opening_locked;
+            acc.updated_at = snap.updated_at;
+          }
+        }
+        mockTransactions.length = txnLengthBefore;
+        mockAllocationLines.length = allocLengthBefore;
+        throw err;
+      }
     }),
     user: {
       findFirst: vi.fn(async ({ where }) => {
@@ -774,8 +798,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
   describe('TEST-OPEN-04: End-to-End Account Lock Integration (AC-03-3)', () => {
     it('locks opening balance upon income transaction commit, causing subsequent PATCH opening-balance to return 422', async () => {
       const checking = mockAccounts.find((a) => a.id === CHECKING_ID)!;
+      const salary = mockAccounts.find((a) => a.id === SALARY_ID)!;
       checking.opening_balance = new Prisma.Decimal('5000.00');
       checking.is_opening_locked = false;
+      salary.is_opening_locked = false;
 
       // 1. Before transaction: updating opening balance succeeds
       const patch1 = await request(app)
@@ -801,8 +827,9 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
 
       expect(incomeRes.status).toBe(201);
       expect(checking.is_opening_locked).toBe(true);
+      expect(salary.is_opening_locked).toBe(true);
 
-      // 3. Subsequent opening balance update is blocked with 422 OPENING_BALANCE_LOCKED
+      // 3. Subsequent opening balance update on Checking Bank AND Salary is blocked with 422 OPENING_BALANCE_LOCKED (AC-03-3, AUDIT-01)
       const patch2 = await request(app)
         .patch(`/api/accounts/${CHECKING_ID}/opening-balance`)
         .set('Cookie', userACookie)
@@ -813,6 +840,15 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
       expect(patch2.body.error.code).toBe('OPENING_BALANCE_LOCKED');
       // Balance remains unmodified
       expect(checking.opening_balance.toString()).toBe('10000');
+
+      const patchSalary = await request(app)
+        .patch(`/api/accounts/${SALARY_ID}/opening-balance`)
+        .set('Cookie', userACookie)
+        .set('Origin', TRUSTED_ORIGIN)
+        .send({ opening_balance: 500.00 });
+
+      expect(patchSalary.status).toBe(422);
+      expect(patchSalary.body.error.code).toBe('OPENING_BALANCE_LOCKED');
     });
   });
 
@@ -922,28 +958,38 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
   // 7. TEST-INC-ATOM: Transaction Atomicity & Rollback Verification
   // -------------------------------------------------------------------------
   describe('TEST-INC-ATOM: Transaction Atomicity & Rollback', () => {
-    it('rolls back completely if an error occurs during allocation creation', async () => {
+    it('rolls back completely if an error occurs during allocation creation, leaving Checking Bank and Salary unlocked and zero transactions/allocations persisted', async () => {
       const checking = mockAccounts.find((a) => a.id === CHECKING_ID)!;
+      const salary = mockAccounts.find((a) => a.id === SALARY_ID)!;
       checking.is_opening_locked = false;
+      salary.is_opening_locked = false;
 
-      // Mock allocationLine.create to throw
+      // Mock allocationLine.create to throw after lockAccounts and transaction.create have executed inside $transaction
       const { prisma } = await import('../../src/prisma.js');
       const origAllocCreate = (prisma.allocationLine as any).create;
       (prisma.allocationLine as any).create = vi.fn().mockRejectedValue(new Error('Database disk full'));
 
-      const res = await request(app)
-        .post('/api/transactions/income')
-        .set('Cookie', userACookie)
-        .set('Origin', TRUSTED_ORIGIN)
-        .send({
-          primary_account_id: CHECKING_ID,
-          total_amount: '1000.00',
-          transaction_date: '2026-11-06',
-          income_account_id: SALARY_ID
-        });
+      try {
+        const res = await request(app)
+          .post('/api/transactions/income')
+          .set('Cookie', userACookie)
+          .set('Origin', TRUSTED_ORIGIN)
+          .send({
+            primary_account_id: CHECKING_ID,
+            total_amount: '1000.00',
+            transaction_date: '2026-11-06',
+            income_account_id: SALARY_ID
+          });
 
-      expect(res.status).toBe(500);
-      (prisma.allocationLine as any).create = origAllocCreate;
+        expect(res.status).toBe(500);
+        // Verify atomic rollback: both accounts remain unlocked (is_opening_locked = false) and zero records remain
+        expect(checking.is_opening_locked).toBe(false);
+        expect(salary.is_opening_locked).toBe(false);
+        expect(mockTransactions).toHaveLength(0);
+        expect(mockAllocationLines).toHaveLength(0);
+      } finally {
+        (prisma.allocationLine as any).create = origAllocCreate;
+      }
     });
   });
 

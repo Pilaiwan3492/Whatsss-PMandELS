@@ -362,6 +362,49 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
 
         expect(response.status).toBe(404);
       });
+
+      it('DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN on mixed-case and uppercase financial routes (/api/Accounts, /api/Accounts/, /API/ACCOUNTS, /api/Reports/summary, /api/Transactions) while allowing USER', async () => {
+        const mixedCaseRoutes = [
+          '/api/Accounts',
+          '/api/Accounts/',
+          '/API/ACCOUNTS',
+          '/API/ACCOUNTS/acc-user-a',
+          '/api/Reports/summary',
+          '/api/Transactions'
+        ];
+
+        for (const route of mixedCaseRoutes) {
+          const res = await request(app)
+            .get(route)
+            .set('Cookie', adminCookie);
+
+          expect(res.status, `Expected 403 for ADMIN on ${route}`).toBe(403);
+          expect(res.body.success).toBe(false);
+          expect(res.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
+          expect(res.body.data).toBeUndefined();
+          expect(res.body.accounts).toBeUndefined();
+          expect(res.body.transactions).toBeUndefined();
+        }
+
+        // Verify USER access remains functional across mixed-case financial routes on stubApp
+        for (const userRoute of ['/api/Accounts/acc-user-a', '/api/Accounts/acc-user-a/', '/API/ACCOUNTS/acc-user-a', '/api/Reports/summary', '/api/Transactions']) {
+          const userRes = await request(stubApp)
+            .get(userRoute)
+            .set('Cookie', userACookie);
+
+          expect(userRes.status, `Expected 200 for USER on ${userRoute}`).toBe(200);
+          expect(userRes.body.success).toBe(true);
+        }
+
+        // Verify non-financial ADMIN functionality (/api/auth/me) remains functional
+        const adminMeRes = await request(app)
+          .get('/api/auth/me')
+          .set('Cookie', adminCookie);
+
+        expect(adminMeRes.status).toBe(200);
+        expect(adminMeRes.body.success).toBe(true);
+        expect(adminMeRes.body.data.user.role).toBe('ADMIN');
+      });
     });
   });
 });

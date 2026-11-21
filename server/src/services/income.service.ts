@@ -371,9 +371,9 @@ export async function recordIncome(
           );
         }
 
-        // C. Atomically lock opening balance of the primary CASH account (AC-03-3)
+        // C. Atomically lock opening balance of the primary CASH and target INCOME accounts (AC-03-3)
         // lockAccounts handles idempotency safely: if already locked, it does not re-write or fail.
-        await lockAccounts(tx, [primaryAccount.id], userId);
+        await lockAccounts(tx, [primaryAccount.id, incomeAccount.id], userId);
 
         // C. Create Transaction header
         const transaction = await tx.transaction.create({

@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts",
+    "prisma:provision-user-b": "tsx prisma/provision-user-b.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",
