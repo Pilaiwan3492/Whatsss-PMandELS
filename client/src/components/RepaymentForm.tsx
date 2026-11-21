@@ -89,7 +89,7 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
   );
 
   const amountCents = toCents(amount);
-  const isExceedingDebt = amountCents > debtCents && debtCents > 0;
+  const isExceedingDebt = amountCents > debtCents;
   const isInsufficientFunds = amountCents > bankBalanceCents;
 
   const remainingCashCents = bankBalanceCents - amountCents;

@@ -6,7 +6,13 @@ import { Request, Response, NextFunction } from 'express';
  */
 const JSON_BODY_REQUIRED_ENDPOINTS = [
   '/api/auth/login',
-  '/login'
+  '/login',
+  '/api/transactions/income',
+  '/transactions/income',
+  '/api/transactions/expense',
+  '/transactions/expense',
+  '/api/transactions/repayment',
+  '/transactions/repayment'
 ];
 
 /**

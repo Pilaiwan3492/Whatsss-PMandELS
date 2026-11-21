@@ -774,8 +774,10 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
   describe('TEST-OPEN-04: End-to-End Account Lock Integration (AC-03-3)', () => {
     it('locks opening balance upon income transaction commit, causing subsequent PATCH opening-balance to return 422', async () => {
       const checking = mockAccounts.find((a) => a.id === CHECKING_ID)!;
+      const salary = mockAccounts.find((a) => a.id === SALARY_ID)!;
       checking.opening_balance = new Prisma.Decimal('5000.00');
       checking.is_opening_locked = false;
+      salary.is_opening_locked = false;
 
       // 1. Before transaction: updating opening balance succeeds
       const patch1 = await request(app)
@@ -801,8 +803,9 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
 
       expect(incomeRes.status).toBe(201);
       expect(checking.is_opening_locked).toBe(true);
+      expect(salary.is_opening_locked).toBe(true);
 
-      // 3. Subsequent opening balance update is blocked with 422 OPENING_BALANCE_LOCKED
+      // 3. Subsequent opening balance update on Checking Bank AND Salary is blocked with 422 OPENING_BALANCE_LOCKED (AC-03-3, AUDIT-01)
       const patch2 = await request(app)
         .patch(`/api/accounts/${CHECKING_ID}/opening-balance`)
         .set('Cookie', userACookie)
@@ -813,6 +816,15 @@ describe('Integration Test: Income Transaction Processing (WP-03)', () => {
       expect(patch2.body.error.code).toBe('OPENING_BALANCE_LOCKED');
       // Balance remains unmodified
       expect(checking.opening_balance.toString()).toBe('10000');
+
+      const patchSalary = await request(app)
+        .patch(`/api/accounts/${SALARY_ID}/opening-balance`)
+        .set('Cookie', userACookie)
+        .set('Origin', TRUSTED_ORIGIN)
+        .send({ opening_balance: 500.00 });
+
+      expect(patchSalary.status).toBe(422);
+      expect(patchSalary.body.error.code).toBe('OPENING_BALANCE_LOCKED');
     });
   });
 

@@ -7,7 +7,7 @@ import { config } from '../config/env.js';
 export async function login(req: Request, res: Response): Promise<void> {
   const { username, password } = req.body || {};
 
-  if (!username || !password) {
+  if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password) {
     res.status(401).json({
       success: false,
       error: {

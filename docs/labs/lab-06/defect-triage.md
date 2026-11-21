@@ -84,58 +84,26 @@ The following findings were identified through our team's internal audit and han
 
 ### 3.2 Formal Partner-Reported Findings (SingSlot UAT Team → Whatsss)
 
-The Whatsss team monitors formal findings reported by the SingSlot UAT Team against the deployed Whatsss Cloud Run release `whatsss-00006-9j1` ([https://whatsss-sipqw4logq-as.a.run.app](https://whatsss-sipqw4logq-as.a.run.app)), baseline tag `v0.1.0-sprint1`.
+The Whatsss team triaged all formal findings submitted by the SingSlot UAT Team (`@lephirada` & `@Phenwatsa`) in [Issue #38 Comment `#7063056757`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38#issuecomment-7063056757) against the deployed Whatsss Cloud Run release `whatsss-00020-65k` ([https://whatsss-sipqw4logq-as.a.run.app](https://whatsss-sipqw4logq-as.a.run.app), commit `ba2f9dd`).
 
-| Finding ID | Reporter / Source | Linked Requirement | Description & Observation | Classification | Severity | Disposition & Evidence |
-|:---:|:---:|:---:|---|:---:|:---:|---|
-| **None received** | SingSlot UAT Team | N/A | No formal partner-reported defect findings have been recorded in this register at the time of this submission. | N/A | N/A | No partner finding is available for triage. Update this register if a formal report is received. |
+| Finding ID | Reporter / Source | Linked Requirement & UAT Case | Description & Observed Behavior | Classification | Severity | Assigned Owner | Fix Status & Disposition |
+|:---:|:---:|:---:|---|:---:|:---:|:---:|---|
+| **`DEF-OUT-01`** | SingSlot UAT Team (`@lephirada`, `@Phenwatsa`) | `UAT-S1-04` (Sub-check 4A)<br>`BR-10`, `AC-02-2`, `NFR-SEC-02` | **Case-Sensitivity Authorization Bypass in `roleGuard.ts`:** `server/src/middlewares/roleGuard.ts` compared `path.replace(/\/+$/, '')` against lowercase prefixes (`/api/accounts`, `/api/reports`, `/api/transactions`) without `.toLowerCase()`, whereas Express routing is case-insensitive by default. Navigating to `/api/Accounts` or `/api/Reports/summary` as `admin` bypassed `roleGuard` and returned `HTTP 200 OK`. | **Accepted Defect** | **Critical** *(Release-Blocking)* | `@Apichaya251400` ([Issue #37](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/37)) | **Fixed & Verified (RED → GREEN)** in `server/src/middlewares/roleGuard.ts` (`path.toLowerCase().replace(/\/+$/, '')`) with regression suites in `server/tests/unit/roleGuard.test.ts` and `server/tests/integration/access.test.ts`. Documented in [`docs/labs/lab-06/defect-resolution.md`](./defect-resolution.md). |
+| **`DEF-OUT-02`** | SingSlot UAT Team (`@lephirada`, `@Phenwatsa`) | `AC-01-5`, `FR-01`, SDS Section 8 | **Unauthenticated Caller Receives HTTP 200 on `POST /api/auth/logout`:** Sending `POST /api/auth/logout` without an active session cookie returns `HTTP 200 OK` with `Set-Cookie: token=; Max-Age=0`. | **Not-a-Defect** | **None** *(Advisory)* | `@Pilaiwan3492` / `@Apichaya251400` | **By Design (Idempotent Logout Contract):** Per `server/tests/integration/content-type.test.ts` (Case A & D) and `AC-01-5`, `POST /api/auth/logout` is intentionally idempotent so expired/unauthenticated browser tabs can deterministically clear cookies without throwing `401` errors on the client. |
+| **`AUDIT-01`** | SingSlot Code Inspection (`@lephirada`, `@Phenwatsa`) | `UAT-S1-03`<br>`AC-03-3`, `BR-02` | **Income Target Category Lock Parity (`income.service.ts`):** `server/src/services/income.service.ts` locked `primaryAccount.id` (`Checking Bank`) upon income creation without including `incomeAccount.id` (`Salary`) in `lockAccounts()`. | **Accepted Defect** *(Code Audit Hardening)* | **Minor** | `@Apichaya251400` ([Issue #37](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/37)) | **Fixed & Verified** in `server/src/services/income.service.ts` (`await lockAccounts(tx, [primaryAccount.id, incomeAccount.id], userId)`) and verified in `server/tests/integration/income.test.ts` (`TEST-OPEN-04`). |
+| **`AUDIT-02`** | SingSlot Code Inspection (`@lephirada`, `@Phenwatsa`) | `FR-01`, `AC-01-2` | **Non-String Login Payload Guard (`auth.controller.ts`):** `login()` checked `!username || !password` without verifying `typeof username === 'string' && typeof password === 'string'`, risking unhandled errors if non-string JSON objects/arrays are sent. | **Accepted Defect** *(Code Audit Hardening)* | **Minor** | `@Apichaya251400` ([Issue #37](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/37)) | **Fixed & Verified** in `server/src/controllers/auth.controller.ts` (strict `typeof` and `.trim()` guard returning `401 INVALID_CREDENTIALS`) and unit-tested in `server/tests/unit/roleGuard.test.ts`. |
+| **`AUDIT-03`** | SingSlot Code Inspection (`@lephirada`, `@Phenwatsa`) | `NFR-SEC-03` (`TEST-SEC-06`) | **Bodyless Transaction Endpoint Guard (`contentType.ts`):** `JSON_BODY_REQUIRED_ENDPOINTS` in `server/src/middlewares/contentType.ts` listed `/api/auth/login` and `/opening-balance` but omitted `/api/transactions/income`, `/api/transactions/expense`, and `/api/transactions/repayment`. | **Accepted Defect** *(Code Audit Hardening)* | **Minor** | `@Apichaya251400` ([Issue #37](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/37)) | **Fixed & Verified** in `server/src/middlewares/contentType.ts` and unit-tested in `server/tests/unit/roleGuard.test.ts`. |
+| **`AUDIT-04`** | SingSlot Code Inspection (`@lephirada`, `@Phenwatsa`) | `UAT-S1-02` (Sub-check 2D)<br>`BR-07`, `AC-07-2` | **Client Over-Repayment Warning When Debt Is `0.00 THB` (`RepaymentForm.tsx`):** `isExceedingDebt` used `amountCents > debtCents && debtCents > 0`, omitting the inline over-repayment warning when `debtCents === 0`. | **Enhancement / Hardening** | **Minor** | `@Apichaya251400` ([Issue #37](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/37)) | **Fixed & Verified** in `client/src/components/RepaymentForm.tsx` (`const isExceedingDebt = amountCents > debtCents;`), passing all 55 frontend tests. |
 
-**Partner Finding Status:** No formal partner-reported findings are currently recorded. Internal audit findings DEF-01 and DEF-02 above are not counted as partner submissions.
+**Partner Finding Triage Summary:**
+- **`DEF-OUT-01` (Critical — Accepted Defect):** Confirmed release-blocking security bypass of `BR-10` / `AC-02-2` when mixed-case paths (`/api/Accounts`, `/api/Reports/summary`) were requested by an authenticated `ADMIN`. Resolved via full **RED → GREEN** workflow in Part D ([`docs/labs/lab-06/defect-resolution.md`](./defect-resolution.md)).
+- **`DEF-OUT-02` (Not-a-Defect):** Confirmed intentional idempotent logout behavior documented and tested in `content-type.test.ts`.
+- **`AUDIT-01` to `AUDIT-04` (Defense-in-Depth Hardening):** All four code-inspection hardening recommendations were also resolved and verified in Part D alongside `DEF-OUT-01`.
 
 ---
 
-## 4. Controlled Defect Exercise Protocol (Section 3.5 Compliance)
+## 4. Natural Defect Resolution Superseding Controlled Exercise (Section 3.5 Compliance)
 
-Per Section 3.5 of the CPE334 Lab 6 specification:
+Because the SingSlot UAT Team identified a genuine, release-blocking Sprint 1 defect (`DEF-OUT-01`) during independent testing in [Issue #38 Comment `#7063056757`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/38#issuecomment-7063056757), the team executed **Part D (RED → GREEN Defect Resolution, PR Review, CI Verification, and Redeployment)** directly on the real partner-reported defect **`DEF-OUT-01`** (plus hardening items `AUDIT-01`..`AUDIT-04`), rather than relying on the placeholder controlled exercise candidate (`DEF-03`).
 
-> *"A sound Sprint 1 product is not penalized for having no natural defect... To demonstrate the defect-correction learning outcome, apply the same report, triage, reproducing-test (RED), fix (GREEN), review, release and independent-retest process for that exercise. Keep the exercise separate from the healthy accepted Sprint 1 release. Do not fabricate findings, substitute a planned enhancement, or deliberately break the live assessed release."*
-
-### 4.1 Evaluation of Candidate Controlled Defect (`DEF-03`)
-
-The team audited the project specifications to evaluate whether the previously suggested transaction-note whitespace trimming behavior qualifies as an agreed contractual defect.
-
-#### 4.1.1 Contract Verification Results (Case B: Contract Does Not Require Trimming)
-
-1. **SRS Audit (`docs/srs.md`):** Contains zero requirements regarding leading or trailing whitespace trimming or normalization for transaction notes.
-2. **SDS Audit (`docs/system-sds.md`):** Defines `notes` as `VARCHAR(255) (NULLABLE)` without data sanitization or trimming constraints.
-3. **Engineering Contracts Audit (`docs/sprints/sprint-1/feature-contracts.md`):** Feature `F-06` defines `notes` as an arbitrary text input (e.g., `"notes": "Dinner"`). It specifies no trimming rule or rejection for whitespace-padded input.
-
-**Conclusion:** The project contracts do not require transaction-note whitespace normalization. Under the rubric decision rules (Case B), preserving raw whitespace cannot be classified as an Accepted Defect. Doing so would violate the rule against retroactively inventing requirements. Therefore, DEF-03 is classified as an **Unverified Observation / Potential Enhancement Candidate**.
-
-#### 4.1.2 DEF-03 Status Matrix
-
-| Attribute | Specification Details |
-|---|---|
-| **Candidate Finding ID** | **DEF-03** |
-| **Origin / Source** | Controlled Engineering Exercise Candidate (Section 3.5 Protocol) — **NOT** a partner bug report |
-| **Target Subsystem** | Transaction Processing — Transaction Note Field |
-| **Linked Requirement** | None in Sprint 1 (`docs/srs.md`, `docs/system-sds.md`, `docs/sprints/sprint-1/feature-contracts.md` contain no note-trimming requirement) |
-| **Observed / Candidate Behavior** | Leading or trailing whitespace in transaction notes (e.g., `"  Grocery supplies  "`) may be preserved without stripping. |
-| **Classification** | **Unverified Observation / Potential Enhancement Candidate** |
-| **Reproduction Status** | **Not Reproduced** (No automated RED reproducing test has been created or executed) |
-| **Fix Status** | **On Hold — Not Implemented** (Pending selection/validation of a verified contractual requirement candidate) |
-| **Retest Status** | **Not Retested** (Part D execution has not begun) |
-| **Assigned Owner** | `@Apichaya251400` (Assigned under Part D / [Issue #37](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/37)) |
-
-**Validation Statement:**  
-DEF-03 is not an Accepted Defect. No automated RED reproducing test, code fix, PR, CI run, redeployment, or independent retest has been performed. Part D remains pending under Issue #37.
-
-### 4.2 Required Execution Steps for Controlled Defect Resolution (Under Issue #37 / Part D)
-
-When the team executes Part D under Issue #37, the following sequence will be followed:
-
-1. **Candidate Requirement Validation:** Select a candidate behavior that violates an explicit, approved Sprint 1 requirement or engineering contract. If no existing requirement exists, the candidate cannot be triaged as a defect.
-2. **Automated Reproduction (RED):** Author a test asserting the required contract behavior and run it against the existing codebase to verify failure (**RED**). Record the test command, file path, and failure trace.
-3. **Code Correction (GREEN):** Implement the minimal code correction necessary to satisfy the requirement and run the test suite to verify success (**GREEN**) alongside the full regression suite (`npm test`).
-4. **Fix PR & Peer Review:** Submit a separate fix PR (`fix/...`) into `staging-lab5`, reviewed and approved by `@Pilaiwan3492` (Zero Self-Merge Rule R-09).
-5. **Isolated Deployment & Independent Retest:** Deploy the fix to an isolated environment separate from the healthy assessed release, and obtain independent retest verification.
+See [`docs/labs/lab-06/defect-resolution.md`](./defect-resolution.md) for the complete Part D RED-to-GREEN test evidence, code diff, and verification logs.
