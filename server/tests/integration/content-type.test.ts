@@ -342,4 +342,84 @@ describe('System API Contract: Content-Type Validation and JSON Body Parsing (TE
       expect(res.headers['access-control-allow-origin']).toBe(TRUSTED_ORIGIN);
     });
   });
+
+  describe('AUDIT-03 Hardening: Transaction Endpoints Require JSON Body (Income, Expense, Repayment)', () => {
+    const transactionEndpoints = [
+      '/api/transactions/income',
+      '/api/transactions/expense',
+      '/api/transactions/repayment'
+    ];
+
+    it('Test A — Missing Body: POST to transaction endpoints without body returns 400 MISSING_REQUEST_BODY', async () => {
+      for (const endpoint of transactionEndpoints) {
+        const res = await request(app)
+          .post(endpoint)
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Cookie', userCookie);
+
+        expect(res.status, `Expected 400 MISSING_REQUEST_BODY on ${endpoint}`).toBe(400);
+        expect(res.body.success).toBe(false);
+        expect(res.body.error.code).toBe('MISSING_REQUEST_BODY');
+      }
+    });
+
+    it('Test B — Body Present but Missing Content-Type: returns 400 INVALID_CONTENT_TYPE', async () => {
+      for (const endpoint of transactionEndpoints) {
+        const res = await request(app)
+          .post(endpoint)
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Cookie', userCookie)
+          .send('{"total_amount":"100.00"}')
+          .unset('Content-Type');
+
+        expect(res.status, `Expected 400 INVALID_CONTENT_TYPE on ${endpoint}`).toBe(400);
+        expect(res.body.success).toBe(false);
+        expect(res.body.error.code).toBe('INVALID_CONTENT_TYPE');
+      }
+    });
+
+    it('Test C — Wrong Content-Type (text/plain): returns 400 INVALID_CONTENT_TYPE', async () => {
+      for (const endpoint of transactionEndpoints) {
+        const res = await request(app)
+          .post(endpoint)
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Cookie', userCookie)
+          .set('Content-Type', 'text/plain')
+          .send('total_amount=100.00');
+
+        expect(res.status, `Expected 400 INVALID_CONTENT_TYPE on ${endpoint}`).toBe(400);
+        expect(res.body.success).toBe(false);
+        expect(res.body.error.code).toBe('INVALID_CONTENT_TYPE');
+      }
+    });
+
+    it('Test D — Valid JSON Content-Type with empty JSON object {} passes contentType middleware and reaches controller field validation', async () => {
+      for (const endpoint of transactionEndpoints) {
+        const res = await request(app)
+          .post(endpoint)
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Cookie', userCookie)
+          .set('Content-Type', 'application/json')
+          .send({});
+
+        // An empty JSON object {} is a valid JSON body; it passes requireJsonContentType and fails controller field validation
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).not.toBe('MISSING_REQUEST_BODY');
+        expect(res.body.error.code).not.toBe('INVALID_CONTENT_TYPE');
+      }
+    });
+
+    it('Test E — Path Variants (Uppercase, Trailing Slash): enforces MISSING_REQUEST_BODY on /api/Transactions/Income/ and /API/TRANSACTIONS/EXPENSE', async () => {
+      for (const variant of ['/api/Transactions/Income/', '/API/TRANSACTIONS/EXPENSE', '/api/Transactions/Repayment/']) {
+        const res = await request(app)
+          .post(variant)
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Cookie', userCookie);
+
+        expect(res.status, `Expected 400 MISSING_REQUEST_BODY on ${variant}`).toBe(400);
+        expect(res.body.success).toBe(false);
+        expect(res.body.error.code).toBe('MISSING_REQUEST_BODY');
+      }
+    });
+  });
 });

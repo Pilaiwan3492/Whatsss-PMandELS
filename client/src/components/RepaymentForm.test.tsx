@@ -358,4 +358,54 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
 
     expect(mockOnClose).toHaveBeenCalledTimes(1);
   });
+
+  it('TEST-UI-REPAY-11 (AUDIT-04 Regression): blocks positive repayment when outstanding debt is zero (0.00 THB) and displays Exceeds debt warning', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    const zeroDebtAccounts: Account[] = [
+      {
+        id: 'bank-checking-1',
+        user_id: 'user-1',
+        name: 'Checking Bank',
+        type: 'CASH',
+        opening_balance: 10000.0,
+        current_balance: 30000.0,
+        is_opening_locked: false,
+        created_at: '2026-11-01T00:00:00Z',
+        updated_at: '2026-11-01T00:00:00Z'
+      },
+      {
+        id: 'cc-visa-zero-debt',
+        user_id: 'user-1',
+        name: 'Visa Credit Card',
+        type: 'LOAN_TAKEN',
+        opening_balance: 0.0,
+        current_balance: 0.0,
+        is_opening_locked: false,
+        created_at: '2026-11-01T00:00:00Z',
+        updated_at: '2026-11-01T00:00:00Z'
+      }
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={zeroDebtAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput, { target: { value: '100.00' } });
+
+    expect(screen.getByText(/Exceeds debt/i)).toBeDefined();
+
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(true);
+
+    fireEvent.click(submitBtn);
+    expect(transactionApi.recordRepayment).not.toHaveBeenCalled();
+  });
 });

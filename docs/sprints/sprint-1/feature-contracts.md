@@ -36,14 +36,14 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-01-2`: Invalid credentials return `401 Unauthorized` with error code `INVALID_CREDENTIALS` (`TEST-AUTH-02`).
   * `AC-01-3`: Calling `GET /api/auth/me` with valid session cookie returns `200 OK` and current user identity and role (`TEST-AUTH-03`).
   * `AC-01-4`: Passwords stored in database are cryptographically hashed using salted one-way hashing (`TEST-AUTH-04`, `NFR-SEC-01`).
-  * `AC-01-5`: Calling `POST /api/auth/logout` clears session cookie with matching attributes; subsequent protected calls return `401 Unauthorized` (`TEST-AUTH-05`, `FR-01`).
+  * `AC-01-5`: Calling `POST /api/auth/logout` clears the session cookie with matching attributes. Logout is idempotent and must return `200 OK` even when no active session exists. The operation must not create a new session or expose private user information. Subsequent protected calls must return `401 Unauthorized` (`TEST-AUTH-05`, `TEST-AUTH-LOGOUT-UNAUTHENTICATED`, `FR-01`).
 * **UI Behavior:**
   * Login view displays username and password inputs with client-side non-empty validation. Submit button disables during submission and shows a loading state. On HTTP 200, user state updates in React Auth Context and navigates to the financial dashboard (`/dashboard`). On HTTP 401, a clear error banner displays "Invalid username or password".
   * Navigation bar contains user identity pill (`USER` / `ADMIN`) and a prominent "Logout" button. Clicking Logout triggers `POST /api/auth/logout`, clears client auth state, and redirects to `/login`.
 * **API Specifications:**
   * `POST /api/auth/login`: Body: `{ "username": "...", "password": "..." }` $\rightarrow$ `200 OK` `{ "success": true, "data": { "user": { "id": "...", "username": "...", "role": "..." } } }` (Sets Header: `Set-Cookie: token=...; HttpOnly; SameSite=Lax; Path=/` with conditional `Secure` in production) or `401 Unauthorized`
   * `GET /api/auth/me`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "user": { "id": "...", "username": "...", "role": "..." } } }`
-  * `POST /api/auth/logout`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "message": "Logged out successfully" } }` (Sets Header: `Set-Cookie: token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` with conditional `Secure` in production)
+  * `POST /api/auth/logout`: Cookie: `token=...` (or unauthenticated / missing cookie) $\rightarrow$ `200 OK` `{ "success": true, "data": { "message": "Logged out successfully" } }` (Idempotent operation: always sets Header `Set-Cookie: token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` with conditional `Secure` in production without creating a session or exposing private user data)
 
 ---
 
