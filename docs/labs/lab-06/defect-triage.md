@@ -31,21 +31,24 @@ To establish a traceable, reasoned disposition for all findings, findings are cl
 
 ## 2. Outgoing Findings Register (Partner Application: SingSlot)
 
-During the independent user acceptance testing of **SingSlot Sprint 1** (`singslot-00004-6mv`, commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`), the Whatsss team executed all 5 agreed test cases (`UAT-01` to `UAT-05`).
+During the independent evaluation of **SingSlot Sprint 1** (`singslot-00004-6mv`, commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`), the Whatsss team executed all 5 agreed UAT test cases (`UAT-01` to `UAT-05` — all `PASS` within live UI/API scope) and performed an independent concurrency, schema, and security code inspection.
 
-| Finding ID | Tested Case | Subsystem / Endpoint | Observed Behavior | Specification Invariant | Severity | Disposition |
-|:---:|:---:|---|---|---|:---:|---|
-| **None** | `UAT-01`–`UAT-05` | Online Booking, Matrix, Access Control | All 5 cases passed with full contract compliance. | `FR-01`–`FR-06`, `BR-01`–`BR-08` | None | **No release-blocking defects were identified within the scope of the five executed Sprint 1 UAT cases (UAT-01 to UAT-05) against the recorded release revision (`singslot-00004-6mv`).** |
+Four code-verified findings (`DEF-SS-01` through `DEF-SS-04`) were formally reported to the SingSlot tracking issue at [`Phenwatsa/singslot-karaoke#35` (comment `7060029335`)](https://github.com/Phenwatsa/singslot-karaoke/issues/35#issuecomment-7060029335).
+
+| Finding ID | Source / Scope | Subsystem / Code Reference | Observed Behavior | Specification Invariant | Severity | Status & Tracking Link |
+|:---:|---|---|---|---|:---:|---|
+| **DEF-SS-01** | Code & Concurrency Audit | `POST /api/bookings/online` (`booking.controller.ts#L156-L230`, `schema.prisma#L84-L114`) | `roomBlock` check runs outside `prisma.$transaction` with no cross-table lock between `booking_slots` and `room_blocks`, allowing a concurrent staff maintenance block and customer booking on the same `(roomId, date, slotIndex)`. | `BR-01`, `BR-02`, `BR-06`, `NFR-03` | **Critical** | **Reported (Open)** — [`#35#issuecomment-7060029335`](https://github.com/Phenwatsa/singslot-karaoke/issues/35#issuecomment-7060029335) |
+| **DEF-SS-02** | Schema & Logic Audit (Latent) | `GET /api/availability` & `POST /api/bookings/online` (`schema.prisma#L26-L29,#L95`, `availability.controller.ts#L86-L97`, `booking.controller.ts#L157-L164`) | Queries filter `booking_slots` by `booking: { status: 'CONFIRMED' }`, but `@@unique([roomId, bookingDate, slotIndex])` applies to all rows regardless of status. Marking a booking `CANCELLED` without deleting `booking_slots` would leave a "Zombie Slot" shown as available yet permanently rejecting bookings with `409 SLOT_CONFLICT`. *(Latent: no cancel endpoint exposed in Sprint 1.)* | `FR-03`, `FR-04`, `BR-02` | **Major (High)** | **Reported (Open — Latent)** — [`#35#issuecomment-7060029335`](https://github.com/Phenwatsa/singslot-karaoke/issues/35#issuecomment-7060029335) |
+| **DEF-SS-03** | Code & Error-Handling Audit | `generateBookingCode` & `createOnlineBooking` (`booking.controller.ts#L10-L14,#L186,#L250-L275`, `app.ts#L129-L141`) | `generateBookingCode` uses a 4-char `Math.random()` suffix with no retry loop, and the `P2002` catch block only handles `[roomId, bookingDate, slotIndex]` collisions—re-throwing `bookingCode` collisions as unhandled `HTTP 500`. | `FR-04`, `NFR-03` | **Major (High)** | **Reported (Open)** — [`#35#issuecomment-7060029335`](https://github.com/Phenwatsa/singslot-karaoke/issues/35#issuecomment-7060029335) |
+| **DEF-SS-04** | Security & Session Audit | Express CORS & Client Storage (`server/src/app.ts#L17`, `client/src/utils/session.ts#L3-L24`) | `app.use(cors())` uses permissive wildcard origin (`*`), and JWT tokens (`singslot_token`) are stored in `localStorage` rather than `HttpOnly` cookies. | Security Hardening / Origin & Session Hygiene | **Minor (Medium)** | **Reported (Open)** — [`#35#issuecomment-7060029335`](https://github.com/Phenwatsa/singslot-karaoke/issues/35#issuecomment-7060029335) |
 
 **Audit Summary:**
 
-1. Concurrency and slot collision lock (`BR-01`, `BR-02`) reliably rejected overlapping reservations with HTTP 409 `SLOT_CONFLICT`.
-2. Capacity limits (`BR-05`), operating hour boundaries (`BR-03`), and past slot rejections (`BR-04`) were enforced across both client UI controls and backend API endpoints.
-3. Strict customer data isolation (`BR-07`) and role-based staff endpoint protection (`BR-08`) returned HTTP 403 `FORBIDDEN` without information leakage.
-4. Relational database persistence across browser sessions and cross-role state synchronization between Customer and Staff views were verified.
+1. All 5 agreed live UAT scenarios (`UAT-01` to `UAT-05`) passed on the deployed Sprint 1 baseline (`singslot-00004-6mv`): single-user booking, sequential slot conflict (`409 SLOT_CONFLICT`), boundary validation (`400`), ownership/role isolation (`403 FORBIDDEN`), and persistence/Master Schedule sync.
+2. Independent code-level inspection of commit `aa5f109b97c157a143a7a9a94cd58dc02998467e` identified 4 additional concurrency, latent schema, error-handling, and security hardening defects (`DEF-SS-01`–`DEF-SS-04`), which have been formally submitted to SingSlot for triage and resolution under `Phenwatsa/singslot-karaoke#35`.
 
-> **Scope Limitation Statement:**  
-> The zero-defect finding above applies strictly to the scope of the five executed Sprint 1 UAT cases (`UAT-01` to `UAT-05`) on the tested SingSlot release revision (`singslot-00004-6mv`, commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`). It does not constitute a blanket certification that the entire partner application is defect-free or that all untested functionality has passed.
+> **Scope Statement:**  
+> Live UAT execution (`UAT-01` to `UAT-05`) verified expected behavior under sequential single-user/two-user test flows, whereas `DEF-SS-01` through `DEF-SS-04` were identified via source-level concurrency, schema, and security inspection of the deployed release (`aa5f109b97c157a143a7a9a94cd58dc02998467e`). Partner triage and retest verification remain pending.
 
 ---
 

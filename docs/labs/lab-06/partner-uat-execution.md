@@ -53,8 +53,8 @@ The assigned division of testing responsibilities between pair partners is:
 | **UAT-04** | Forbidden Role / Ownership | `FR-01`, `FR-05`, `FR-06`, `BR-07`, `BR-08`, `AC-01c`, `AC-05`, `AC-05b`, `TEST-01c`, `TEST-05`, `TEST-05b` | `@Apichaya251400` | `2026-11-20 20:53` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Sub-checks UAT-04A (Customer Ownership Isolation) and UAT-04B (Customer vs Staff Authorization) verified. Customer 1 owned 2 bookings (`BK-20261115-MQRX` and `BK-20261113-IA4Q`). Customer 2 had zero bookings (`count: 0`). Calling cross-customer detail API (`GET /api/bookings/718f0d84...`) and staff master schedule API (`GET /api/bookings/master?date=2026-11-21`) both returned HTTP 403 Forbidden (`FORBIDDEN`). Master Schedule navbar link hidden for Customer role. |
 | **UAT-05** | State Persistence & Synchronization | `FR-05`, `FR-06`, `BR-07`, `BR-08`, `AC-05`, `AC-06`, `TEST-05`, `TEST-06` | `@Pilaiwan3492` | `2026-11-20 23:25` | `singslot-00004-6mv` (`aa5f109`) | **`PASS`** | Hard reload (`Ctrl+F5`) retained Alice's booking. Staff logged in, accessed Master Schedule across all 9 rooms. Alice's `14:00–16:00` block displayed. Staff clicked block and viewed full details via role override (`BR-07`). |
 
-> **Scoped Acceptance Statement:**  
-> No release-blocking defects were identified within the scope of the five executed Sprint 1 UAT cases (UAT-01 to UAT-05) against the recorded release revision (`singslot-00004-6mv`, commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`).
+> **Scoped Execution Statement:**  
+> All 5 agreed Sprint 1 UAT cases (`UAT-01` to `UAT-05`) passed within their executed live UI/API scope against release revision `singslot-00004-6mv` (commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`). Subsequent code-level concurrency, schema, and security inspection identified 4 additional outgoing findings (`DEF-SS-01`–`DEF-SS-04`), formally reported at [`Phenwatsa/singslot-karaoke#35` (comment `7060029335`)](https://github.com/Phenwatsa/singslot-karaoke/issues/35#issuecomment-7060029335) and tracked in [`defect-triage.md`](defect-triage.md).
 
 ---
 
@@ -292,14 +292,18 @@ The following table identifies the six original screenshots preserved from PR #4
 
 ---
 
-## 6. Zero Release-Blocking Defect Finding Confirmation (Outgoing to SingSlot)
+## 6. Outgoing Findings & Scope Summary (To SingSlot)
 
-Based on the independent execution of all 5 agreed UAT test cases (`UAT-01` through `UAT-05`), the Whatsss UAT Team confirms:
-- **Total Cases Executed:** 5
-- **Passing Cases:** 5 (`100%` within executed scope)
-- **Failing Cases:** 0
-- **Blocked Cases:** 0
-- **Outgoing Release-Blocking Defects:** **0**
+Based on the independent execution of all 5 agreed UAT test cases (`UAT-01` through `UAT-05`) and subsequent source-level concurrency, schema, and security inspection of release `singslot-00004-6mv` (commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`):
+- **Total UAT Cases Executed:** 5
+- **Passing UAT Cases:** 5 (`100%` within executed live UI/API scope)
+- **Failing UAT Cases:** 0
+- **Blocked UAT Cases:** 0
+- **Outgoing Code/Audit Defect Reports Filed:** **4** (`DEF-SS-01` to `DEF-SS-04`) — posted at [`Phenwatsa/singslot-karaoke#35#issuecomment-7060029335`](https://github.com/Phenwatsa/singslot-karaoke/issues/35#issuecomment-7060029335) and detailed in [`docs/labs/lab-06/defect-triage.md`](defect-triage.md#2-outgoing-findings-register-partner-application-singslot):
+  - `DEF-SS-01` (**Critical**): TOCTOU race condition between `BookingSlot` and `RoomBlock` outside `prisma.$transaction`.
+  - `DEF-SS-02` (**High / Latent**): `CANCELLED` booking status would permanently lock `booking_slots` due to unconditional `@@unique([roomId, bookingDate, slotIndex])`.
+  - `DEF-SS-03` (**High**): Unhandled `P2002` `HTTP 500` crash on 4-char `bookingCode` collision.
+  - `DEF-SS-04` (**Medium**): Permissive wildcard `cors()` and JWT stored in `localStorage`.
 
 **Formal Scope Statement:**  
-No release-blocking defects were identified within the scope of the five executed Sprint 1 UAT cases (UAT-01 to UAT-05) against the recorded release revision (`singslot-00004-6mv`, commit `aa5f109b97c157a143a7a9a94cd58dc02998467e`). This evaluation is strictly limited to the five executed test cases and does not imply that unexecuted features or the entire application are defect-free.
+All five executed Sprint 1 UAT cases (`UAT-01` to `UAT-05`) passed during live functional testing. The four outgoing findings (`DEF-SS-01`–`DEF-SS-04`) were identified via independent source-level inspection of the exact deployed commit (`aa5f109b97c157a143a7a9a94cd58dc02998467e`) and submitted to the SingSlot team for triage and retest verification.
