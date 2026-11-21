@@ -362,6 +362,44 @@ describe('Feature F-02: Tenancy & Role-Based Access Control Suite (TEST-SEC-01, 
 
         expect(response.status).toBe(404);
       });
+
+      it('DEF-OUT-01 Regression (BR-10, AC-02-2): blocks ADMIN on mixed-case and uppercase financial routes (/api/Accounts, /api/Reports/summary, /api/Transactions)', async () => {
+        const upperAccRes = await request(app)
+          .get('/api/Accounts')
+          .set('Cookie', adminCookie);
+
+        expect(upperAccRes.status).toBe(403);
+        expect(upperAccRes.body.success).toBe(false);
+        expect(upperAccRes.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
+        expect(upperAccRes.body.data).toBeUndefined();
+
+        const upperRepRes = await request(app)
+          .get('/api/Reports/summary')
+          .set('Cookie', adminCookie);
+
+        expect(upperRepRes.status).toBe(403);
+        expect(upperRepRes.body.success).toBe(false);
+        expect(upperRepRes.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
+        expect(upperRepRes.body.data).toBeUndefined();
+
+        const upperTxnRes = await request(app)
+          .get('/api/Transactions')
+          .set('Cookie', adminCookie);
+
+        expect(upperTxnRes.status).toBe(403);
+        expect(upperTxnRes.body.success).toBe(false);
+        expect(upperTxnRes.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
+        expect(upperTxnRes.body.data).toBeUndefined();
+
+        const allCapsAccRes = await request(app)
+          .get('/API/ACCOUNTS/acc-user-a')
+          .set('Cookie', adminCookie);
+
+        expect(allCapsAccRes.status).toBe(403);
+        expect(allCapsAccRes.body.success).toBe(false);
+        expect(allCapsAccRes.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
+        expect(allCapsAccRes.body.data).toBeUndefined();
+      });
     });
   });
 });
