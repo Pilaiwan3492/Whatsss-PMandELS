@@ -306,4 +306,35 @@ Based on the independent execution of all 5 agreed UAT test cases (`UAT-01` thro
   - `DEF-SS-04` (**Medium**): Permissive wildcard `cors()` and JWT stored in `localStorage`.
 
 **Formal Scope Statement:**  
-All five executed Sprint 1 UAT cases (`UAT-01` to `UAT-05`) passed during live functional testing. The four outgoing findings (`DEF-SS-01`–`DEF-SS-04`) were identified via independent source-level inspection of the exact deployed commit (`aa5f109b97c157a143a7a9a94cd58dc02998467e`) and submitted to the SingSlot team for triage and retest verification.
+All five executed Sprint 1 UAT cases (`UAT-01` to `UAT-05`) passed during live functional testing. The four outgoing findings (`DEF-SS-01`–`DEF-SS-04`) were identified via independent source-level inspection of the baseline deployed commit (`aa5f109b97c157a143a7a9a94cd58dc02998467e`) and submitted to the SingSlot team for triage and resolution.
+
+---
+
+## 7. Independent Retest Sign-Off & Acceptance Decision (SingSlot Revision `singslot-00005-26q`)
+
+Following SingSlot's resolution of `DEF-SS-01`, `DEF-SS-02`, and `DEF-SS-03` via [PR #39](https://github.com/Phenwatsa/singslot-karaoke/pull/39) / [PR #40](https://github.com/Phenwatsa/singslot-karaoke/pull/40) and redeployment to Cloud Run revision **`singslot-00005-26q`** (commit `f3eb92d4ee5036fa6af0b6c36f1b903bcafb312d`), the Whatsss UAT Team conducted an independent retest on **`2026-11-22 02:56 – 03:01 ICT (UTC+7)`**.
+
+### 7.1 Retest Verification Table
+
+| Item / Defect ID | Verification Method | Retest Outcome | Evidence ID |
+| :---: | :--- | :---: | :---: |
+| **`DEF-SS-01`** | Code review of [`booking.controller.ts#L248-L283`](https://github.com/Phenwatsa/singslot-karaoke/blob/f3eb92d4ee5036fa6af0b6c36f1b903bcafb312d/server/src/controllers/booking.controller.ts#L248-L283) (`FOR UPDATE` room lock + in-transaction `RoomBlock` check) & [`prisma.ts#L12-L42`](https://github.com/Phenwatsa/singslot-karaoke/blob/f3eb92d4ee5036fa6af0b6c36f1b903bcafb312d/server/src/prisma.ts#L12-L42) + [CI Run #44941547401](https://github.com/Phenwatsa/singslot-karaoke/actions/runs/44941547401) (`105/105` server tests) | **`PASS`** | `EVD-RETEST-01`, `EVD-RETEST-02` |
+| **`DEF-SS-02`** | Code review of [`booking.controller.ts#L251-L258`](https://github.com/Phenwatsa/singslot-karaoke/blob/f3eb92d4ee5036fa6af0b6c36f1b903bcafb312d/server/src/controllers/booking.controller.ts#L251-L258) (`deleteMany` for `CANCELLED` booking slots inside locked transaction) + CI TDD regression test | **`PASS`** | `EVD-RETEST-01`, `EVD-RETEST-02` |
+| **`DEF-SS-03`** | Code review of [`booking.controller.ts#L240-L245`](https://github.com/Phenwatsa/singslot-karaoke/blob/f3eb92d4ee5036fa6af0b6c36f1b903bcafb312d/server/src/controllers/booking.controller.ts#L240-L245) (`MAX_CODE_RETRIES = 5` retry loop on `P2002` `bookingCode` collision) + CI TDD regression test | **`PASS`** | `EVD-RETEST-01`, `EVD-RETEST-02` |
+| **`DEF-SS-04`** | Partner triage review (`localStorage` per Sprint 1 contract `AC-01`/`AC-01e`; `cors()` deferred as Sprint 2 hardening advisory) | **Acknowledged (Non-Blocking)** | — |
+| **Live Spot-Check (`UAT-01` / `UAT-05`)** | Live API probes (`/api/health` 200 `UP`, `/api/ready` 200 `db: connected`, `/api/rooms` 9 rooms, `/api/availability?date=2026-11-22` 200) + Customer booking **`BK-20261122-LB00`** (Room `S01`, `2026-11-22`, `10:00–12:00`, 2 guests) + Staff Master Schedule sync verification | **`PASS`** | `EVD-RETEST-03`, `EVD-RETEST-04` |
+
+### 7.2 Retest Evidence Index
+
+| Evidence ID | Description | File Path |
+| :---: | :--- | :--- |
+| **`EVD-RETEST-01`** | Fixed code on commit `f3eb92d4` (`booking.controller.ts#L240-L283`) showing `DEF-SS-01`, `DEF-SS-02`, and `DEF-SS-03` resolutions | [`retest-01-code-fix-f3eb92d.jpg`](evidence/retest-01-code-fix-f3eb92d.jpg) |
+| **`EVD-RETEST-02`** | GitHub Actions CI & Cloud Run Deploy Run `#44941547401` (`Success`, revision `singslot-00005-26q`, smoke tests passed) | [`retest-02-ci-deploy-00005.jpg`](evidence/retest-02-ci-deploy-00005.jpg) |
+| **`EVD-RETEST-03`** | Live booking confirmation on `singslot-00005-26q`: `BK-20261122-LB00`, Room `S01`, `2026-11-22`, `10:00–12:00`, 2 guests | [`retest-03-live-booking-lb00.jpg`](evidence/retest-03-live-booking-lb00.jpg) |
+| **`EVD-RETEST-04`** | Live Staff Master Schedule sync showing `BK-20261122-LB00` (`CONFIRMED`, `Alice Customer`, `2 guests`) on `2026-11-22` | [`retest-04-staff-master-schedule-lb00.jpg`](evidence/retest-04-staff-master-schedule-lb00.jpg) |
+
+### 7.3 Formal Sprint 1 Acceptance Decision (Issued to SingSlot)
+- **Decision:** **`Accepted`**
+- **Evaluated Revision:** `singslot-00005-26q` (`f3eb92d4ee5036fa6af0b6c36f1b903bcafb312d`)
+- **Signed Off By:** `@Pilaiwan3492` & `@Apichaya251400` (Whatsss UAT Team) — `2026-11-22 03:01 ICT`
+- **Notes:** All Sprint 1 UAT flows (`UAT-01`–`UAT-05`) and all Critical/High defects (`DEF-SS-01`–`DEF-SS-03`) are verified resolved without regression. `DEF-SS-04` (`cors()` origin restriction) is logged as a non-blocking Sprint 2 hardening recommendation.
