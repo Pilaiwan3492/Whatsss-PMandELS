@@ -11,22 +11,28 @@
 |---|---|---|---|---|
 | `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original 33 Sprint 1 baseline tests (subsequently expanded to 35 with Lab 5/6 security and concurrency tests). |
 | `v1.1-draft` | **Proposed (Lab 7 Part A Contract)** | 2026-11-25 | Lab 7 / PR #51 / Issue #47 | Added 10 proposed `F-07` / `BR-07 v1.1` test cases (`TEST-REPAY-07`..`16`, initially **Specified Only**). |
-| `v1.1-impl` | **Implemented and Passed (Mock/API + Live PostgreSQL 16 CI)** | 2026-11-26 | Lab 7 / PR #52 / Issue #48 | Verified `TEST-REPAY-07`..`16` (`46/46` in `repayment.test.ts`) and `LIVE-01`..`09` (`18/18` in `db-repayment.test.ts` on PostgreSQL 16 `whatsss_test`) via GitHub Actions CI Run #89 (`dfbb983`) and Run #90 (`2c19d98`). |
+| `v1.1-impl` | **Implemented and Passed (Mock/API + Live PostgreSQL 16 CI)** | 2026-11-26 | Lab 7 / PR #52 / Issue #48 | Verified `TEST-REPAY-01`..`16` (`46/46` in `repayment.test.ts` Mock Prisma) and `LIVE-01`..`09` (`18/18` in `db-repayment.test.ts` on PostgreSQL 16 `whatsss_test`) via GitHub Actions CI Run #89 (`dfbb983`), Run #90 (`2c19d98`), and Run #91 (`a525a26`). |
 
 ---
 
 ## 1. Test Specification Matrix
 
-The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or system-level contract to an executable automated test case (`TEST-XX`), specifying test level, preconditions, inputs, and expected outcomes across **45 unique Test IDs**:
+### 1.1 Test-Level Classification
+| Test Group | Test IDs | Test File | Test Level | Database |
+|---|---|---|---|---|
+| **API / Mock** | `TEST-REPAY-01`..`16` | `server/tests/integration/repayment.test.ts` | API integration tests with Mock Prisma | No real database persistence (mocked Prisma) |
+| **Live DB** | `LIVE-01`..`09` *(plus `TEST-REPAY-CONCURRENT-*`)* | `server/tests/integration/db-repayment.test.ts` | Real PostgreSQL integration tests | PostgreSQL 16 / `whatsss_test` |
+
+The following Mock/API, Unit, and E2E test suite maps each applicable Acceptance Criteria (`AC-XX`) or system-level contract to an executable automated test case (`TEST-XX`), specifying test level, preconditions, inputs, and expected outcomes across **45 unique Test IDs**:
 
 * **Authentication (`TEST-AUTH-01`..`05`):** 5 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
 * **Security & HTTP Boundary (`TEST-SEC-01`..`06`):** 6 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
 * **Opening Balance (`TEST-OPEN-01`..`04`):** 4 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
 * **Income (`TEST-INC-01`..`02`):** 2 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
 * **Expense & Split Allocation (`TEST-EXP-01`..`02`, `TEST-VAL-01`, `TEST-ALLOC-01`..`03`):** 6 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
-* **Credit Card Repayment (`TEST-REPAY-01`..`16`, `TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`):** 18 *(8 existing Implemented/Executed/Passed Sprint 1/Lab 6 tests + 10 Lab 7 Mock/API tests `TEST-REPAY-07`..`16`: **Specified, Implemented, Executed, Passed locally** in `repayment.test.ts`)*
+* **Credit Card Repayment (`TEST-REPAY-01`..`16`, `TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`):** 18 *(8 existing Implemented/Executed/Passed Sprint 1/Lab 6 tests + 10 Lab 7 Mock/API tests `TEST-REPAY-07`..`16`: **Specified, Implemented, Executed, Passed** in `repayment.test.ts`)*
 * **Balance, History, Persistence & E2E (`TEST-BAL-01`, `TEST-HIST-01`, `TEST-PERSIST-01`, `TEST-E2E-01`):** 4 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
-* **Total:** `5 + 6 + 4 + 2 + 6 + 18 + 4 = 45` unique Test IDs *(plus 9 isolated Live PostgreSQL cases `LIVE-01`..`09` in Section 2)*.
+* **Total:** `5 + 6 + 4 + 2 + 6 + 18 + 4 = 45` unique Test IDs *(separate from the 9 isolated Live PostgreSQL cases `LIVE-01`..`09` in Section 2)*.
 
 | Test ID | Linked AC / System Contract | Target Feature | Test Level | Preconditions & Input | Expected Result |
 |---|---|:---:|:---:|---|---|
@@ -66,9 +72,9 @@ The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or s
 | **`TEST-REPAY-11`** | `AC-07-9`, `BR-07` | `F-07` | Integration | Dedicated fixture: Bank = `10000.00`, credit-card Debt = `0.00`. Submit a positive repayment request (e.g. `500.00`). | HTTP `422 Unprocessable Entity` (`ZERO_OUTSTANDING_DEBT`), zero transactions/allocation lines written, and both balances unchanged. |
 | **`TEST-REPAY-12`** | `AC-07-5`, `AC-07-8`, `BR-07` | `F-07` | Integration | Dedicated fixture: Bank = `2999.99`, credit-card Debt = `3000.00`. Submit full-settlement amount `3000.00`. | HTTP `422 Unprocessable Entity` (`INSUFFICIENT_FUNDS`); full-settlement reserve exception does not waive the sufficient-funds requirement; no records written and balances unchanged. |
 | **`TEST-REPAY-13`** | `AC-07-6` | `F-07` | Integration | Submit a positive repayment amount with more than 2 decimal places (e.g. `500.001`), and separately submit a missing amount. | HTTP `400 Bad Request` (`INVALID_AMOUNT`) for each request; no transaction or allocation line created. |
-| **`TEST-REPAY-14`** | `AC-07-10`, `BR-07` | `F-07` | Integration *(Specified Only)* | Under the Sprint 1 Scoped Design Decision (`FR-15` deferred to Sprint 2), submit `POST /api/transactions/repayment` targeting non-`LOAN_TAKEN` account types (`LOAN_GIVEN`, `CASH`, `INCOME`, `EXPENSE`) or a non-`CASH` source account. | HTTP `400 Bad Request` (`INVALID_ACCOUNT_TYPE`), zero transaction or allocation records written, and all account balances remain unchanged. *(Sprint 2 `FR-15` must add an explicit subtype/discriminator before generic `LOAN_TAKEN` borrowing accounts are created.)* |
-| **`TEST-REPAY-15`** | `AC-07-7`, `BR-07` | `F-07` | Integration *(Specified Only)* | Separate/reset fixtures (Bank = `10000.00`, Debt = `3000.00`, where 10% = `300.00 < 500.00` so `minRepayment = 500.00`): (a) submit `499.99`; (b) reset/new fixture, submit `500.00`. | (a) HTTP `422 Unprocessable Entity` (`MIN_REPAYMENT_NOT_MET`), zero records written; (b) HTTP `201 Created`, Debt = `2500.00`, Bank = `9500.00` (proves 500 THB minimum floor). |
-| **`TEST-REPAY-16`** | `AC-07-7`..`AC-07-9`, `BR-07` | `F-07` | Integration *(Specified Only)* | Separate deterministic fixtures for server validation precedence: (a) Bank = `200.00`, Debt = `3000.00`, submit `400.00` (`INSUFFICIENT_FUNDS` & `< minRepayment`); (b) Bank = `450.00`, Debt = `3000.00`, submit `400.00` (`< minRepayment` & remaining `50.00 < 100.00`); (c) Bank = `2999.99`, Debt = `3000.00`, submit `3000.00` (full settlement). | (a) `422 INSUFFICIENT_FUNDS` takes precedence over `MIN_REPAYMENT_NOT_MET`; (b) `422 MIN_REPAYMENT_NOT_MET` takes precedence over `MINIMUM_CASH_RESERVE_VIOLATION`; (c) `422 INSUFFICIENT_FUNDS`; zero records written and balances unchanged in all cases. |
+| **`TEST-REPAY-14`** | `AC-07-10`, `BR-07` | `F-07` | Integration (Mock Prisma) *(Specified, Implemented, Executed, Passed)* | Under the Sprint 1 Scoped Design Decision (`FR-15` deferred to Sprint 2), submit `POST /api/transactions/repayment` targeting non-`LOAN_TAKEN` account types (`LOAN_GIVEN`, `CASH`, `INCOME`, `EXPENSE`) or a non-`CASH` source account. | HTTP `400 Bad Request` (`INVALID_ACCOUNT_TYPE`), zero transaction or allocation records written, and all account balances remain unchanged. *(Sprint 2 `FR-15` must add an explicit subtype/discriminator before generic `LOAN_TAKEN` borrowing accounts are created.)* |
+| **`TEST-REPAY-15`** | `AC-07-7`, `BR-07` | `F-07` | Integration (Mock Prisma) *(Specified, Implemented, Executed, Passed)* | Separate/reset fixtures (Bank = `10000.00`, Debt = `3000.00`, where 10% = `300.00 < 500.00` so `minRepayment = 500.00`): (a) submit `499.99`; (b) reset/new fixture, submit `500.00`. | (a) HTTP `422 Unprocessable Entity` (`MIN_REPAYMENT_NOT_MET`), zero records written; (b) HTTP `201 Created`, Debt = `2500.00`, Bank = `9500.00` (proves 500 THB minimum floor). |
+| **`TEST-REPAY-16`** | `AC-07-7`..`AC-07-9`, `BR-07` | `F-07` | Integration (Mock Prisma) *(Specified, Implemented, Executed, Passed)* | Separate deterministic fixtures for server validation precedence: (a) Bank = `200.00`, Debt = `3000.00`, submit `400.00` (`INSUFFICIENT_FUNDS` & `< minRepayment`); (b) Bank = `450.00`, Debt = `3000.00`, submit `400.00` (`< minRepayment` & remaining `50.00 < 100.00`); (c) Bank = `2999.99`, Debt = `3000.00`, submit `3000.00` (full settlement, cross-referenced to `TEST-REPAY-12`). | (a) `422 INSUFFICIENT_FUNDS` takes precedence over `MIN_REPAYMENT_NOT_MET`; (b) `422 MIN_REPAYMENT_NOT_MET` takes precedence over `MINIMUM_CASH_RESERVE_VIOLATION`; (c) `422 INSUFFICIENT_FUNDS`; zero records written and balances unchanged in all cases. |
 | **`TEST-REPAY-CONCURRENT-DEBT`** | `AC-07-4`, `BR-07`, `NFR-DATA-01` | `F-07` | Integration / Live DB | Dedicated fixture: Debt = `3000.00`, Bank = `10000.00`. Two concurrent repayment requests of `2000.00 THB` each submitted simultaneously with pessimistic row locks. | Exactly 1 request succeeds with HTTP `201 Created`; 1 request fails with HTTP `422 Unprocessable Entity` (`REPAYMENT_EXCEEDS_DEBT`). Exactly 1 Transaction and 1 AllocationLine created; final debt is `1000.00 THB` and never negative. |
 | **`TEST-REPAY-CONCURRENT-FUNDS`** | `AC-07-5`, `BR-07`, `NFR-DATA-01` | `F-07` | Integration / Live DB | Dedicated fixture: Debt = `5000.00`, Bank = `3000.00`. Two concurrent repayment requests of `2000.00 THB` each submitted simultaneously with pessimistic row locks. | Exactly 1 request succeeds with HTTP `201 Created`; 1 request fails with HTTP `422 Unprocessable Entity` (`INSUFFICIENT_FUNDS`). Exactly 1 Transaction and 1 AllocationLine created; final bank balance is `1000.00 THB` and never negative. |
 | **`TEST-BAL-01`** | `AC-08-1` | `F-08` | Unit | Execute balance calculator service against the Golden Journey events. | Final balances: Bank `27000.00`, CC Debt `0.00`, Income `20000.00`, Expense `3000.00`. |
@@ -83,31 +89,48 @@ Each case below uses a dedicated test user, dedicated `CASH` / `LOAN_TAKEN` / `E
 
 | Test ID | Test Scenario | Initial State (Cash / Debt) | Request Amount | Expected Result | Error Code | Persistence Verification | Actual Result & Status |
 |---|---|---:|---:|---|---|---|---|
-| **`LIVE-01`** | Min repayment below 10% threshold | `10000.00` / `6000.00` | `599.99` | HTTP `422` | `MIN_REPAYMENT_NOT_MET` | 0 new txns/allocs; Cash `10000.00`, Debt `6000.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89 & #231)* |
-| **`LIVE-02`** | Exact 10% minimum repayment | `10000.00` / `6000.00` | `600.00` | HTTP `201` | — | 1 txn + 1 alloc; Cash `9400.00`, Debt `5400.00`, Expense `6000.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89 & #231)* |
-| **`LIVE-03`** | Minimum cash reserve violation | `1599.99` / `3000.00` | `1500.00` | HTTP `422` | `MINIMUM_CASH_RESERVE_VIOLATION` | 0 new txns/allocs; balances unchanged | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89 & #231)* |
-| **`LIVE-04`** | Exact `100.00` cash reserve boundary | `1600.00` / `3000.00` | `1500.00` | HTTP `201` | — | 1 txn + 1 alloc; Cash `100.00`, Debt `1500.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89 & #231)* |
-| **`LIVE-05`** | Zero outstanding debt rejection | `10000.00` / `0.00` | `500.00` | HTTP `422` | `ZERO_OUTSTANDING_DEBT` | 0 new txns/allocs; Cash `10000.00`, Debt `0.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89 & #231)* |
-| **`LIVE-06`** | Full settlement reserve exemption | `3000.00` / `3000.00` | `3000.00` | HTTP `201` | — | 1 txn + 1 alloc; Cash `0.00`, Debt `0.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89 & #231)* |
-| **`LIVE-07`** | Insufficient funds on full settlement | `2999.99` / `3000.00` | `3000.00` | HTTP `422` | `INSUFFICIENT_FUNDS` | 0 new txns/allocs; balances unchanged | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89 & #231)* |
-| **`LIVE-08`** | Below-500 full settlement requirement | `10000.00` / `499.99` | `499.98` then `499.99` | `422` then `201` | `MIN_REPAYMENT_NOT_MET` | `499.98` unchanged; `499.99` $\rightarrow$ Cash `9500.01`, Debt `0.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89 & #231)* |
-| **`LIVE-09`** | `ROUND_HALF_UP` boundary (`5555.55`) | `10000.00` / `5555.55` | `555.55` then `555.56` | `422` then `201` | `MIN_REPAYMENT_NOT_MET` | `555.55` unchanged; `555.56` $\rightarrow$ Cash `9444.44`, Debt `4999.99` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89 & #231)* |
+| **`LIVE-01`** | Min repayment below 10% threshold | `10000.00` / `6000.00` | `599.99` | HTTP `422` | `MIN_REPAYMENT_NOT_MET` | 0 new txns/allocs; Cash `10000.00`, Debt `6000.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89, #90, #91)* |
+| **`LIVE-02`** | Exact 10% minimum repayment | `10000.00` / `6000.00` | `600.00` | HTTP `201` | — | 1 txn + 1 alloc; Cash `9400.00`, Debt `5400.00`, Expense `6000.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89, #90, #91)* |
+| **`LIVE-03`** | Minimum cash reserve violation | `1599.99` / `3000.00` | `1500.00` | HTTP `422` | `MINIMUM_CASH_RESERVE_VIOLATION` | 0 new txns/allocs; balances unchanged | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89, #90, #91)* |
+| **`LIVE-04`** | Exact `100.00` cash reserve boundary | `1600.00` / `3000.00` | `1500.00` | HTTP `201` | — | 1 txn + 1 alloc; Cash `100.00`, Debt `1500.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89, #90, #91)* |
+| **`LIVE-05`** | Zero outstanding debt rejection | `10000.00` / `0.00` | `500.00` | HTTP `422` | `ZERO_OUTSTANDING_DEBT` | 0 new txns/allocs; Cash `10000.00`, Debt `0.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89, #90, #91)* |
+| **`LIVE-06`** | Full settlement reserve exemption | `3000.00` / `3000.00` | `3000.00` | HTTP `201` | — | 1 txn + 1 alloc; Cash `0.00`, Debt `0.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89, #90, #91)* |
+| **`LIVE-07`** | Insufficient funds on full settlement | `2999.99` / `3000.00` | `3000.00` | HTTP `422` | `INSUFFICIENT_FUNDS` | 0 new txns/allocs; balances unchanged | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89, #90, #91)* |
+| **`LIVE-08`** | Below-500 full settlement requirement | `10000.00` / `499.99` | `499.98` then `499.99` | `422` then `201` | `MIN_REPAYMENT_NOT_MET` | `499.98` unchanged; `499.99` $\rightarrow$ Cash `9500.01`, Debt `0.00` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89, #90, #91)* |
+| **`LIVE-09`** | `ROUND_HALF_UP` boundary (`5555.55`) | `10000.00` / `5555.55` | `555.55` then `555.56` | `422` then `201` | `MIN_REPAYMENT_NOT_MET` | `555.55` unchanged; `555.56` $\rightarrow$ Cash `9444.44`, Debt `4999.99` | **Specified, Implemented, Executed, Passed** *(GitHub Actions CI Run #89, #90, #91)* |
 
 ### 2.1 Verified CI Execution Evidence
 | Item | Verified Evidence |
 |---|---|
-| **Latest Verified CI Run (Docker & Test)** | GitHub Actions Run #90 ([`45683702676`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45683702676)) — `CI and Docker Build (C-01)` on commit `2c19d985958b4eae79436f08e8d395ca48c06119` (`2c19d98`); prior Run #89 ([`45678341674`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45678341674)) on `dfbb983` |
-| **Latest Verified CI Run (Full Pipeline)** | GitHub Actions Run #232 ([`45683692686`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45683692686)) — `Continuous Integration (CI)` (`Backend Test & Build`, `Frontend Test & Build`, `Docker Container Build & Probe`, `Secret & Credential Leak Scan`, `Check C-03`) on `2c19d98`; prior Run #231 (`45678329333`) on `dfbb983` |
+| **Latest Verified CI Run (Docker & Test)** | GitHub Actions Run #91 ([`45685672856`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45685672856)) — `CI and Docker Build (C-01)` on commit `a525a26fa2aa7f7daa480d3ec1598cc1da873ce1` (`a525a26`); prior Run #90 (`45683702676` on `2c19d98`) & Run #89 (`45678341674` on `dfbb983`) |
+| **Latest Verified CI Run (Full Pipeline)** | GitHub Actions Run #233 (`45685662408`) — `Continuous Integration (CI)` (`Backend Test & Build`, `Frontend Test & Build`, `Docker Container Build & Probe`, `Secret & Credential Leak Scan`, `Check C-03`) on `a525a26`; prior Run #232 (`45683692686` on `2c19d98`) & Run #231 (`45678329333` on `dfbb983`) |
 | **Database** | PostgreSQL 16 (`postgres:16-alpine`), test database `whatsss_test` |
 | **Repayment Mock/API Tests** | `repayment.test.ts`: 46 passed, 0 failed |
-| **Database Repayment Tests** | `db-repayment.test.ts`: 18 passed, 0 failed (`9` WP-05 + `9` Lab 7 `LIVE-01`..`09`) |
+| **Database Repayment Tests** | `db-repayment.test.ts`: 18 passed, 0 failed (`9` WP-05 + `9` Lab 7 `LIVE-01`..`09` on `a525a26`) |
 | **Overall CI Conclusion** | `completed / success` |
 
 ---
 
-## 3. Lab 7 Maintenance Amendment and Revision History
+## 3. Issue #48 Requirement-to-Test Traceability
+
+| Requirement | Implementation | Tests | Evidence |
+|---|---|---|---|
+| Minimum repayment (`max(500.00, 10%)` & `< 500.00` full) | `repayment.service.ts` (`calculateMinimumRepayment`) | `TEST-REPAY-07`, `08`, `15`, `LIVE-01`, `02`, `08`, `09` | 46/46 Mock/API passed; Live DB passed in CI Run #91 |
+| Cash reserve (`>= 100.00` partial) | `repayment.service.ts` (`MIN_CASH_RESERVE`) | `TEST-REPAY-09`, `10`, `LIVE-03`, `04` | 46/46 Mock/API passed; Live DB passed in CI Run #91 |
+| Full settlement exemption & sufficient funds | `repayment.service.ts` (`isFullSettlement`) | `TEST-REPAY-10`, `12`, `LIVE-06`, `07` | 46/46 Mock/API passed; Live DB passed in CI Run #91 |
+| Decimal rounding (`ROUND_HALF_UP`) | `repayment.service.ts` (`Prisma.Decimal`) | `TEST-REPAY-07`, `LIVE-09` | 46/46 Mock/API passed; Live DB passed in CI Run #91 |
+| Zero debt (`422 ZERO_OUTSTANDING_DEBT`) | `repayment.service.ts` (`recordRepayment`) | `TEST-REPAY-11`, `LIVE-05` | 46/46 Mock/API passed; Live DB passed in CI Run #91 |
+| Database persistence & atomic row locking | `repayment.service.ts` (`$transaction`, `acquireAccountRowLocks`) | `LIVE-01`..`09`, `TEST-REPAY-CONCURRENT-*` | 18/18 Live DB passed in CI Run #91 (`whatsss_test`) |
+| Tenancy isolation (`BR-01`) | `repayment.service.ts` (`user_id` ownership check) | `TEST-REPAY-06`, `access.test.ts` | 18/18 `access.test.ts` + 46/46 `repayment.test.ts` passed |
+| Expense exclusion (`BR-08`) | `repayment.service.ts` (`LOAN_TAKEN` target) | `TEST-REPAY-02`, `LIVE-02`, `golden-journey.test.ts` | Verified `total_expense` unchanged |
+| Admin boundary (`BR-10`) | `roleGuard.ts` | `TEST-REPAY-06`, `roleGuard.test.ts` | 4/4 `roleGuard.test.ts` + `403` check passed |
+
+---
+
+## 4. Lab 7 Maintenance Amendment and Revision History
 
 - **v1.0 — Accepted Sprint 1 baseline (`v0.1.0-sprint1`):** Original test specification accepted for Deliverable 1 (`f84e7b16`); preserve this baseline and its historical acceptance evidence.
 - **v1.1 — Lab 7 maintenance implementation (`2026-11-26`, PR #52 / Issue #48, `@Pilaiwan3492`):**
-  - Verified Live PostgreSQL 16 integration tests through GitHub Actions CI Run #89 (`dfbb983`) and latest Run #90 (`45683702676`) / Run #232 (`45683692686`) on `2c19d985958b4eae79436f08e8d395ca48c06119`. Updated `LIVE-01` through `LIVE-09` execution statuses according to verified CI evidence.
-  - **Test Evidence Status & Inventory Check:** 45 unique Mock/API & Unit/E2E Test IDs (`5 + 6 + 4 + 2 + 6 + 18 + 4 = 45`, all 45 *Specified, Implemented, Executed, Passed*; 35 baseline/Lab 6 tests evidenced in [`docs/sprints/sprint-1/evidence-index.md`](evidence-index.md) and [`docs/labs/lab-06/defect-resolution.md`](../../labs/lab-06/defect-resolution.md)) plus 9 Live PostgreSQL `BR-07 v1.1` cases (`LIVE-01`..`09`, all 9 *Specified, Implemented, Executed, Passed* in CI Run #89 / #231). Substantive teammate review (`@Apichaya251400`) remains required before merge.
+  - Updated `TEST-REPAY-14`..`16` statuses to **Specified, Implemented, Executed, Passed** (Mock Prisma) and added Section 1.1 Test-Level Classification distinguishing Mock Prisma (`repayment.test.ts`) from Live PostgreSQL 16 (`db-repayment.test.ts`).
+  - Verified Live PostgreSQL 16 integration tests through GitHub Actions CI Run #89 (`dfbb983`), Run #90 (`2c19d98`), and Run #91 (`45685672856` on `a525a26fa2aa7f7daa480d3ec1598cc1da873ce1`), plus Section 3 Issue #48 traceability.
+  - **Test Evidence Status & Inventory Check:** 45 unique Mock/API & Unit/E2E Test IDs (`5 + 6 + 4 + 2 + 6 + 18 + 4 = 45`, all 45 *Specified, Implemented, Executed, Passed*; 35 baseline/Lab 6 tests evidenced in [`docs/sprints/sprint-1/evidence-index.md`](evidence-index.md) and [`docs/labs/lab-06/defect-resolution.md`](../../labs/lab-06/defect-resolution.md)) plus 9 Live PostgreSQL `BR-07 v1.1` cases (`LIVE-01`..`09`, all 9 *Specified, Implemented, Executed, Passed* in CI Run #89 / #90 / #91). Substantive teammate review (`@Apichaya251400`) remains required before merge.

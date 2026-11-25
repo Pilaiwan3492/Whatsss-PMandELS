@@ -782,17 +782,29 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
     return { id: user.id, cookie: `token=${token}; Path=/; HttpOnly; SameSite=Lax` };
   }
 
-  async function createRepaymentTestAccounts(userId: string) {
+  async function createRepaymentTestAccounts(
+    userId: string,
+    options?: { failAfterCash?: boolean }
+  ) {
     const cash = await prisma.account.create({
       data: { user_id: userId, name: 'Live Test Checking', type: 'CASH', opening_balance: new Prisma.Decimal('0.00') }
     });
+    createdAccountIds.push(cash.id);
+
+    if (options?.failAfterCash) {
+      throw new Error('Simulated partial fixture setup failure after CASH account creation');
+    }
+
     const cc = await prisma.account.create({
       data: { user_id: userId, name: 'Live Test Credit Card', type: 'LOAN_TAKEN', opening_balance: new Prisma.Decimal('0.00') }
     });
+    createdAccountIds.push(cc.id);
+
     const expense = await prisma.account.create({
       data: { user_id: userId, name: 'Live Test Dining', type: 'EXPENSE', opening_balance: new Prisma.Decimal('0.00') }
     });
-    createdAccountIds.push(cash.id, cc.id, expense.id);
+    createdAccountIds.push(expense.id);
+
     return { cashId: cash.id, ccId: cc.id, expenseId: expense.id };
   }
 
@@ -987,18 +999,26 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
     await cleanupTrackedTransactions();
   });
 
-  afterAll(async () => {
-    if (isDbConnected && prisma) {
-      await cleanupTrackedTransactions();
-      if (createdAccountIds.length > 0) {
-        await prisma.account.deleteMany({ where: { id: { in: [...createdAccountIds] } } });
-      }
-      if (createdUserIds.length > 0) {
-        await prisma.user.deleteMany({ where: { id: { in: [...createdUserIds] } } });
-      }
+  async function cleanupTrackedAccountsAndUsers() {
+    if (!isDbConnected || !prisma) return;
+    await cleanupTrackedTransactions();
+    if (createdAccountIds.length > 0) {
+      await prisma.account.deleteMany({ where: { id: { in: [...createdAccountIds] } } });
+      createdAccountIds.length = 0;
     }
-    if (prisma) {
-      await prisma.$disconnect();
+    if (createdUserIds.length > 0) {
+      await prisma.user.deleteMany({ where: { id: { in: [...createdUserIds] } } });
+      createdUserIds.length = 0;
+    }
+  }
+
+  afterAll(async () => {
+    try {
+      await cleanupTrackedAccountsAndUsers();
+    } finally {
+      if (prisma) {
+        await prisma.$disconnect();
+      }
     }
   });
 
@@ -1078,5 +1098,38 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
 
     const okRes = await postLiveRepayment(555.56);
     await assertAcceptedRepaymentPersisted(okRes, before, '555.56', '9444.44', '4999.99', '5555.55');
+  });
+
+  it('LIVE-CLEANUP-01: tracks and cleans up partially created accounts when fixture setup fails mid-way', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    const partialUser = await createRepaymentTestUser();
+    const partialUserId = partialUser.id;
+    let partialError: Error | null = null;
+
+    try {
+      await createRepaymentTestAccounts(partialUserId, { failAfterCash: true });
+    } catch (err: any) {
+      partialError = err;
+    }
+
+    expect(partialError).not.toBeNull();
+    // Verify the CASH account created before the failure was tracked immediately
+    const partialAccountsBeforeCleanup = await prisma.account.findMany({ where: { user_id: partialUserId } });
+    expect(partialAccountsBeforeCleanup).toHaveLength(1);
+    expect(createdAccountIds).toContain(partialAccountsBeforeCleanup[0].id);
+
+    // Clean up only the partially created account and user without affecting main suite fixtures
+    const partialAccId = partialAccountsBeforeCleanup[0].id;
+    await prisma.account.deleteMany({ where: { id: partialAccId } });
+    await prisma.user.deleteMany({ where: { id: partialUserId } });
+    const accIdx = createdAccountIds.indexOf(partialAccId);
+    if (accIdx !== -1) createdAccountIds.splice(accIdx, 1);
+    const usrIdx = createdUserIds.indexOf(partialUserId);
+    if (usrIdx !== -1) createdUserIds.splice(usrIdx, 1);
+
+    const remainingAccounts = await prisma.account.findMany({ where: { user_id: partialUserId } });
+    const remainingUsers = await prisma.user.findMany({ where: { id: partialUserId } });
+    expect(remainingAccounts).toHaveLength(0);
+    expect(remainingUsers).toHaveLength(0);
   });
 });
