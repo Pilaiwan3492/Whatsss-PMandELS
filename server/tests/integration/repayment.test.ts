@@ -775,17 +775,43 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
     }
   }
 
-  async function postRepayment(amount: number | string, toAccountId = CC_ACCOUNT_ID) {
+  async function postRepayment(amount: number | string | undefined, toAccountId = CC_ACCOUNT_ID, fromAccountId = CHECKING_ID) {
+    const payload: Record<string, unknown> = {
+      from_account_id: fromAccountId,
+      to_account_id: toAccountId,
+      transaction_date: '2026-11-06'
+    };
+    if (amount !== undefined) {
+      payload.amount = amount;
+    }
     return request(app)
       .post('/api/transactions/repayment')
       .set('Origin', TRUSTED_ORIGIN)
       .set('Cookie', userACookie)
-      .send({
-        from_account_id: CHECKING_ID,
-        to_account_id: toAccountId,
-        amount,
-        transaction_date: '2026-11-06'
-      });
+      .send(payload);
+  }
+
+  async function expectRejectedRepaymentUnchanged(
+    res: request.Response,
+    expectedStatus: number,
+    expectedCode: string,
+    txnBefore: number,
+    allocBefore: number,
+    expectedBank: number,
+    expectedDebt: number
+  ) {
+    expect(res.status).toBe(expectedStatus);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe(expectedCode);
+    expect(mockTransactions.length).toBe(txnBefore);
+    expect(mockAllocationLines.length).toBe(allocBefore);
+
+    const summaryRes = await request(app)
+      .get('/api/reports/summary')
+      .set('Cookie', userACookie);
+    expect(summaryRes.status).toBe(200);
+    expect(Number(summaryRes.body.data.bank_balance)).toBe(expectedBank);
+    expect(Number(summaryRes.body.data.credit_debt)).toBe(expectedDebt);
   }
 
   describe('TEST-REPAY-07: 10% Minimum & ROUND_HALF_UP Boundaries (AC-07-7, BR-07)', () => {
@@ -856,10 +882,9 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
     it('rejects partial 1500.00 when Bank is 1599.99 (remaining 99.99 < 100.00)', async () => {
       seedDebtFixture('1599.99', '3000.00');
       const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(1500.00);
-      expect(res.status).toBe(422);
-      expect(res.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
-      expect(mockTransactions.length).toBe(txnBefore);
+      await expectRejectedRepaymentUnchanged(res, 422, 'MINIMUM_CASH_RESERVE_VIOLATION', txnBefore, allocBefore, 1599.99, 3000.00);
     });
   });
 
@@ -884,10 +909,9 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
     it('rejects 500.00 when Debt is 0.00 with 422 ZERO_OUTSTANDING_DEBT', async () => {
       seedDebtFixture('10000.00', '0.00');
       const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(500.00);
-      expect(res.status).toBe(422);
-      expect(res.body.error.code).toBe('ZERO_OUTSTANDING_DEBT');
-      expect(mockTransactions.length).toBe(txnBefore);
+      await expectRejectedRepaymentUnchanged(res, 422, 'ZERO_OUTSTANDING_DEBT', txnBefore, allocBefore, 10000.00, 0.00);
     });
   });
 
@@ -895,28 +919,80 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
     it('rejects full settlement 3000.00 when Bank is 2999.99 with 422 INSUFFICIENT_FUNDS', async () => {
       seedDebtFixture('2999.99', '3000.00');
       const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(3000.00);
-      expect(res.status).toBe(422);
-      expect(res.body.error.code).toBe('INSUFFICIENT_FUNDS');
-      expect(mockTransactions.length).toBe(txnBefore);
+      await expectRejectedRepaymentUnchanged(res, 422, 'INSUFFICIENT_FUNDS', txnBefore, allocBefore, 2999.99, 3000.00);
     });
   });
 
   describe('TEST-REPAY-13: Over-Precision & Missing Amount Validation (AC-07-6)', () => {
-    it('rejects 500.001 (>2 decimals) with 400 INVALID_AMOUNT', async () => {
+    it('rejects 500.001 (>2 decimals) with 400 INVALID_AMOUNT and leaves DB/balances unchanged', async () => {
       seedDebtFixture('10000.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(500.001);
-      expect(res.status).toBe(400);
-      expect(res.body.error.code).toBe('INVALID_AMOUNT');
+      await expectRejectedRepaymentUnchanged(res, 400, 'INVALID_AMOUNT', txnBefore, allocBefore, 10000.00, 3000.00);
+    });
+
+    it('rejects missing amount with 400 INVALID_AMOUNT and leaves DB/balances unchanged', async () => {
+      seedDebtFixture('10000.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
+      const res = await postRepayment(undefined);
+      await expectRejectedRepaymentUnchanged(res, 400, 'INVALID_AMOUNT', txnBefore, allocBefore, 10000.00, 3000.00);
     });
   });
 
-  describe('TEST-REPAY-14: Target Account Scope Enforcement (AC-07-10, BR-07)', () => {
-    it('rejects non-LOAN_TAKEN targets (EXPENSE / CASH) with 400 INVALID_ACCOUNT_TYPE', async () => {
+  describe('TEST-REPAY-14: Target & Source Account Scope Enforcement (AC-07-10, BR-07)', () => {
+    it('rejects target LOAN_GIVEN with 400 INVALID_ACCOUNT_TYPE and leaves DB/balances unchanged', async () => {
       seedDebtFixture('10000.00', '3000.00');
+      const loanGivenId = '00000000-0000-4000-8000-000000000999';
+      mockAccounts.push({
+        id: loanGivenId,
+        user_id: USER_A_ID,
+        name: 'Peer Loan Given',
+        type: 'LOAN_GIVEN',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
+      const res = await postRepayment(500.00, loanGivenId);
+      await expectRejectedRepaymentUnchanged(res, 400, 'INVALID_ACCOUNT_TYPE', txnBefore, allocBefore, 10000.00, 3000.00);
+    });
+
+    it('rejects target CASH with 400 INVALID_ACCOUNT_TYPE and leaves DB/balances unchanged', async () => {
+      seedDebtFixture('10000.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
+      const res = await postRepayment(500.00, CHECKING_ID);
+      await expectRejectedRepaymentUnchanged(res, 400, 'INVALID_ACCOUNT_TYPE', txnBefore, allocBefore, 10000.00, 3000.00);
+    });
+
+    it('rejects target INCOME with 400 INVALID_ACCOUNT_TYPE and leaves DB/balances unchanged', async () => {
+      seedDebtFixture('10000.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
+      const res = await postRepayment(500.00, SALARY_ID);
+      await expectRejectedRepaymentUnchanged(res, 400, 'INVALID_ACCOUNT_TYPE', txnBefore, allocBefore, 10000.00, 3000.00);
+    });
+
+    it('rejects target EXPENSE with 400 INVALID_ACCOUNT_TYPE and leaves DB/balances unchanged', async () => {
+      seedDebtFixture('10000.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(500.00, DINING_ID);
-      expect(res.status).toBe(400);
-      expect(res.body.error.code).toBe('INVALID_ACCOUNT_TYPE');
+      await expectRejectedRepaymentUnchanged(res, 400, 'INVALID_ACCOUNT_TYPE', txnBefore, allocBefore, 10000.00, 3000.00);
+    });
+
+    it('rejects non-CASH source account with 400 INVALID_ACCOUNT_TYPE and leaves DB/balances unchanged', async () => {
+      seedDebtFixture('10000.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
+      const res = await postRepayment(500.00, CC_ACCOUNT_ID, DINING_ID);
+      await expectRejectedRepaymentUnchanged(res, 400, 'INVALID_ACCOUNT_TYPE', txnBefore, allocBefore, 10000.00, 3000.00);
     });
   });
 
@@ -934,19 +1010,22 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
     });
   });
 
+  // Full settlement requiring sufficient funds is verified in TEST-REPAY-12 (Bank 2999.99, Debt 3000.00 -> 422 INSUFFICIENT_FUNDS)
   describe('TEST-REPAY-16: Server Validation Precedence (AC-07-7..9, BR-07)', () => {
-    it('prioritizes INSUFFICIENT_FUNDS over MIN_REPAYMENT_NOT_MET', async () => {
+    it('prioritizes INSUFFICIENT_FUNDS over MIN_REPAYMENT_NOT_MET and leaves DB/balances unchanged', async () => {
       seedDebtFixture('200.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(400.00);
-      expect(res.status).toBe(422);
-      expect(res.body.error.code).toBe('INSUFFICIENT_FUNDS');
+      await expectRejectedRepaymentUnchanged(res, 422, 'INSUFFICIENT_FUNDS', txnBefore, allocBefore, 200.00, 3000.00);
     });
 
-    it('prioritizes MIN_REPAYMENT_NOT_MET over MINIMUM_CASH_RESERVE_VIOLATION', async () => {
+    it('prioritizes MIN_REPAYMENT_NOT_MET over MINIMUM_CASH_RESERVE_VIOLATION and leaves DB/balances unchanged', async () => {
       seedDebtFixture('450.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(400.00);
-      expect(res.status).toBe(422);
-      expect(res.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+      await expectRejectedRepaymentUnchanged(res, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 450.00, 3000.00);
     });
   });
 });
