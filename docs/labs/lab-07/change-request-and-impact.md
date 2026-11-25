@@ -5,7 +5,7 @@
 > **Team:** Pilaiwan Churdchu (`67070503492`, `@Pilaiwan3492`) & Aphichaya Klinhual (`67070503447`, `@Apichaya251400`)  
 > **Accepted Sprint 1 Baseline:** `v0.1.0-sprint1`  
 > **Pre-Change Implementation Commit (`origin/main`):** `098c28f` (PR #44, Lab 6 Release)  
-> **Contract Revision Status:** Proposed for substantive teammate review. Instructor/TA pre-approval applicability must be confirmed against the official Lab 7 handout/announcement before implementation.
+> **Contract Revision Status:** Proposed maintenance amendment; pending substantive teammate review and mandatory Instructor/TA approval before implementation. No approval is claimed or implied.
 
 ---
 
@@ -32,9 +32,12 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
    * **Boundary Exception (Full Settlement):** If the user is paying off the **entire remaining debt** (`amount == currentDebt`) and has sufficient funds (`currentCashBalance >= amount`), the `100.00 THB` reserve requirement is waived so a user can clear 100% of their credit card debt without being blocked by the reserve buffer.
 
 3. **Reason for Change:**
-   * Real-world personal finance and credit card billing policies enforce minimum monthly payments (preventing micro-payments on large balances and requiring full payoff of trivial balances `< 500.00 THB`) and protect users from accidentally draining their primary checking account to `0.00 THB` on partial repayments.
+   * These thresholds are **Whatsss-specific product/business rules selected by the project team**, not universal banking practices, legal requirements, or financial advice. The `500.00 THB` floor is intended to avoid very small repayments and encourage meaningful debt reduction; requiring full settlement below `500.00 THB` avoids carrying a small residual balance; the `100.00 THB` reserve is a product-level cash-buffer safeguard for partial repayments. The team must validate these assumptions with the teammate reviewer and Instructor/TA before implementation.
 
 ### 1.3 Scope, Boundaries, Invalid Cases & Access Expectations
+
+**Credit-card account identification — unresolved contract dependency:** The current SRS and feature contract use the broad account type `Loan Taken`, which by itself does not prove that an account represents a credit card rather than a generic borrowing record planned under `FR-15`. Before implementation, inspect the existing schema and account data to identify a reliable existing discriminator (for example, a documented subtype or existing relationship). Do not invent a field or infer credit-card status from `Loan Taken` alone. If no reliable discriminator exists, record this as an unresolved design decision and obtain team/Instructor/TA direction before implementation. F-07 must not apply its new minimum/reserve policy to generic borrowing records.
+
 * **In-Scope:**
   * `server/src/services/repayment.service.ts` (atomic validation inside `prismaClient.$transaction` under `SELECT ... FOR UPDATE` row locks).
   * `client/src/components/RepaymentForm.tsx` (display computed Minimum Repayment & Available Cash after Reserve, client-side validation, and `422` error handling).
@@ -82,3 +85,16 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
   * Golden Journey (`TEST-REPAY-01`: `3000.00` full repayment from `30000.00` cash; `TEST-REPAY-05`: `1500.00` partial repayment from `27000.00` cash against `3000.00` debt) remains valid.
   * Expense exclusion (`BR-08`, `TEST-REPAY-02`), user isolation (`BR-01`, `access.test.ts`), Admin 403 denial (`BR-10`, `roleGuard.test.ts`), and concurrent row-locking (`TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`) remain unchanged.
 * **Regression Protection:** Run `repayment.test.ts`, `access.test.ts`, `db-repayment.test.ts`, `golden-journey.test.ts`, `balance.test.ts`, and `RepaymentForm.test.tsx`; record actual outcomes and CI evidence in Part B. The current contract PR does not claim these tests have already passed.
+
+
+## 5. Review and Approval Gate
+
+- **Substantive teammate review:** Required before implementation. Record the actual reviewer, review date, decision, and disposition of comments. A requested review is not evidence of completed review.
+- **Instructor/TA approval:** Mandatory before implementation under Lab 7. Record the approver identity/role, date, explicit decision, and approved change scope or official reference. Silence, a pending request, or an unverified message is not approval.
+- **Implementation gate:** Keep implementation blocked until both the substantive teammate review and Instructor/TA approval are evidenced. Do not mark this amendment approved or frozen in the meantime.
+
+## 6. Revision and Baseline Traceability
+
+- Preserve `v0.1.0-sprint1` as the accepted Sprint 1 baseline; this maintenance request is a proposed amendment, not a rewrite of the historical baseline.
+- The document currently references pre-change commit `098c28f` (PR #44). Verify the full commit, the tag, and the relationship between them in GitHub before treating this chain as confirmed. Record exact verified references and any intervening PR/merge commits; do not infer a tag-to-commit relationship from the short SHA or PR title.
+- **v1.1 status:** Proposed; teammate review and Instructor/TA approval pending. Approval evidence must be added here only after it is actually received.
