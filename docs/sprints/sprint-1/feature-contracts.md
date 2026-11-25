@@ -250,10 +250,11 @@ This document establishes the binding engineering contracts for all nine Sprint 
   > Repayment records a Transaction (Transaction 3 of Golden Journey) with **1 Allocation Line** targeting the `Loan Taken` account of the credit card. Because the allocation target is of type `Loan Taken` (debt settlement) rather than `Expense`, the financial summary engine excludes this amount from the total expenses (`BR-08`).
 * **Main Workflow:**
   1. User submits credit card repayment specifying funding bank account (`from_account_id`), target credit card account (`to_account_id`), repayment amount, and date.
-  2. Server validates positive amount and verifies user owns both accounts.
-  3. Server records transaction (Transaction 3) with 1 allocation line targeting the credit card account.
-  4. Server atomically decreases bank balance by `3000.00` and decreases credit card debt by `3000.00` (`BR-07`).
-  5. Server ensures repayment is excluded from expense summaries (`BR-08`).
+  2. Server validates the amount format and verifies that the authenticated `USER` owns both accounts and that the target is the credit-card debt account covered by `F-07` (not a generic `Loan Taken` borrowing record).
+  3. Inside the existing database transaction, the server acquires the established account row locks, re-reads the latest cash balance and outstanding credit-card debt, and performs all repayment validations against those locked values. A zero debt balance is rejected; a full settlement is identified only by `amount == latestOutstandingDebt`.
+  4. Server records transaction (Transaction 3) with 1 allocation line targeting the credit card account. All writes must roll back if any validation or persistence step fails.
+  5. Server atomically decreases bank balance and credit-card debt by the same repayment amount (`BR-07`).
+  6. Server ensures repayment is excluded from expense summaries (`BR-08`).
 * **UI Behavior:**
   * Credit Card Account Card presents a dedicated "Pay Credit Card" button.
   * Clicking opens modal displaying Current Outstanding Debt (e.g., `3,000.00 THB`) with "Pay in Full" quick-fill button, Funding Bank selector (displaying available balance), Repayment Amount input, and Transaction Date picker.
@@ -267,6 +268,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-07-6`: Submitting non-positive repayment amount ($\le 0.00$) or non-numeric value returns `400 Bad Request` with error code `INVALID_AMOUNT` (`TEST-REPAY-06`).
   * `AC-07-7` *(Lab 7 v1.1)*: Submitting a repayment below the minimum repayment floor ($\max(500.00, \text{roundHalfUp}_2(\text{debt} \times 0.10))$ when $\text{debt} \ge 500.00$, or $< \text{debt}$ when $\text{debt} < 500.00$) returns `422 Unprocessable Entity` with error code `MIN_REPAYMENT_NOT_MET` (`TEST-REPAY-07`, `TEST-REPAY-08`).
   * `AC-07-8` *(Lab 7 v1.1)*: Submitting a partial repayment that leaves $< 100.00$ THB in the funding Cash account returns `422 Unprocessable Entity` with error code `MINIMUM_CASH_RESERVE_VIOLATION` (`TEST-REPAY-09`); full settlement (`amount == currentDebt`) is exempt when `currentCashBalance >= amount` (`TEST-REPAY-10`).
+  * `AC-07-9` *(Lab 7 v1.1)*: If the latest outstanding credit-card debt is `0.00 THB`, any repayment request is rejected with `422 Unprocessable Entity` and error code `ZERO_OUTSTANDING_DEBT`; no transaction or allocation line is created (`TEST-REPAY-11`).
 * **API Specification:**
   * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created` or `422 Unprocessable Entity`
 
