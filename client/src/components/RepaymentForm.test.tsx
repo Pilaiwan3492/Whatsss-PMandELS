@@ -408,4 +408,246 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
     fireEvent.click(submitBtn);
     expect(transactionApi.recordRepayment).not.toHaveBeenCalled();
   });
+
+  // ---------------------------------------------------------------------------
+  // Lab 7 Part B (Issue #49): F-07 / BR-07 v1.1 Client Boundary Validation Tests
+  // ---------------------------------------------------------------------------
+
+  it('TEST-UI-REPAY-12 (BR-07 v1.1 AC-07-7): displays computed Minimum Required Repayment (500.00 THB floor for 3000.00 THB debt) and blocks partial repayment below 500.00 THB', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    render(
+      <RepaymentForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    // Must display Minimum Required Repayment pill/summary for 3,000.00 THB debt -> 500.00 THB
+    expect(screen.queryByText(/Minimum Required Repayment/i)).not.toBeNull();
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+
+    // 499.99 THB is 0.01 below the 500.00 THB minimum floor -> blocked with inline warning
+    fireEvent.change(amountInput, { target: { value: '499.99' } });
+    expect(screen.queryByText(/Below minimum repayment/i)).not.toBeNull();
+    expect(submitBtn.disabled).toBe(true);
+
+    fireEvent.click(submitBtn);
+    expect(transactionApi.recordRepayment).not.toHaveBeenCalled();
+
+    // Exact 500.00 THB boundary -> allowed
+    fireEvent.change(amountInput, { target: { value: '500.00' } });
+    expect(screen.queryByText(/Below minimum repayment/i)).toBeNull();
+    expect(submitBtn.disabled).toBe(false);
+  });
+
+  it('TEST-UI-REPAY-13 (BR-07 v1.1 AC-07-7): computes 10% minimum repayment with ROUND_HALF_UP (debt 5555.55 THB -> min 555.56 THB; 555.55 blocked, 555.56 allowed)', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    const highDebtAccounts: Account[] = [
+      mockAccounts[0],
+      {
+        ...mockAccounts[1],
+        current_balance: 5555.55
+      }
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={highDebtAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+
+    // 555.55 THB is 0.01 below roundHalfUp2(5555.55 * 0.10) = 555.56 THB -> blocked
+    fireEvent.change(amountInput, { target: { value: '555.55' } });
+    expect(submitBtn.disabled).toBe(true);
+    expect(screen.queryByText(/Below minimum repayment/i)).not.toBeNull();
+
+    // 555.56 THB -> allowed
+    fireEvent.change(amountInput, { target: { value: '555.56' } });
+    expect(screen.queryByText(/Below minimum repayment/i)).toBeNull();
+    expect(submitBtn.disabled).toBe(false);
+  });
+
+  it('TEST-UI-REPAY-14 (BR-07 v1.1 AC-07-7): requires full settlement when outstanding debt is below 500.00 THB (debt 499.99 THB -> 499.98 blocked, 499.99 allowed)', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    const smallDebtAccounts: Account[] = [
+      mockAccounts[0],
+      {
+        ...mockAccounts[1],
+        current_balance: 499.99
+      }
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={smallDebtAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+
+    // Partial repayment of 499.98 THB against 499.99 THB debt -> blocked
+    fireEvent.change(amountInput, { target: { value: '499.98' } });
+    expect(submitBtn.disabled).toBe(true);
+    expect(screen.queryByText(/Below minimum repayment/i)).not.toBeNull();
+
+    // Full settlement of 499.99 THB -> allowed
+    fireEvent.change(amountInput, { target: { value: '499.99' } });
+    expect(screen.queryByText(/Below minimum repayment/i)).toBeNull();
+    expect(submitBtn.disabled).toBe(false);
+  });
+
+  it('TEST-UI-REPAY-15 (BR-07 v1.1 AC-07-8): enforces 100.00 THB minimum cash reserve on partial repayments (cash 1599.99, debt 3000.00, amount 1500.00 blocked; cash 1600.00 allowed)', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    const tightCashAccounts: Account[] = [
+      {
+        ...mockAccounts[0],
+        current_balance: 1599.99
+      },
+      mockAccounts[1] // debt 3000.00
+    ];
+
+    const { unmount } = render(
+      <RepaymentForm
+        accounts={tightCashAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    expect(screen.queryByText(/Available Cash After 100\.00 THB Reserve/i)).not.toBeNull();
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+
+    // 1599.99 - 1500.00 = 99.99 (< 100.00 reserve on partial repayment) -> blocked
+    fireEvent.change(amountInput, { target: { value: '1500.00' } });
+    expect(submitBtn.disabled).toBe(true);
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).not.toBeNull();
+
+    unmount();
+
+    // Exact 1600.00 cash - 1500.00 partial repayment = 100.00 remaining -> allowed
+    const exactReserveAccounts: Account[] = [
+      {
+        ...mockAccounts[0],
+        current_balance: 1600.0
+      },
+      mockAccounts[1]
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={exactReserveAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput2 = screen.getByLabelText(/Repayment Amount/i);
+    const submitBtn2 = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    fireEvent.change(amountInput2, { target: { value: '1500.00' } });
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
+    expect(submitBtn2.disabled).toBe(false);
+  });
+
+  it('TEST-UI-REPAY-16 (BR-07 v1.1 AC-07-8): exempts full-settlement repayment from the 100.00 THB cash reserve when cash >= debt (cash 3000.00, debt 3000.00, amount 3000.00 -> allowed)', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    const fullSettlementAccounts: Account[] = [
+      {
+        ...mockAccounts[0],
+        current_balance: 3000.0
+      },
+      mockAccounts[1] // debt 3000.00
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={fullSettlementAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+
+    // Partial repayment of 2950.00 leaves 50.00 (< 100.00 reserve) -> blocked
+    fireEvent.change(amountInput, { target: { value: '2950.00' } });
+    expect(submitBtn.disabled).toBe(true);
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).not.toBeNull();
+
+    // Full settlement of 3000.00 leaves 0.00 cash -> exempt from 100.00 reserve -> allowed!
+    fireEvent.change(amountInput, { target: { value: '3000.00' } });
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
+    expect(screen.queryByText(/Reserve Exempt/i)).not.toBeNull();
+    expect(submitBtn.disabled).toBe(false);
+  });
+
+  it('TEST-UI-REPAY-17 (BR-07 v1.1 AC-07-7..9): surfaces backend 422 MIN_REPAYMENT_NOT_MET and MINIMUM_CASH_RESERVE_VIOLATION error messages in alert banner', async () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    vi.mocked(transactionApi.recordRepayment).mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          error: {
+            code: 'MIN_REPAYMENT_NOT_MET',
+            message: 'Repayment amount of 500.00 is below the minimum required repayment of 600.00.'
+          }
+        }
+      }
+    });
+
+    render(
+      <RepaymentForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput, { target: { value: '500.00' } });
+
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Repayment amount of 500.00 is below the minimum required repayment of 600.00.')
+      ).toBeDefined();
+    });
+
+    expect(mockOnSuccess).not.toHaveBeenCalled();
+    expect(mockOnClose).not.toHaveBeenCalled();
+  });
 });
