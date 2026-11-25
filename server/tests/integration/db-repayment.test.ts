@@ -65,8 +65,8 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
       await prisma.$queryRaw`SELECT 1`;
       isDbConnected = true;
     } catch (err) {
-      if (isCI) {
-        throw new Error(`[WP-05 CI FAILURE] PostgreSQL live database connection failed in CI environment: ${err}`);
+      if (isCI || allowLiveDb) {
+        throw new Error(`[WP-05 LIVE DB FAILURE] PostgreSQL live database connection failed: ${err}`);
       }
       return;
     }
@@ -86,9 +86,9 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
       if (setCookie && setCookie.length > 0) {
         demoUserSessionCookie = setCookie[0];
       }
-    } else if (isCI) {
+    } else if (isCI || allowLiveDb) {
       throw new Error(
-        `[WP-05 CI FAILURE] Failed to authenticate user_demo in live DB. Status: ${loginRes.status}, body: ${JSON.stringify(loginRes.body)}`
+        `[WP-05 LIVE DB FAILURE] Failed to authenticate user_demo in live DB. Status: ${loginRes.status}, body: ${JSON.stringify(loginRes.body)}`
       );
     }
 
@@ -968,7 +968,9 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
       await prisma.$queryRaw`SELECT 1`;
       isDbConnected = true;
     } catch (err) {
-      if (isCI) throw new Error(`[Lab 7 Live DB FAILURE] Connection failed: ${err}`);
+      if (isCI || allowLiveDb) {
+        throw new Error(`[Lab 7 Live DB FAILURE] Connection failed: ${err}`);
+      }
       return;
     }
 

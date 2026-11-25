@@ -11,7 +11,7 @@
 |---|---|---|---|---|
 | `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original 33 Sprint 1 baseline tests (subsequently expanded to 35 with Lab 5/6 security and concurrency tests). |
 | `v1.1-draft` | **Proposed (Lab 7 Part A Contract)** | 2026-11-25 | Lab 7 / PR #51 / Issue #47 | Added 10 proposed `F-07` / `BR-07 v1.1` test cases (`TEST-REPAY-07`..`16`, initially **Specified Only**). |
-| `v1.1-impl` | **Implemented and Passed (Mock/API + Live PostgreSQL 16 CI)** | 2026-11-26 | Lab 7 / PR #52 / Issue #48 | Verified `TEST-REPAY-07`..`16` (`46/46` in `repayment.test.ts`) and `LIVE-01`..`09` (`18/18` in `db-repayment.test.ts` on PostgreSQL 16 `whatsss_test`) via GitHub Actions CI Run #89 & Run #231. |
+| `v1.1-impl` | **Implemented and Passed (Mock/API + Live PostgreSQL 16 CI)** | 2026-11-26 | Lab 7 / PR #52 / Issue #48 | Verified `TEST-REPAY-07`..`16` (`46/46` in `repayment.test.ts`) and `LIVE-01`..`09` (`18/18` in `db-repayment.test.ts` on PostgreSQL 16 `whatsss_test`) via GitHub Actions CI Run #89 (`dfbb983`) and Run #90 (`2c19d98`). |
 
 ---
 
@@ -96,8 +96,8 @@ Each case below uses a dedicated test user, dedicated `CASH` / `LOAN_TAKEN` / `E
 ### 2.1 Verified CI Execution Evidence
 | Item | Verified Evidence |
 |---|---|
-| **CI Run (Docker & Test)** | GitHub Actions Run #89 ([`45678341674`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45678341674)) — `CI and Docker Build (C-01)` (`dfbb983`) |
-| **CI Run (Full Pipeline)** | GitHub Actions Run #231 (`45678329333`) — `Continuous Integration (CI)` (`Backend Test & Build`, `Frontend Test & Build`, `Docker Container Build & Probe`, `Secret & Credential Leak Scan`, `Check C-03`) |
+| **Latest Verified CI Run (Docker & Test)** | GitHub Actions Run #90 ([`45683702676`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45683702676)) — `CI and Docker Build (C-01)` on commit `2c19d985958b4eae79436f08e8d395ca48c06119` (`2c19d98`); prior Run #89 ([`45678341674`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45678341674)) on `dfbb983` |
+| **Latest Verified CI Run (Full Pipeline)** | GitHub Actions Run #232 ([`45683692686`](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45683692686)) — `Continuous Integration (CI)` (`Backend Test & Build`, `Frontend Test & Build`, `Docker Container Build & Probe`, `Secret & Credential Leak Scan`, `Check C-03`) on `2c19d98`; prior Run #231 (`45678329333`) on `dfbb983` |
 | **Database** | PostgreSQL 16 (`postgres:16-alpine`), test database `whatsss_test` |
 | **Repayment Mock/API Tests** | `repayment.test.ts`: 46 passed, 0 failed |
 | **Database Repayment Tests** | `db-repayment.test.ts`: 18 passed, 0 failed (`9` WP-05 + `9` Lab 7 `LIVE-01`..`09`) |
@@ -109,5 +109,5 @@ Each case below uses a dedicated test user, dedicated `CASH` / `LOAN_TAKEN` / `E
 
 - **v1.0 — Accepted Sprint 1 baseline (`v0.1.0-sprint1`):** Original test specification accepted for Deliverable 1 (`f84e7b16`); preserve this baseline and its historical acceptance evidence.
 - **v1.1 — Lab 7 maintenance implementation (`2026-11-26`, PR #52 / Issue #48, `@Pilaiwan3492`):**
-  - Verified Live PostgreSQL 16 integration tests through GitHub Actions CI Run #89 (`45678341674`) and Run #231 (`45678329333`). Updated `LIVE-01` through `LIVE-09` execution statuses according to verified CI evidence.
+  - Verified Live PostgreSQL 16 integration tests through GitHub Actions CI Run #89 (`dfbb983`) and latest Run #90 (`45683702676`) / Run #232 (`45683692686`) on `2c19d985958b4eae79436f08e8d395ca48c06119`. Updated `LIVE-01` through `LIVE-09` execution statuses according to verified CI evidence.
   - **Test Evidence Status & Inventory Check:** 45 unique Mock/API & Unit/E2E Test IDs (`5 + 6 + 4 + 2 + 6 + 18 + 4 = 45`, all 45 *Specified, Implemented, Executed, Passed*; 35 baseline/Lab 6 tests evidenced in [`docs/sprints/sprint-1/evidence-index.md`](evidence-index.md) and [`docs/labs/lab-06/defect-resolution.md`](../../labs/lab-06/defect-resolution.md)) plus 9 Live PostgreSQL `BR-07 v1.1` cases (`LIVE-01`..`09`, all 9 *Specified, Implemented, Executed, Passed* in CI Run #89 / #231). Substantive teammate review (`@Apichaya251400`) remains required before merge.
