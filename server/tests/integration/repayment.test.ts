@@ -748,13 +748,16 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
   // Lab 7 (BR-07 v1.1): Minimum Repayment Floor, Zero-Debt, Cash Reserve & Precedence
   // =========================================================================
 
+  let fixtureSeq = 0;
+
   function seedDebtFixture(bankBalance: string, ccDebt: string) {
     const bank = mockAccounts.find((a) => a.id === CHECKING_ID);
     if (bank) {
       bank.opening_balance = new Prisma.Decimal(bankBalance);
     }
     if (new Prisma.Decimal(ccDebt).greaterThan(0)) {
-      const txnId = `txn-fixture-${Date.now()}-${Math.random()}`;
+      fixtureSeq += 1;
+      const txnId = `txn-fixture-${fixtureSeq}`;
       mockTransactions.push({
         id: txnId,
         user_id: USER_A_ID,
@@ -766,7 +769,7 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
         created_at: new Date('2026-11-06T00:00:00.000Z')
       });
       mockAllocationLines.push({
-        id: `alloc-fixture-${Date.now()}-${Math.random()}`,
+        id: `alloc-fixture-${fixtureSeq}`,
         transaction_id: txnId,
         target_account_id: DINING_ID,
         amount: new Prisma.Decimal(ccDebt),
@@ -814,6 +817,32 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
     expect(Number(summaryRes.body.data.credit_debt)).toBe(expectedDebt);
   }
 
+  async function expectAcceptedRepayment(
+    res: request.Response,
+    txnBefore: number,
+    allocBefore: number,
+    expectedCash: string,
+    expectedDebt: string,
+    expectedExpense: number
+  ) {
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.updated_cash_balance).toBe(expectedCash);
+    expect(res.body.data.updated_debt).toBe(expectedDebt);
+    expect(mockTransactions.length).toBe(txnBefore + 1);
+    expect(mockAllocationLines.length).toBe(allocBefore + 1);
+    expect(res.body.data.transaction.allocations).toHaveLength(1);
+    expect(res.body.data.transaction.allocations[0].target_account_id).toBe(CC_ACCOUNT_ID);
+
+    const summaryRes = await request(app)
+      .get('/api/reports/summary')
+      .set('Cookie', userACookie);
+    expect(summaryRes.status).toBe(200);
+    expect(Number(summaryRes.body.data.bank_balance)).toBe(Number(expectedCash));
+    expect(Number(summaryRes.body.data.credit_debt)).toBe(Number(expectedDebt));
+    expect(Number(summaryRes.body.data.total_expense)).toBe(expectedExpense);
+  }
+
   describe('TEST-REPAY-07: 10% Minimum & ROUND_HALF_UP Boundaries (AC-07-7, BR-07)', () => {
     it('rejects 599.99 on 6000.00 debt with 422 MIN_REPAYMENT_NOT_MET and leaves DB/balances unchanged', async () => {
       seedDebtFixture('10000.00', '6000.00');
@@ -823,11 +852,12 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       await expectRejectedRepaymentUnchanged(res, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 6000.00);
     });
 
-    it('accepts 600.00 on 6000.00 debt with 201 Created', async () => {
+    it('accepts 600.00 on 6000.00 debt with 201 Created and exact transaction/allocation/summary state', async () => {
       seedDebtFixture('10000.00', '6000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(600.00);
-      expect(res.status).toBe(201);
-      expect(res.body.data.updated_debt).toBe('5400.00');
+      await expectAcceptedRepayment(res, txnBefore, allocBefore, '9400.00', '5400.00', 6000.00);
     });
 
     it('rejects 500.49 with unchanged state and accepts 500.50 on 5005.00 debt', async () => {
@@ -838,8 +868,7 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 5005.00);
 
       const okRes = await postRepayment(500.50);
-      expect(okRes.status).toBe(201);
-      expect(okRes.body.data.updated_debt).toBe('4504.50');
+      await expectAcceptedRepayment(okRes, txnBefore, allocBefore, '9499.50', '4504.50', 5005.00);
     });
 
     it('rejects 555.55 with unchanged state and accepts 555.56 (ROUND_HALF_UP) on 5555.55 debt', async () => {
@@ -850,8 +879,7 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 5555.55);
 
       const okRes = await postRepayment(555.56);
-      expect(okRes.status).toBe(201);
-      expect(okRes.body.data.updated_debt).toBe('4999.99');
+      await expectAcceptedRepayment(okRes, txnBefore, allocBefore, '9444.44', '4999.99', 5555.55);
     });
   });
 
@@ -864,8 +892,7 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 500.00);
 
       const okRes = await postRepayment(500.00);
-      expect(okRes.status).toBe(201);
-      expect(okRes.body.data.updated_debt).toBe('0.00');
+      await expectAcceptedRepayment(okRes, txnBefore, allocBefore, '9500.00', '0.00', 500.00);
     });
 
     it('rejects 499.98 with unchanged state and accepts 499.99 on 499.99 debt', async () => {
@@ -876,8 +903,7 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 499.99);
 
       const okRes = await postRepayment(499.99);
-      expect(okRes.status).toBe(201);
-      expect(okRes.body.data.updated_debt).toBe('0.00');
+      await expectAcceptedRepayment(okRes, txnBefore, allocBefore, '9500.01', '0.00', 499.99);
     });
   });
 
@@ -894,17 +920,18 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
   describe('TEST-REPAY-10: Exact Reserve Boundary & Full-Settlement Exemption (AC-07-8, BR-07)', () => {
     it('accepts partial 1500.00 when Bank is 1600.00 (remaining 100.00)', async () => {
       seedDebtFixture('1600.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(1500.00);
-      expect(res.status).toBe(201);
-      expect(res.body.data.updated_cash_balance).toBe('100.00');
+      await expectAcceptedRepayment(res, txnBefore, allocBefore, '100.00', '1500.00', 3000.00);
     });
 
     it('accepts full settlement 3000.00 when Bank is 3000.00 (remaining 0.00)', async () => {
       seedDebtFixture('3000.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(3000.00);
-      expect(res.status).toBe(201);
-      expect(res.body.data.updated_cash_balance).toBe('0.00');
-      expect(res.body.data.updated_debt).toBe('0.00');
+      await expectAcceptedRepayment(res, txnBefore, allocBefore, '0.00', '0.00', 3000.00);
     });
   });
 
@@ -1019,9 +1046,7 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 3000.00);
 
       const okRes = await postRepayment(500.00);
-      expect(okRes.status).toBe(201);
-      expect(okRes.body.data.updated_debt).toBe('2500.00');
-      expect(okRes.body.data.updated_cash_balance).toBe('9500.00');
+      await expectAcceptedRepayment(okRes, txnBefore, allocBefore, '9500.00', '2500.00', 3000.00);
     });
   });
 
