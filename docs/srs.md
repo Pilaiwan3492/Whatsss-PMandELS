@@ -4,13 +4,13 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part A: SRS and Product Scope)  
-> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Proposed Lab 7 Maintenance Amendment (`BR-07 v1.1`, PR #51 — **Pending Substantive Teammate Review**; Instructor/TA Sprint 1 CR approval waived per official Lab 7 Spec Sheet Change announcement)
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Proposed Lab 7 Maintenance Amendment (`BR-07 v1.1`, PR #51 — **Pending Substantive Teammate Review**; Instructor/TA Sprint 1 CR pre-approval waived per official Lab 7 Spec Sheet Change announcement)
 
 ### Document Revision History
 | Version | Status | Date | Scope / Reference | Summary |
 |---|---|---|---|---|
 | `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original Sprint 1 SRS and Business Rules (`BR-01`..`BR-10`). |
-| `v1.1-draft` | **Proposed (Pending Teammate Review & Blocker Resolution)** | 2026-11-25 | Lab 7 / PR #51 / Issue #47 | Proposes `BR-07 v1.1` amendment to `F-07` Credit Card Repayment (`FR-09`); does not alter accepted baseline until reviewed and resolved. |
+| `v1.1-draft` | **Proposed (Pending Substantive Teammate Review)** | 2026-11-25 | Lab 7 / PR #51 / Issue #47 | Proposes `BR-07 v1.1` amendment to `F-07` Credit Card Repayment (`FR-09`); does not alter accepted baseline until teammate review and RED/GREEN evidence are completed. |
 
 ---
 
@@ -133,8 +133,8 @@ The system strictly enforces the following domain rules:
       1. **Minimum Repayment Floor (`MIN_REPAYMENT_NOT_MET`, HTTP `422`):** For latest outstanding debt $\ge 500.00$ THB, `minRepayment = max(500.00, roundHalfUp2(currentDebt * 0.10))` using 2-decimal `ROUND_HALF_UP` arithmetic (capped at `currentDebt`; full settlement always satisfies the floor). For $0.00 < \text{currentDebt} < 500.00$ THB, partial repayment is prohibited and full settlement (`amount == currentDebt`) is required.
       2. **Minimum Cash Reserve (`MINIMUM_CASH_RESERVE_VIOLATION`, HTTP `422`):** Partial repayments (`amount < currentDebt`) must leave `currentCashBalance - repaymentAmount >= 100.00` THB. Full settlement (`repaymentAmount == currentDebt`) waives the `100.00` THB reserve restriction, **but sufficient funds (`currentCashBalance >= repaymentAmount`) are still required** (`422 INSUFFICIENT_FUNDS`).
       3. **Zero Debt (`ZERO_OUTSTANDING_DEBT`, HTTP `422`):** If latest outstanding debt is `0.00` THB, reject the request and create no records.
-      4. **Ineligible Target (`INELIGIBLE_REPAYMENT_TARGET`, HTTP `422`):** Generic `LOAN_TAKEN` borrowing (`FR-15`) must be rejected without creating records.
-    * *Unresolved Design Blocker (Credit Card vs. Generic `LOAN_TAKEN`):* Inspection of `server/prisma/schema.prisma`, `docs/system-sds.md`, `seed.ts`, and `repayment.service.ts` confirms that `AccountType` (`CASH`, `LOAN_TAKEN`, `LOAN_GIVEN`, `INCOME`, `EXPENSE`) has **no** credit-card discriminator beyond `LOAN_TAKEN`. Schema changes are out of scope in PR #51; until an approved discriminator or scoping decision is made, `AC-07-10` and `TEST-REPAY-14` remain **BLOCKED / Conditional**.
+      4. **Eligible Target Scope (`INVALID_ACCOUNT_TYPE`, HTTP `400`):** `F-07` accepts only `CASH` (`from_account_id`) $\rightarrow$ `LOAN_TAKEN` (`to_account_id`) and rejects `LOAN_GIVEN`, `CASH`, `INCOME`, and `EXPENSE` targets.
+    * *Design Decision (Credit Card vs. Generic `LOAN_TAKEN`):* In Sprint 1 (`schema.prisma`, `seed.ts`), `FR-15` (Generic Borrowing) is deferred to Sprint 2, so `Visa Credit Card` is the only `LOAN_TAKEN` account and no generic `LOAN_TAKEN` borrowing accounts exist. Keeping schema changes out of scope for Lab 7 Sprint 1 maintenance, `F-07` enforces `toAccount.type === 'LOAN_TAKEN'` in Sprint 1; **Sprint 2 (`FR-15`) must add an explicit account subtype/discriminator or separate borrowing endpoint before any generic `LOAN_TAKEN` borrowing account is created**.
     * *Product Rationale:* Whatsss-specific product/business policies chosen by the team (not universal banking regulations, legal requirements, or financial advice) to prevent micro-repayments, encourage meaningful debt reduction, maintain a `100.00 THB` partial-payment cash buffer, and allow full payoff of small balances.
     * *Traceability:* `docs/labs/lab-07/change-request-and-impact.md` (PR #51, Issue #47); `AC-07-7`..`AC-07-10`; `TEST-REPAY-07`..`16`.
 * **`BR-08 (Debt Settlement & Financing Cashflow Exclusion):`** Debt repayments shall not be counted as an expense, because the underlying expenditure was already recognized when the charge occurred. Furthermore, proceeds from borrowings (`Loan Taken`, `FR-15`) and recoveries of loans given (`Loan Given`, `FR-14`) shall not be counted as income, and principal disbursed as loans given shall not be counted as expenses.
@@ -170,6 +170,6 @@ The system must satisfy the following measurable non-functional requirements:
 
 ## 8. Lab 7 Maintenance Amendment and Revision History
 
-- **v1.0 — Accepted Sprint 1 baseline:** Preserve the original accepted SRS and its historical approval evidence.
-- **v1.1 — Proposed Lab 7 amendment:** Proposes the F-07 / BR-07 repayment minimum, small-debt full-settlement, cash-reserve, zero-debt, and credit-card eligibility clarifications. This amendment is not approved and must not be treated as the accepted baseline until substantive teammate review and mandatory Instructor/TA approval are evidenced.
-- **Open dependency:** Verify the existing data-model discriminator that distinguishes credit-card debt accounts from generic `Loan Taken` borrowing records. Do not invent a new field or apply F-07 rules to generic borrowing by assumption.
+- **v1.0 — Accepted Sprint 1 baseline (`v0.1.0-sprint1`):** Preserve the original accepted SRS and its historical baseline (`f84e7b16`).
+- **v1.1 — Proposed Lab 7 amendment (PR #51):** Proposes the F-07 / BR-07 repayment minimum, small-debt full-settlement, cash-reserve, zero-debt, and Sprint 1 `LOAN_TAKEN` scoping clarifications. Instructor/TA pre-approval for Sprint 1 Change Requests is waived per official Lab 7 Spec Sheet Change announcement; substantive teammate review (`@Apichaya251400`) and RED/GREEN + regression evidence remain required before implementation/merge.
+- **Sprint 2 (`FR-15`) prerequisite:** Before Sprint 2 introduces generic `LOAN_TAKEN` borrowing (`FR-15`), an explicit account subtype/discriminator or separate borrowing endpoint must be added so generic borrowing records never enter `F-07`.

@@ -5,13 +5,13 @@
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part E: Software Test Specification)  
 > **Deliverable:** Project Deliverable 1 (Part E: Software Test Specification)  
-> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Proposed Lab 7 Maintenance Amendment (`v1.1-draft`, PR #51 — **Pending Substantive Teammate Review & Blocker Resolution**; Instructor/TA Sprint 1 CR approval waived per official Lab 7 Spec Sheet Change announcement)
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Proposed Lab 7 Maintenance Amendment (`v1.1-draft`, PR #51 — **Pending Substantive Teammate Review**; Instructor/TA Sprint 1 CR pre-approval waived per official Lab 7 Spec Sheet Change announcement)
 
 ### Document Revision History
 | Version | Status | Date | Scope / Reference | Summary |
 |---|---|---|---|---|
 | `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original 33 Sprint 1 baseline tests (subsequently expanded to 35 with Lab 5/6 security and concurrency tests). |
-| `v1.1-draft` | **Proposed (Pending Teammate Review & Blocker Resolution)** | 2026-11-25 | Lab 7 / PR #51 / Issue #47 | Adds 10 proposed `F-07` / `BR-07 v1.1` test cases (`TEST-REPAY-07`..`16`, with `TEST-REPAY-14` **BLOCKED/Conditional**), bringing total unique Test IDs to **45**. |
+| `v1.1-draft` | **Proposed (Pending Substantive Teammate Review)** | 2026-11-25 | Lab 7 / PR #51 / Issue #47 | Adds 10 proposed `F-07` / `BR-07 v1.1` test cases (`TEST-REPAY-07`..`16`, **Specified Only**), bringing total unique Test IDs to **45**. |
 
 ---
 
@@ -19,13 +19,13 @@
 
 The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or system-level contract to an executable automated test case (`TEST-XX`), specifying test level, preconditions, inputs, and expected outcomes across **45 unique Test IDs**:
 
-* **Authentication (`TEST-AUTH-01`..`05`):** 5 *(Implemented / Executed in Lab 5–6)*
-* **Security & HTTP Boundary (`TEST-SEC-01`..`06`):** 6 *(Implemented / Executed in Lab 5–6)*
-* **Opening Balance (`TEST-OPEN-01`..`04`):** 4 *(Implemented / Executed in Lab 5–6)*
-* **Income (`TEST-INC-01`..`02`):** 2 *(Implemented / Executed in Lab 5–6)*
-* **Expense & Split Allocation (`TEST-EXP-01`..`02`, `TEST-VAL-01`, `TEST-ALLOC-01`..`03`):** 6 *(Implemented / Executed in Lab 5–6)*
-* **Credit Card Repayment (`TEST-REPAY-01`..`16`, `TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`):** 18 *(8 existing Implemented/Executed Sprint 1/Lab 6 tests + 10 Lab 7 **Specified Only — Not Yet Implemented/Executed** tests `TEST-REPAY-07`..`16`, where `TEST-REPAY-14` is **BLOCKED/Conditional**)*
-* **Balance, History, Persistence & E2E (`TEST-BAL-01`, `TEST-HIST-01`, `TEST-PERSIST-01`, `TEST-E2E-01`):** 4 *(Implemented / Executed in Lab 5–6)*
+* **Authentication (`TEST-AUTH-01`..`05`):** 5 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
+* **Security & HTTP Boundary (`TEST-SEC-01`..`06`):** 6 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
+* **Opening Balance (`TEST-OPEN-01`..`04`):** 4 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
+* **Income (`TEST-INC-01`..`02`):** 2 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
+* **Expense & Split Allocation (`TEST-EXP-01`..`02`, `TEST-VAL-01`, `TEST-ALLOC-01`..`03`):** 6 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
+* **Credit Card Repayment (`TEST-REPAY-01`..`16`, `TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`):** 18 *(8 existing Implemented/Executed/Passed Sprint 1/Lab 6 tests + 10 Lab 7 **Specified Only — Not Yet Implemented, Executed, or Passed** tests `TEST-REPAY-07`..`16`)*
+* **Balance, History, Persistence & E2E (`TEST-BAL-01`, `TEST-HIST-01`, `TEST-PERSIST-01`, `TEST-E2E-01`):** 4 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
 * **Total:** `5 + 6 + 4 + 2 + 6 + 18 + 4 = 45` unique Test IDs.
 
 | Test ID | Linked AC / System Contract | Target Feature | Test Level | Preconditions & Input | Expected Result |
@@ -66,7 +66,7 @@ The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or s
 | **`TEST-REPAY-11`** | `AC-07-9`, `BR-07` | `F-07` | Integration | Dedicated fixture: Bank = `10000.00`, credit-card Debt = `0.00`. Submit a positive repayment request (e.g. `500.00`). | HTTP `422 Unprocessable Entity` (`ZERO_OUTSTANDING_DEBT`), zero transactions/allocation lines written, and both balances unchanged. |
 | **`TEST-REPAY-12`** | `AC-07-5`, `AC-07-8`, `BR-07` | `F-07` | Integration | Dedicated fixture: Bank = `2999.99`, credit-card Debt = `3000.00`. Submit full-settlement amount `3000.00`. | HTTP `422 Unprocessable Entity` (`INSUFFICIENT_FUNDS`); full-settlement reserve exception does not waive the sufficient-funds requirement; no records written and balances unchanged. |
 | **`TEST-REPAY-13`** | `AC-07-6` | `F-07` | Integration | Submit a positive repayment amount with more than 2 decimal places (e.g. `500.001`), and separately submit a missing amount. | HTTP `400 Bad Request` (`INVALID_AMOUNT`) for each request; no transaction or allocation line created. |
-| **`TEST-REPAY-14`** | `AC-07-10`, `FR-15`, `BR-07` | `F-07` | Integration *(**BLOCKED / Conditional**)* | **Specified Only — BLOCKED on credit-card discriminator (§1.3 of Change Request).** Using a verified schema/data discriminator, submit an F-07 repayment request targeting a generic `LOAN_TAKEN` borrowing account (`FR-15`). | HTTP `422 Unprocessable Entity` (`INELIGIBLE_REPAYMENT_TARGET`); zero transaction or allocation records written, and all account balances remain unchanged. Do not invent a discriminator field. |
+| **`TEST-REPAY-14`** | `AC-07-10`, `BR-07` | `F-07` | Integration *(Specified Only)* | Under the Sprint 1 Scoped Design Decision (`FR-15` deferred to Sprint 2), submit `POST /api/transactions/repayment` targeting non-`LOAN_TAKEN` account types (`LOAN_GIVEN`, `CASH`, `INCOME`, `EXPENSE`) or a non-`CASH` source account. | HTTP `400 Bad Request` (`INVALID_ACCOUNT_TYPE`), zero transaction or allocation records written, and all account balances remain unchanged. *(Sprint 2 `FR-15` must add an explicit subtype/discriminator before generic `LOAN_TAKEN` borrowing accounts are created.)* |
 | **`TEST-REPAY-15`** | `AC-07-7`, `BR-07` | `F-07` | Integration *(Specified Only)* | Separate/reset fixtures (Bank = `10000.00`, Debt = `3000.00`, where 10% = `300.00 < 500.00` so `minRepayment = 500.00`): (a) submit `499.99`; (b) reset/new fixture, submit `500.00`. | (a) HTTP `422 Unprocessable Entity` (`MIN_REPAYMENT_NOT_MET`), zero records written; (b) HTTP `201 Created`, Debt = `2500.00`, Bank = `9500.00` (proves 500 THB minimum floor). |
 | **`TEST-REPAY-16`** | `AC-07-7`..`AC-07-9`, `BR-07` | `F-07` | Integration *(Specified Only)* | Separate deterministic fixtures for server validation precedence: (a) Bank = `200.00`, Debt = `3000.00`, submit `400.00` (`INSUFFICIENT_FUNDS` & `< minRepayment`); (b) Bank = `450.00`, Debt = `3000.00`, submit `400.00` (`< minRepayment` & remaining `50.00 < 100.00`); (c) Bank = `2999.99`, Debt = `3000.00`, submit `3000.00` (full settlement). | (a) `422 INSUFFICIENT_FUNDS` takes precedence over `MIN_REPAYMENT_NOT_MET`; (b) `422 MIN_REPAYMENT_NOT_MET` takes precedence over `MINIMUM_CASH_RESERVE_VIOLATION`; (c) `422 INSUFFICIENT_FUNDS`; zero records written and balances unchanged in all cases. |
 | **`TEST-REPAY-CONCURRENT-DEBT`** | `AC-07-4`, `BR-07`, `NFR-DATA-01` | `F-07` | Integration / Live DB | Dedicated fixture: Debt = `3000.00`, Bank = `10000.00`. Two concurrent repayment requests of `2000.00 THB` each submitted simultaneously with pessimistic row locks. | Exactly 1 request succeeds with HTTP `201 Created`; 1 request fails with HTTP `422 Unprocessable Entity` (`REPAYMENT_EXCEEDS_DEBT`). Exactly 1 Transaction and 1 AllocationLine created; final debt is `1000.00 THB` and never negative. |
@@ -80,5 +80,6 @@ The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or s
 ## 2. Lab 7 Maintenance Amendment and Revision History
 
 - **v1.0 — Accepted Sprint 1 baseline:** Original test specification accepted for Deliverable 1. Preserve this baseline and its historical acceptance evidence.
-- **v1.1 — Proposed Lab 7 amendment:** Adds repayment-policy coverage (`TEST-REPAY-07` through `TEST-REPAY-14`) and clarifies the test-suite inventory. This amendment remains **proposed / pending substantive teammate review and Instructor/TA approval**; it is not an approved replacement baseline.
-- **Test inventory check:** The current matrix contains 43 unique Test IDs. Counts by feature group are Authentication 5, Security 6, Opening Balance 4, Income 2, Expense 3, Allocations 3, Repayment 16 (14 numbered repayment cases plus 2 concurrency cases), Balance 1, History 1, Persistence 1, and Golden Journey E2E 1. These groups total 43.
+- **v1.0 — Accepted Sprint 1 baseline (`v0.1.0-sprint1`):** Preserve the originally accepted Sprint 1 test specification (`f84e7b16`).
+- **v1.1 — Proposed Lab 7 amendment (PR #51):** Adds 10 repayment-policy test cases (`TEST-REPAY-07` through `TEST-REPAY-16`). Instructor/TA pre-approval for Sprint 1 Change Requests is waived per official Lab 7 Spec Sheet Change announcement; substantive teammate review (`@Apichaya251400`) and RED/GREEN + regression evidence remain required.
+- **Test Evidence Status & Inventory Check:** The matrix contains **45 unique Test IDs**: Authentication 5, Security & HTTP Boundary 6, Opening Balance 4, Income 2, Expense & Split Allocation 6, Credit Card Repayment 18 (16 numbered repayment cases + 2 concurrency cases), and Balance/History/Persistence/E2E 4 (`5 + 6 + 4 + 2 + 6 + 18 + 4 = 45`). Of these, the **35 existing baseline/Lab 6 tests** are *Specified, Implemented, Executed, and Passed* (Lab 5–6), while the **10 new Lab 7 tests (`TEST-REPAY-07`..`16`)** are *Specified Only* (not yet implemented, executed, or passed).
