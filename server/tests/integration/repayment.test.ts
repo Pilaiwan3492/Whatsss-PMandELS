@@ -915,6 +915,31 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       const res = await postRepayment(1500.00);
       await expectRejectedRepaymentUnchanged(res, 422, 'MINIMUM_CASH_RESERVE_VIOLATION', txnBefore, allocBefore, 1599.99, 3000.00);
     });
+
+    it('serializes concurrent partial repayments when stale cash balance (1600.00 THB) no longer satisfies the 100.00 THB reserve after first repayment (800.00 THB) commits (422 MINIMUM_CASH_RESERVE_VIOLATION)', async () => {
+      seedDebtFixture('1600.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
+
+      // Two simultaneous partial repayments of 800.00 THB against 1600.00 THB cash and 3000.00 THB debt
+      const [res1, res2] = await Promise.all([
+        postRepayment(800.00),
+        postRepayment(800.00)
+      ]);
+
+      const statuses = [res1.status, res2.status].sort();
+      expect(statuses).toEqual([201, 422]);
+
+      const successRes = res1.status === 201 ? res1 : res2;
+      const failedRes = res1.status === 422 ? res1 : res2;
+
+      expect(successRes.body.data.updated_cash_balance).toBe('800.00');
+      expect(successRes.body.data.updated_debt).toBe('2200.00');
+      expect(failedRes.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+
+      expect(mockTransactions.length).toBe(txnBefore + 1);
+      expect(mockAllocationLines.length).toBe(allocBefore + 1);
+    });
   });
 
   describe('TEST-REPAY-10: Exact Reserve Boundary & Full-Settlement Exemption (AC-07-8, BR-07)', () => {

@@ -1100,6 +1100,53 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
     await assertAcceptedRepaymentPersisted(okRes, before, '555.56', '9444.44', '4999.99', '5555.55');
   });
 
+  it('LIVE-10: serializes concurrent partial repayments under SELECT ... FOR UPDATE row locks when stale cash balance (1600.00 THB) no longer satisfies the 100.00 THB cash reserve after first repayment (800.00 THB) commits (422 MINIMUM_CASH_RESERVE_VIOLATION)', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    // Initial state: Cash = 1,600.00 THB, Debt = 3,000.00 THB.
+    // Two tabs open the repayment modal while seeing Cash = 1,600.00 THB and each submit a partial repayment of 800.00 THB.
+    // Individually, 1,600.00 - 800.00 = 800.00 >= 100.00 reserve, and 800.00 >= 500.00 min repayment.
+    // Under PostgreSQL SELECT ... FOR UPDATE row locks:
+    // - Request 1 commits first: Cash becomes 800.00 THB, Debt becomes 2,200.00 THB.
+    // - Request 2 reads the fresh locked Cash = 800.00 THB and Debt = 2,200.00 THB:
+    //   800.00 <= 2,200.00 (not exceeding debt), 800.00 <= 800.00 (sufficient funds), 800.00 >= 500.00 (meets min repayment),
+    //   but 800.00 < 2,200.00 (partial repayment) and 800.00 - 800.00 = 0.00 < 100.00 -> rejected with 422 MINIMUM_CASH_RESERVE_VIOLATION!
+    await createRepaymentScenario('1600.00', '3000.00');
+    const before = await readPersistedRepaymentState();
+
+    const [res1, res2] = await Promise.all([
+      postLiveRepayment(800.00),
+      postLiveRepayment(800.00)
+    ]);
+
+    for (const r of [res1, res2]) {
+      if (r.status === 201 && r.body?.data?.transaction?.id) {
+        createdTxnIds.push(r.body.data.transaction.id);
+        for (const a of r.body.data.transaction.allocations || []) {
+          createdAllocIds.push(a.id);
+        }
+      }
+    }
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([201, 422]);
+
+    const successRes = res1.status === 201 ? res1 : res2;
+    const failedRes = res1.status === 422 ? res1 : res2;
+
+    expect(successRes.body.success).toBe(true);
+    expect(successRes.body.data.updated_cash_balance).toBe('800.00');
+    expect(successRes.body.data.updated_debt).toBe('2200.00');
+
+    expect(failedRes.body.success).toBe(false);
+    expect(failedRes.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+
+    const after = await readPersistedRepaymentState();
+    expect(after.txnCount).toBe(before.txnCount + 1);
+    expect(after.allocCount).toBe(before.allocCount + 1);
+    expect(after.cashBalance.equals(new Prisma.Decimal('800.00'))).toBe(true);
+    expect(after.debtBalance.equals(new Prisma.Decimal('2200.00'))).toBe(true);
+  });
+
   it('LIVE-CLEANUP-01: tracks and cleans up partially created accounts when fixture setup fails mid-way', async (ctx) => {
     if (!isDbConnected) { ctx.skip(); return; }
     const partialUser = await createRepaymentTestUser();
