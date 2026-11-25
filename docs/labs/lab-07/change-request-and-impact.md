@@ -36,12 +36,19 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
    * The `500.00 THB` minimum floor, `10%` minimum calculation, `< 500.00 THB` full-settlement requirement, and `100.00 THB` partial-repayment cash reserve are **Whatsss product/business rules chosen by the project team** — they are **not** universal credit-card rules, banking regulations, legal requirements, or financial advice.
    * **Product Rationale:** (a) prevent repayments that are too small to meaningfully reduce debt; (b) encourage meaningful debt reduction via a `MAX(500.00, 10%)` floor; (c) maintain a `100.00 THB` cash buffer for partial repayments; and (d) allow users to fully settle small balances (`< 500.00 THB`) without being blocked by the reserve buffer.
 
-### 1.3 Account Identification & Scope (`F-07` vs. Generic `Loan Taken`)
-* **Covered:** `F-07` (`POST /api/transactions/repayment`) settling debt from a `CASH` account (`from_account_id`) to an eligible Credit Card `LOAN_TAKEN` account (`to_account_id`).
-* **Excluded:** `LOAN_GIVEN` (`FR-14`), `INCOME`, `EXPENSE`, internal `CASH` transfers (`FR-13`), and generic `LOAN_TAKEN` borrowing (`FR-15`, Sprint 2).
-* **Current Schema & Unresolved Design Issue:** In `server/prisma/schema.prisma`, `AccountType` contains `CASH`, `LOAN_TAKEN`, `LOAN_GIVEN`, `INCOME`, and `EXPENSE` with **no** subtype/discriminator column. In Sprint 1, `Visa Credit Card` (`seed.ts`) is the only `LOAN_TAKEN` account, so `repayment.service.ts` checks `toAccount.type !== 'LOAN_TAKEN'`. **Unresolved Design Issue:** Before Sprint 2 introduces generic `LOAN_TAKEN` borrowing (`FR-15`), a schema discriminator or separate borrowing-repayment service boundary must be decided by the team/instructor so generic borrowing records never accidentally receive `F-07` credit-card rules.
+### 1.3 Account Identification, Critical Blocker & Design Evaluation (`F-07` vs. Generic `LOAN_TAKEN`)
+* **Covered Scope:** `F-07` (`POST /api/transactions/repayment`) settling debt from a `CASH` account (`from_account_id`) to an eligible Credit Card `LOAN_TAKEN` account (`to_account_id`).
+* **Excluded Scope:** `LOAN_GIVEN` (`FR-14`), `INCOME`, `EXPENSE`, internal `CASH` transfers (`FR-13`), and generic `LOAN_TAKEN` borrowing (`FR-15`, Sprint 2).
+* **Critical Blocker — No Reliable Credit-Card Discriminator in Current System:**
+  * Inspection of `server/prisma/schema.prisma`, `docs/system-sds.md`, `server/prisma/seed.ts`, and `server/src/services/repayment.service.ts` confirms that `AccountType` only has `CASH`, `LOAN_TAKEN`, `LOAN_GIVEN`, `INCOME`, and `EXPENSE` with **no** credit-card-specific type or discriminator field. `repayment.service.ts` currently checks only `toAccount.type !== 'LOAN_TAKEN'`.
+  * **Design Change Evaluation (if a schema discriminator is adopted):**
+    1. *Data Model (`schema.prisma` & `docs/system-sds.md`):* Would require adding a discriminator (e.g., an account subtype/instrument classification) and updating the `accounts` ER/table specification.
+    2. *Migration & Existing Data Compatibility:* Would require a Prisma migration and backfill so existing seeded `Visa Credit Card` (`LOAN_TAKEN`) rows remain valid without breaking `v0.1.0-sprint1` data.
+    3. *API, Account Management & Validation Impact:* Would require updating `account.controller.ts` (for future `FR-12` account creation) and `repayment.service.ts` (`toAccount` eligibility check).
+    4. *Regression Testing Impact:* Would require migration/seed tests plus `TEST-REPAY-14` execution against both credit-card and generic `LOAN_TAKEN` fixtures.
+  * **Scope Constraint:** Because this Change Request currently scopes schema changes as out-of-scope, no discriminator field is invented here. Until the team and Instructor/TA decide whether to (a) approve a scoped schema/migration addition or (b) formally restrict `F-07` to `toAccount.type === 'LOAN_TAKEN'` in Sprint 1, **`AC-07-10` (generic `LOAN_TAKEN` exclusion) and `TEST-REPAY-14` remain BLOCKED / CONDITIONAL**.
 
-### 1.3 Scope, Boundaries, Invalid Cases & Access Expectations
+### 1.4 Scope, Boundaries, Invalid Cases & Access Expectations
 * **In-Scope:**
   * `server/src/services/repayment.service.ts` (atomic validation inside `prismaClient.$transaction` under `SELECT ... FOR UPDATE` row locks).
   * `client/src/components/RepaymentForm.tsx` (display computed Minimum Repayment & Available Cash after Reserve, client-side validation, and `422` error handling).
@@ -73,16 +80,21 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
 
 ## 2. Change Impact Analysis
 
-| Req ID | Feature | SRS Section | Feature SDS (`feature-contracts.md`) | System SDS (`system-sds.md`) | Acceptance Criteria | STS Test IDs | Code Modules |
-|---|---|---|---|---|---|---|---|
-| `FR-09`, `BR-07` | `F-07` Credit Card Repayment Engine | §4.1 (`FR-09`), §5 (`BR-07` v1.1) | `Feature F-07` (`AC-07-3`, `AC-07-7`..`AC-07-10`, API error codes) | **Unchanged (`docs/system-sds.md` remains valid)** — domain-level validation added inside existing atomic service transaction | `AC-07-1`..`AC-07-6` (preserved), `AC-07-7`..`AC-07-10` (proposed) | `TEST-REPAY-01`..`06`, `TEST-REPAY-CONCURRENT-*`, **`TEST-REPAY-07`..`15`** (proposed) | `server/src/services/repayment.service.ts`, `client/src/components/RepaymentForm.tsx`, `server/tests/integration/repayment.test.ts`, `client/src/components/RepaymentForm.test.tsx` |
+### 2.1 Acceptance Criteria Traceability & Impact Matrix
+| AC ID | Requirement / Rule | Status | Impacted Docs & Modules | Impact Assessment | Linked STS Test IDs |
+|---|---|---|---|---|---|
+| `AC-07-1`..`AC-07-6` | Preserved Sprint 1 baseline (`BR-07`, `BR-08`) | Preserved | `srs.md`, `feature-contracts.md`, `repayment.service.ts` | Unchanged behavior; protected by regression suite | `TEST-REPAY-01`..`06`, `TEST-REPAY-CONCURRENT-*` |
+| `AC-07-7` | Minimum Repayment Floor (`500 THB` / `10%` `ROUND_HALF_UP` / `<500` full) | Proposed | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `RepaymentForm.tsx` | Adds decimal-safe floor check inside locked DB transaction + UI hint | `TEST-REPAY-07`, `TEST-REPAY-08`, `TEST-REPAY-15` |
+| `AC-07-8` | `100.00 THB` Cash Reserve & Full-Settlement Exemption | Proposed | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `RepaymentForm.tsx` | Adds partial-repayment reserve check inside locked DB transaction + UI hint | `TEST-REPAY-09`, `TEST-REPAY-10`, `TEST-REPAY-12` |
+| `AC-07-9` | Zero-Debt Rejection (`422 ZERO_OUTSTANDING_DEBT`) | Proposed | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `RepaymentForm.tsx` | Rejects `latestOutstandingDebt == 0.00` before floor/reserve checks; zero writes | `TEST-REPAY-11` |
+| `AC-07-10` | Generic `LOAN_TAKEN` Exclusion & Account Scope | **BLOCKED / Conditional** | `srs.md`, `feature-contracts.md`, `system-sds.md`, `schema.prisma`, `account.controller.ts`, `repayment.service.ts` | **Blocked on credit-card discriminator decision** (§1.3); may require schema, migration, and System SDS updates if discriminator is added | `TEST-REPAY-14` *(Conditional)* |
 
-### Applicability Assessment for System Layers
-* **System-Level SDS (`docs/system-sds.md`):** No system-level architecture or schema change is proposed. The impact assessment assumes the existing authentication/authorization and transaction boundaries remain in place; confirm the actual locking and service flow against the implementation during Part B before treating this layer as unaffected.
-* **Callers / Dependencies:** `transaction.controller.ts` delegates directly to `recordRepayment()` and forwards `RepaymentError.statusCode` and `code`, so no controller signature change is needed. `RepaymentForm.tsx` calls `recordRepayment()` in `transactionApi.ts`.
-* **UI / API Validation:** The backend is authoritative and must validate the request using decimal-safe arithmetic (`Prisma.Decimal` or integer satang/cents) after locking and re-reading the latest balances. The client may display the computed minimum and estimated post-payment cash, but client validation is UX only and must never be trusted as a security or correctness boundary.
-* **Roles / Ownership:** Preserve `USER`-only access, authentication, administrator denial, and per-user ownership checks (`BR-01`, `BR-09`, `BR-10`). Verify the concrete middleware, ownership predicates, and lock helper in the implementation before sign-off; this document does not replace those tests.
-* **Persistence, Historical Data & Migrations:** No schema migration is proposed. The new rules govern new repayment submissions only; historical transactions and allocation lines must remain unchanged. Confirm this with schema and balance-regression tests during implementation.
+### 2.2 Applicability Assessment for System Layers
+* **System-Level SDS (`docs/system-sds.md`) & Prisma Schema (`server/prisma/schema.prisma`):** Under the current no-schema-change scope, `docs/system-sds.md` architecture, middleware sequence, and transaction boundaries remain valid; **however**, because `docs/system-sds.md` and `schema.prisma` lack a credit-card discriminator (§1.3), resolving `AC-07-10` with a schema-level discriminator would directly impact `schema.prisma`, Prisma migrations, existing seed/account data compatibility, and `docs/system-sds.md`.
+* **Callers / Dependencies (`transaction.controller.ts`, `account.controller.ts`):** `transaction.controller.ts` delegates to `recordRepayment()` and forwards `RepaymentError.statusCode`/`code`. `account.controller.ts` is unaffected unless a credit-card discriminator is added. `RepaymentForm.tsx` calls `recordRepayment()` in `transactionApi.ts`.
+* **UI / API Validation:** Backend (`repayment.service.ts`) is authoritative and must validate inside `prismaClient.$transaction` after acquiring row locks (`acquireAccountRowLocks`). Client validation (`RepaymentForm.tsx`) is UX only.
+* **Roles / Ownership:** Preserve `USER`-only access, authentication, `ADMIN` denial (`BR-10`), and per-user ownership checks (`BR-01`, `BR-09`).
+* **Persistence, Historical Data & Migrations:** No schema migration is included in this documentation PR. If a discriminator is approved to resolve §1.3, a migration and data-compatibility plan must be approved before implementation. Historical transactions and allocation lines remain unchanged.
 
 ### Preserved Sprint 1 Behavior & Regression Protection
 * **Preserved Behavior:**
@@ -95,15 +107,19 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
 ## 3. Baseline Traceability & Required Approval Gates
 
 ### 3.1 Verified Baseline & Pre-Change History
-* **Accepted Sprint 1 Baseline:** Tag `v0.1.0-sprint1` $\rightarrow$ commit `f84e7b1` (Merge PR #14 from `sprint-1`).
-* **Intervening Lab 5 & Lab 6 History (`v0.1.0-sprint1` $\rightarrow$ `098c28f`):** Cloud/CI/GCP deployment PRs (`#24`–`#28`, `#30`–`#36`) and Lab 6 UAT & defect-resolution PRs (`#39`, `#41`, `#42`, `#43`, `#44`), culminating in `098c28f7beefd34c5c0cf70a0f04630f865b282c` (Merge PR #44 from `staging-lab5`).
-* **Latest Base Sync (`staging-lab5`):** Commit `62f3641` / `0f5bfde` (Merge PR #45, SingSlot retest sign-off docs) merged into this PR branch with zero conflicts.
+* **Accepted Sprint 1 Baseline:** Tag `v0.1.0-sprint1` $\rightarrow$ commit `f84e7b1680b5c5096ec045b8f9e8d47f5c5a9d1d` (`f84e7b1`, Merge PR #14 from `sprint-1`).
+* **Pre-Change Implementation Commit:** `098c28f7beefd34c5c0cf70a0f04630f865b282c` (`098c28f`, Merge PR #44 from `staging-lab5`).
+* **Relationship & Relevant `F-07` / Repayment History:** Between `v0.1.0-sprint1` (`f84e7b1`) and `098c28f`, the repository underwent Lab 5 Cloud/CI/GCP deployment hardening (`#24`–`#28`, `#30`–`#36`) and Lab 6 UAT & defect resolution (`#39`, `#41`–`#44`). `F-07` repayment behavior (`repayment.service.ts`) remained at its accepted Sprint 1 rule set through `098c28f` (hardened only with live-DB concurrency/rollback verification in Lab 6).
+* **Latest Base Sync (`staging-lab5`):** Commits `0f5bfdec8c5bceebbce001d60caed63029b4aa76` and `62f36411dcb4d7a40f832e8e51d1512494550e9e` (PR #45, SingSlot retest sign-off docs/evidence only) were merged cleanly into this branch with zero conflicts.
 * **Amended Requirements:** Strictly `BR-07` (`BR-07 v1.1`), `Feature F-07` (`AC-07-7`..`AC-07-10`), and STS (`TEST-REPAY-07`..`15`). Original Sprint 1 baseline (`v0.1.0-sprint1`) is preserved intact.
 
 ### 3.2 Approval Gate (Implementation Blocked Until Recorded)
-* **Teammate Review (`@Apichaya251400` on PR #51):** **PENDING / BLOCKED** — Must review repayment business rules, account distinction, impact analysis, and test coverage before merging PR #51.
-* **Instructor / TA Approval (Required per Lab 7 Spec):** **PENDING / BLOCKED** — Implementation must NOT start until explicit approval is recorded with:
-  1. **Approver Identity / Role:** *(Pending)*
-  2. **Approval Date:** *(Pending)*
-  3. **Approval Decision:** *(Pending)*
-  4. **Approved Change Scope / Reference:** *(Pending — `F-07` / `BR-07 v1.1` per PR #51)*
+* **Mandatory Gates per `Lab_7_Sprint_1_Maintenance.pdf`:** Both **Teammate Review** and **Instructor/TA Approval** are mandatory before implementation begins. Silence does not constitute approval.
+* **Teammate Review (`@Apichaya251400` on PR #51):** **PENDING / BLOCKED** — Must review repayment business rules, credit-card identification blocker, impact analysis, and test coverage before merging PR #51.
+* **Instructor / TA Approval:** **PENDING / BLOCKED** — Implementation must NOT start until explicit approval is recorded below with supporting evidence:
+  * **Reviewer / Approver:** *(Pending — not yet obtained)*
+  * **Role:** *(Instructor / TA)*
+  * **Review / Approval Date:** *(Pending)*
+  * **Decision:** *(Pending)*
+  * **Approved Scope:** *(Pending — `F-07` / `BR-07 v1.1` and credit-card discriminator resolution)*
+  * **Supporting Evidence / Comments:** *(Pending)*
