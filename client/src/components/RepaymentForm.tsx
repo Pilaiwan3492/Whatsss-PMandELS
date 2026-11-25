@@ -354,7 +354,7 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                 </div>
                 <div className="repayment-preview-item">
                   <span className="repayment-preview-label">
-                    Available Cash After 100.00 THB Reserve (Partial)
+                    Available Cash for Partial Repayment (After 100.00 THB Reserve)
                   </span>
                   <span className="repayment-preview-value">
                     {isFullSettlement
@@ -362,6 +362,20 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                       : formatCurrency(availableAfterReserveCents / 100)}
                   </span>
                 </div>
+                {amountCents > 0 && !isExceedingDebt && !isInsufficientFunds && (
+                  <div className="repayment-preview-item">
+                    <span className="repayment-preview-label">
+                      Remaining Cash After Entered Amount
+                    </span>
+                    <span
+                      className={`repayment-preview-value ${
+                        isCashReserveViolation ? 'text-danger' : 'text-success'
+                      }`}
+                    >
+                      {formatCurrency(remainingCashCents / 100)}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="repayment-form-group">

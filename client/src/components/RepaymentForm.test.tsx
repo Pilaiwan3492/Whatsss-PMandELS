@@ -516,7 +516,7 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
     expect(submitBtn.disabled).toBe(false);
   });
 
-  it('TEST-UI-REPAY-15 (BR-07 v1.1 AC-07-8): enforces 100.00 THB minimum cash reserve on partial repayments (cash 1599.99, debt 3000.00, amount 1500.00 blocked; cash 1600.00 allowed)', () => {
+  it('TEST-UI-REPAY-15 (BR-07 v1.1 AC-07-8): enforces 100.00 THB minimum cash reserve on partial repayments and displays both Available Cash for Partial Repayment and Remaining Cash After Entered Amount (cash 1599.99, debt 3000.00, amount 1500.00 blocked; cash 1600.00 allowed)', () => {
     const mockOnClose = vi.fn();
     const mockOnSuccess = vi.fn();
 
@@ -537,7 +537,7 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
       />
     );
 
-    expect(screen.queryByText(/Available Cash After 100\.00 THB Reserve/i)).not.toBeNull();
+    expect(screen.queryByText(/Available Cash for Partial Repayment/i)).not.toBeNull();
 
     const amountInput = screen.getByLabelText(/Repayment Amount/i);
     const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
@@ -546,6 +546,7 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
     fireEvent.change(amountInput, { target: { value: '1500.00' } });
     expect(submitBtn.disabled).toBe(true);
     expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).not.toBeNull();
+    expect(screen.queryByText(/Remaining Cash After Entered Amount/i)).not.toBeNull();
 
     unmount();
 
@@ -571,12 +572,36 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
     const submitBtn2 = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
     fireEvent.change(amountInput2, { target: { value: '1500.00' } });
     expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
+    expect(screen.queryByText(/Remaining Cash After Entered Amount/i)).not.toBeNull();
     expect(submitBtn2.disabled).toBe(false);
   });
 
-  it('TEST-UI-REPAY-16 (BR-07 v1.1 AC-07-8): exempts full-settlement repayment from the 100.00 THB cash reserve when cash >= debt (cash 3000.00, debt 3000.00, amount 3000.00 -> allowed)', () => {
+  it('TEST-UI-REPAY-16 (BR-07 v1.1 AC-07-8): exempts full-settlement repayment from the 100.00 THB cash reserve when cash >= debt (3000.00 submits and calls recordRepayment), and blocks full settlement when cash < debt (2999.99)', async () => {
     const mockOnClose = vi.fn();
     const mockOnSuccess = vi.fn();
+
+    const fullSettlementResponse: transactionApi.RepaymentResponseData = {
+      transaction: {
+        id: 'txn-repay-full-exempt',
+        primary_account_id: 'bank-checking-1',
+        form: 'PAYMENT_CHARGE',
+        total_amount: '3000.00',
+        transaction_date: '2026-11-06',
+        description: 'Credit Card Repayment',
+        allocations: [
+          {
+            id: 'alloc-repay-full-exempt',
+            target_account_id: 'cc-visa-1',
+            amount: '3000.00',
+            notes: 'Credit Card Repayment'
+          }
+        ]
+      },
+      updated_cash_balance: '0.00',
+      updated_debt: '0.00'
+    };
+
+    vi.mocked(transactionApi.recordRepayment).mockResolvedValueOnce(fullSettlementResponse);
 
     const fullSettlementAccounts: Account[] = [
       {
@@ -586,7 +611,7 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
       mockAccounts[1] // debt 3000.00
     ];
 
-    render(
+    const { unmount } = render(
       <RepaymentForm
         accounts={fullSettlementAccounts}
         isOpen={true}
@@ -598,19 +623,68 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
     const amountInput = screen.getByLabelText(/Repayment Amount/i);
     const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
 
-    // Partial repayment of 2950.00 leaves 50.00 (< 100.00 reserve) -> blocked
+    // 1. Partial repayment of 2950.00 leaves 50.00 (< 100.00 reserve) -> blocked
     fireEvent.change(amountInput, { target: { value: '2950.00' } });
-    expect(submitBtn.disabled).toBe(true);
-    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).not.toBeNull();
+    try {
+      expect(submitBtn.disabled).toBe(true);
+      expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).not.toBeNull();
 
-    // Full settlement of 3000.00 leaves 0.00 cash -> exempt from 100.00 reserve -> allowed!
-    fireEvent.change(amountInput, { target: { value: '3000.00' } });
-    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
-    expect(screen.queryByText(/Reserve Exempt/i)).not.toBeNull();
-    expect(submitBtn.disabled).toBe(false);
+      // 2. Full settlement of 3000.00 leaves 0.00 cash -> exempt from 100.00 reserve -> allowed & submitted!
+      fireEvent.change(amountInput, { target: { value: '3000.00' } });
+      expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
+      expect(screen.queryByText(/Reserve Exempt/i)).not.toBeNull();
+      expect(submitBtn.disabled).toBe(false);
+
+      fireEvent.click(submitBtn);
+
+      await waitFor(() => {
+        expect(transactionApi.recordRepayment).toHaveBeenCalledTimes(1);
+      });
+
+      expect(transactionApi.recordRepayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from_account_id: 'bank-checking-1',
+          to_account_id: 'cc-visa-1',
+          amount: '3000.00'
+        })
+      );
+      expect(mockOnSuccess).toHaveBeenCalledWith(fullSettlementResponse);
+      expect(mockOnClose).toHaveBeenCalledTimes(1);
+    } finally {
+      unmount();
+      vi.mocked(transactionApi.recordRepayment).mockReset();
+    }
+
+    // 3. Full settlement when cash = 2999.99 and debt = 3000.00 -> blocked due to insufficient funds
+    const insufficientFullSettlementAccounts: Account[] = [
+      {
+        ...mockAccounts[0],
+        current_balance: 2999.99
+      },
+      mockAccounts[1] // debt 3000.00
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={insufficientFullSettlementAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput2 = screen.getByLabelText(/Repayment Amount/i);
+    const submitBtn2 = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    fireEvent.change(amountInput2, { target: { value: '3000.00' } });
+
+    expect(screen.queryByText(/Exceeds bank balance/i)).not.toBeNull();
+    expect(submitBtn2.disabled).toBe(true);
+
+    fireEvent.click(submitBtn2);
+    expect(transactionApi.recordRepayment).not.toHaveBeenCalled();
   });
 
-  it('TEST-UI-REPAY-17 (BR-07 v1.1 AC-07-7..9): surfaces backend 422 MIN_REPAYMENT_NOT_MET and MINIMUM_CASH_RESERVE_VIOLATION error messages in alert banner', async () => {
+  it('TEST-UI-REPAY-17: displays MIN_REPAYMENT_NOT_MET from backend', async () => {
     const mockOnClose = vi.fn();
     const mockOnSuccess = vi.fn();
 
@@ -649,5 +723,172 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
 
     expect(mockOnSuccess).not.toHaveBeenCalled();
     expect(mockOnClose).not.toHaveBeenCalled();
+  });
+
+  it('TEST-UI-REPAY-18: displays MINIMUM_CASH_RESERVE_VIOLATION from backend', async () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    vi.mocked(transactionApi.recordRepayment).mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          error: {
+            code: 'MINIMUM_CASH_RESERVE_VIOLATION',
+            message: 'Partial repayment must leave at least 100.00 THB in the source cash account.'
+          }
+        }
+      }
+    });
+
+    render(
+      <RepaymentForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput, { target: { value: '1500.00' } });
+
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Partial repayment must leave at least 100.00 THB in the source cash account.')
+      ).toBeDefined();
+    });
+
+    expect(mockOnSuccess).not.toHaveBeenCalled();
+    expect(mockOnClose).not.toHaveBeenCalled();
+  });
+
+  it('TEST-UI-REPAY-19: Backend rejects repayment when the latest cash balance no longer satisfies the 100.00 THB reserve rule (stale modal balance race condition)', async () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    // User opens modal when cash is 1,600.00 THB and debt is 3,000.00 THB.
+    // Another tab spends 50.00 THB (latest backend cash becomes 1,550.00 THB).
+    // User enters 1,500.00 THB: UI sees 1,600 - 1,500 = 100.00 >= 100.00 and allows submit,
+    // but authoritative Backend rejects with 422 MINIMUM_CASH_RESERVE_VIOLATION under row lock.
+    const staleModalAccounts: Account[] = [
+      {
+        ...mockAccounts[0],
+        current_balance: 1600.0
+      },
+      mockAccounts[1] // debt 3000.00
+    ];
+
+    vi.mocked(transactionApi.recordRepayment).mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          error: {
+            code: 'MINIMUM_CASH_RESERVE_VIOLATION',
+            message: 'Partial repayment must leave at least 100.00 in the source cash account.'
+          }
+        }
+      }
+    });
+
+    render(
+      <RepaymentForm
+        accounts={staleModalAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput, { target: { value: '1500.00' } });
+
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(false);
+
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(transactionApi.recordRepayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from_account_id: 'bank-checking-1',
+          to_account_id: 'cc-visa-1',
+          amount: '1500.00'
+        })
+      );
+      expect(
+        screen.getByText('Partial repayment must leave at least 100.00 in the source cash account.')
+      ).toBeDefined();
+    });
+
+    expect(mockOnSuccess).not.toHaveBeenCalled();
+    expect(mockOnClose).not.toHaveBeenCalled();
+  });
+
+  it('TEST-UI-REPAY-20: enforces client validation precedence matching Backend when multiple rules are violated simultaneously', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    // Case 1: Amount exceeds BOTH Debt (3000.00) and Cash (200.00) -> Exceeds debt takes precedence
+    const lowCashAccounts: Account[] = [
+      {
+        ...mockAccounts[0],
+        current_balance: 200.0
+      },
+      mockAccounts[1] // debt 3000.00
+    ];
+
+    const { unmount } = render(
+      <RepaymentForm
+        accounts={lowCashAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput1 = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput1, { target: { value: '3500.00' } });
+    expect(screen.queryByText(/Exceeds debt/i)).not.toBeNull();
+    expect(screen.queryByText(/Exceeds bank balance/i)).toBeNull();
+    expect(screen.queryByText(/Below minimum repayment/i)).toBeNull();
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
+
+    // Case 2: Amount <= Debt (3000.00), but exceeds Cash (200.00) AND is below Minimum (500.00) -> Exceeds bank balance takes precedence
+    fireEvent.change(amountInput1, { target: { value: '400.00' } });
+    expect(screen.queryByText(/Exceeds debt/i)).toBeNull();
+    expect(screen.queryByText(/Exceeds bank balance/i)).not.toBeNull();
+    expect(screen.queryByText(/Below minimum repayment/i)).toBeNull();
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
+
+    unmount();
+
+    // Case 3: Amount <= Debt (3000.00) and <= Cash (450.00), but violates BOTH Minimum (400 < 500) and Cash Reserve (450 - 400 = 50 < 100) -> Below minimum repayment takes precedence
+    const reserveAndMinConflictAccounts: Account[] = [
+      {
+        ...mockAccounts[0],
+        current_balance: 450.0
+      },
+      mockAccounts[1] // debt 3000.00
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={reserveAndMinConflictAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput3 = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput3, { target: { value: '400.00' } });
+    expect(screen.queryByText(/Exceeds debt/i)).toBeNull();
+    expect(screen.queryByText(/Exceeds bank balance/i)).toBeNull();
+    expect(screen.queryByText(/Below minimum repayment/i)).not.toBeNull();
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
   });
 });
