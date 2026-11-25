@@ -12,6 +12,7 @@
 |---|---|---|---|---|
 | `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original 33 Sprint 1 baseline tests (subsequently expanded to 35 with Lab 5/6 security and concurrency tests). |
 | `v1.1-draft` | **Proposed (Pending Substantive Teammate Review)** | 2026-11-25 | Lab 7 / PR #51 / Issue #47 | Adds 10 proposed `F-07` / `BR-07 v1.1` test cases (`TEST-REPAY-07`..`16`, **Specified Only**), bringing total unique Test IDs to **45**. |
+| `v1.1-impl` | **Implemented (Local Mock/API Passed; Live DB Pending CI)** | 2026-11-26 | Lab 7 / PR #52 / Issue #48 | Implemented `TEST-REPAY-07`..`16` in `repayment.test.ts` (46/46 passed locally) and added 9 isolated Live PostgreSQL cases (`LIVE-01`..`09`) in `db-repayment.test.ts` (pending CI execution). |
 
 ---
 
@@ -24,9 +25,9 @@ The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or s
 * **Opening Balance (`TEST-OPEN-01`..`04`):** 4 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
 * **Income (`TEST-INC-01`..`02`):** 2 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
 * **Expense & Split Allocation (`TEST-EXP-01`..`02`, `TEST-VAL-01`, `TEST-ALLOC-01`..`03`):** 6 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
-* **Credit Card Repayment (`TEST-REPAY-01`..`16`, `TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`):** 18 *(8 existing Implemented/Executed/Passed Sprint 1/Lab 6 tests + 10 Lab 7 **Specified Only — Not Yet Implemented, Executed, or Passed** tests `TEST-REPAY-07`..`16`)*
+* **Credit Card Repayment (`TEST-REPAY-01`..`16`, `TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`):** 18 *(8 existing Implemented/Executed/Passed Sprint 1/Lab 6 tests + 10 Lab 7 Mock/API tests `TEST-REPAY-07`..`16`: **Specified, Implemented, Executed, Passed locally** in `repayment.test.ts`)*
 * **Balance, History, Persistence & E2E (`TEST-BAL-01`, `TEST-HIST-01`, `TEST-PERSIST-01`, `TEST-E2E-01`):** 4 *(Specified, Implemented, Executed, Passed in Lab 5–6)*
-* **Total:** `5 + 6 + 4 + 2 + 6 + 18 + 4 = 45` unique Test IDs.
+* **Total:** `5 + 6 + 4 + 2 + 6 + 18 + 4 = 45` unique Test IDs *(plus 9 isolated Live PostgreSQL cases `LIVE-01`..`09` in Section 2)*.
 
 | Test ID | Linked AC / System Contract | Target Feature | Test Level | Preconditions & Input | Expected Result |
 |---|---|:---:|:---:|---|---|
@@ -77,8 +78,28 @@ The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or s
 | **`TEST-E2E-01`** | All Golden ACs | All S1 | UI / E2E | Execute sequential Golden Journey happy path (isolated from standalone negative tests). | Complete 4-step sequence passes end-to-end with exact expected final figures. |
 
 
-## 2. Lab 7 Maintenance Amendment and Revision History
+## 2. Live PostgreSQL Integration Cases (`BR-07 v1.1` — `db-repayment.test.ts`)
+
+Each case below uses a dedicated test user, dedicated `CASH` / `LOAN_TAKEN` / `EXPENSE` accounts, tracked-ID cleanup, and real PostgreSQL 16 persistence verification (`whatsss_test`).
+
+| Test ID | Test Scenario | Initial State (Cash / Debt) | Request Amount | Expected Result | Error Code | Persistence Verification | Actual Result & Status |
+|---|---|---:|---:|---|---|---|---|
+| **`LIVE-01`** | Min repayment below 10% threshold | `10000.00` / `6000.00` | `599.99` | HTTP `422` | `MIN_REPAYMENT_NOT_MET` | 0 new txns/allocs; Cash `10000.00`, Debt `6000.00` | **Specified & Implemented** *(Pending CI execution)* |
+| **`LIVE-02`** | Exact 10% minimum repayment | `10000.00` / `6000.00` | `600.00` | HTTP `201` | — | 1 txn + 1 alloc; Cash `9400.00`, Debt `5400.00`, Expense `6000.00` | **Specified & Implemented** *(Pending CI execution)* |
+| **`LIVE-03`** | Minimum cash reserve violation | `1599.99` / `3000.00` | `1500.00` | HTTP `422` | `MINIMUM_CASH_RESERVE_VIOLATION` | 0 new txns/allocs; balances unchanged | **Specified & Implemented** *(Pending CI execution)* |
+| **`LIVE-04`** | Exact `100.00` cash reserve boundary | `1600.00` / `3000.00` | `1500.00` | HTTP `201` | — | 1 txn + 1 alloc; Cash `100.00`, Debt `1500.00` | **Specified & Implemented** *(Pending CI execution)* |
+| **`LIVE-05`** | Zero outstanding debt rejection | `10000.00` / `0.00` | `500.00` | HTTP `422` | `ZERO_OUTSTANDING_DEBT` | 0 new txns/allocs; Cash `10000.00`, Debt `0.00` | **Specified & Implemented** *(Pending CI execution)* |
+| **`LIVE-06`** | Full settlement reserve exemption | `3000.00` / `3000.00` | `3000.00` | HTTP `201` | — | 1 txn + 1 alloc; Cash `0.00`, Debt `0.00` | **Specified & Implemented** *(Pending CI execution)* |
+| **`LIVE-07`** | Insufficient funds on full settlement | `2999.99` / `3000.00` | `3000.00` | HTTP `422` | `INSUFFICIENT_FUNDS` | 0 new txns/allocs; balances unchanged | **Specified & Implemented** *(Pending CI execution)* |
+| **`LIVE-08`** | Below-500 full settlement requirement | `10000.00` / `499.99` | `499.98` then `499.99` | `422` then `201` | `MIN_REPAYMENT_NOT_MET` | `499.98` unchanged; `499.99` $\rightarrow$ Cash `9500.01`, Debt `0.00` | **Specified & Implemented** *(Pending CI execution)* |
+| **`LIVE-09`** | `ROUND_HALF_UP` boundary (`5555.55`) | `10000.00` / `5555.55` | `555.55` then `555.56` | `422` then `201` | `MIN_REPAYMENT_NOT_MET` | `555.55` unchanged; `555.56` $\rightarrow$ Cash `9444.44`, Debt `4999.99` | **Specified & Implemented** *(Pending CI execution)* |
+
+---
+
+## 3. Lab 7 Maintenance Amendment and Revision History
 
 - **v1.0 — Accepted Sprint 1 baseline (`v0.1.0-sprint1`):** Original test specification accepted for Deliverable 1 (`f84e7b16`); preserve this baseline and its historical acceptance evidence.
-- **v1.1 — Proposed Lab 7 amendment (PR #51):** Adds 10 repayment-policy test cases (`TEST-REPAY-07` through `TEST-REPAY-16`). Instructor/TA pre-approval for Sprint 1 Change Requests is waived per official Lab 7 Spec Sheet Change announcement; substantive teammate review (`@Apichaya251400`) and RED/GREEN + regression evidence remain required.
-- **Test Evidence Status & Inventory Check:** The matrix contains **45 unique Test IDs**: Authentication 5, Security & HTTP Boundary 6, Opening Balance 4, Income 2, Expense & Split Allocation 6, Credit Card Repayment 18 (16 numbered repayment cases + 2 concurrency cases), and Balance/History/Persistence/E2E 4 (`5 + 6 + 4 + 2 + 6 + 18 + 4 = 45`). Of these, the **35 existing baseline/Lab 6 tests** are *Specified, Implemented, Executed, and Passed* with historical evidence in [`docs/sprints/sprint-1/evidence-index.md`](evidence-index.md) and [`docs/labs/lab-06/defect-resolution.md`](../../labs/lab-06/defect-resolution.md) (PR #43 / PR #44), while the **10 new Lab 7 tests (`TEST-REPAY-07`..`16`)** are *Specified Only* (not yet implemented, executed, or passed).
+- **v1.1 — Lab 7 maintenance implementation (`2026-11-26`, PR #52 / Issue #48, `@Pilaiwan3492`):**
+  - Updated Section 1 status: `TEST-REPAY-07`..`TEST-REPAY-16` are now **Specified, Implemented, Executed, and Passed locally** (`46/46` in `repayment.test.ts` Mock/API integration).
+  - Added Section 2 (`LIVE-01`..`LIVE-09`) with dedicated user/account isolation and tracked-ID cleanup in `server/tests/integration/db-repayment.test.ts` (**Specified & Implemented**; local PostgreSQL unavailable, pending GitHub Actions CI execution).
+  - **Test Evidence Status & Inventory Check:** 45 unique Mock/API & Unit/E2E Test IDs (`5 + 6 + 4 + 2 + 6 + 18 + 4 = 45`, all 45 *Specified, Implemented, Executed, Passed* locally; 35 baseline/Lab 6 tests evidenced in [`docs/sprints/sprint-1/evidence-index.md`](evidence-index.md) and [`docs/labs/lab-06/defect-resolution.md`](../../labs/lab-06/defect-resolution.md)) plus 9 Live PostgreSQL `BR-07 v1.1` cases (`LIVE-01`..`09`, *Specified & Implemented*, pending CI execution). Substantive teammate review (`@Apichaya251400`) remains required before merge.
