@@ -4,7 +4,13 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part E: Sprint 1 Feature Engineering Contracts)  
-> **Status:** Authoritative Baseline (Frozen)  
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Proposed Lab 7 Maintenance Amendment (`F-07` / `BR-07 v1.1`, PR #51 — **Pending Substantive Teammate Review**; Instructor/TA Sprint 1 CR pre-approval waived per official Lab 7 Spec Sheet Change announcement)
+
+### Document Revision History
+| Version | Status | Date | Scope / Reference | Summary |
+|---|---|---|---|---|
+| `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original Sprint 1 feature contracts (`F-01`..`F-09`). |
+| `v1.1-draft` | **Proposed (Pending Substantive Teammate Review)** | 2026-11-25 | Lab 7 / PR #51 / Issue #47 | Proposes `BR-07 v1.1` updates to `Feature F-07` (`AC-07-7`..`AC-07-10`); baseline contracts remain unchanged until teammate review and RED/GREEN evidence are completed. |
 
 ---
 
@@ -245,19 +251,26 @@ This document establishes the binding engineering contracts for all nine Sprint 
 ### Feature F-07: Credit Card Repayment Engine
 * **Feature ID:** `F-07`
 * **Linked Requirements:** `FR-09`, `BR-07`, `BR-08`
-* **Preconditions:** Authenticated `USER` has Cash account (Bank) and Credit Card account (`Loan Taken`) with debt.
+* **Preconditions:** Authenticated `USER` has a funding Cash account and an eligible credit-card debt account with outstanding debt. The generic `Loan Taken` account type alone is not a sufficient identifier for credit-card eligibility; the existing schema/data discriminator must be verified before implementation. Until verified, this distinction is an unresolved design dependency and F-07 implementation remains blocked.
 * **Repayment Allocation Specification:**
-  > Repayment records a Transaction (Transaction 3 of Golden Journey) with **1 Allocation Line** targeting the `Loan Taken` account of the credit card. Because the allocation target is of type `Loan Taken` (debt settlement) rather than `Expense`, the financial summary engine excludes this amount from the total expenses (`BR-08`).
-* **Main Workflow:**
-  1. User submits credit card repayment specifying funding bank account (`from_account_id`), target credit card account (`to_account_id`), repayment amount, and date.
-  2. Server validates positive amount and verifies user owns both accounts.
-  3. Server records transaction (Transaction 3) with 1 allocation line targeting the credit card account.
-  4. Server atomically decreases bank balance by `3000.00` and decreases credit card debt by `3000.00` (`BR-07`).
-  5. Server ensures repayment is excluded from expense summaries (`BR-08`).
-* **UI Behavior:**
-  * Credit Card Account Card presents a dedicated "Pay Credit Card" button.
-  * Clicking opens modal displaying Current Outstanding Debt (e.g., `3,000.00 THB`) with "Pay in Full" quick-fill button, Funding Bank selector (displaying available balance), Repayment Amount input, and Transaction Date picker.
-  * Client validation displays warning if amount exceeds debt or available bank funds. On 201 Created, modal closes, Credit Card debt badge transitions to `0.00 THB`, and Bank balance updates to `27,000.00 THB`.
+  > Repayment records a Transaction (Transaction 3 of Golden Journey) with **1 Allocation Line** targeting the eligible Credit Card `LOAN_TAKEN` account. Because the allocation target is of type `LOAN_TAKEN` (debt settlement) rather than `EXPENSE`, the financial summary engine excludes this amount from total expenses (`BR-08`).
+* **Account Identification & Design Decision (`F-07` vs. Generic `LOAN_TAKEN`):**
+  > In the Sprint 1 schema (`server/prisma/schema.prisma`), `AccountType` contains `CASH`, `LOAN_TAKEN`, `LOAN_GIVEN`, `INCOME`, and `EXPENSE` with no subtype column. Because `FR-15` (Generic Borrowing) is deferred to Sprint 2 (`docs/srs.md` §4.2), `Visa Credit Card` is the only `LOAN_TAKEN` account in Sprint 1 (`seed.ts`). **Adopted Sprint 1 Design Decision:** Keeping schema changes out of scope for Lab 7 Sprint 1 maintenance, `F-07` enforces `fromAccount.type === 'CASH'` and `toAccount.type === 'LOAN_TAKEN'` (rejecting `LOAN_GIVEN`, `CASH`, `INCOME`, `EXPENSE` targets with `400 INVALID_ACCOUNT_TYPE`). **Sprint 2 Prerequisite:** Before `FR-15` creates generic `LOAN_TAKEN` borrowing accounts, Sprint 2 must add an explicit subtype/discriminator or separate borrowing endpoint so generic borrowing never enters `F-07`.
+* **Main Workflow & Atomic Transaction / Concurrency Contract:**
+  1. Authenticate the `USER` (`401 UNAUTHORIZED` if missing, `403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN` for `ADMIN` per `BR-10`).
+  2. Verify ownership of `from_account_id` and `to_account_id` (`404 NOT_FOUND` on cross-tenant accounts per `BR-01`), and verify account types (`fromAccount.type === 'CASH'` and `toAccount.type === 'LOAN_TAKEN'`, else `400 INVALID_ACCOUNT_TYPE`).
+  3. Validate request format (`400 INVALID_AMOUNT` for missing, non-numeric, non-positive, exponent notation, or `> 2` decimal places; `400 INVALID_TRANSACTION_DATE`; `400 INVALID_DESCRIPTION`).
+  4. Open an atomic database transaction (`prismaClient.$transaction`).
+  5. Acquire sorted pessimistic row-level write locks (`acquireAccountRowLocks` / `SELECT ... FOR UPDATE`) on both accounts.
+  6. Re-read latest `currentCashBalance` and calculate authoritative `currentDebt` under lock (never trusting client-supplied debt).
+  7. Perform all monetary calculations using decimal-safe arithmetic (`Prisma.Decimal` `ROUND_HALF_UP`).
+  8. Apply validation precedence: `ZERO_OUTSTANDING_DEBT` (`422`) $\rightarrow$ `REPAYMENT_EXCEEDS_DEBT` (`422`) $\rightarrow$ `INSUFFICIENT_FUNDS` (`422`) $\rightarrow$ `MIN_REPAYMENT_NOT_MET` (`422`: `max(500.00, roundHalfUp2(currentDebt * 0.10))` for `>= 500.00`, or full settlement for `< 500.00`) $\rightarrow$ `MINIMUM_CASH_RESERVE_VIOLATION` (`422`: `currentCashBalance - amount < 100.00` on partial repayments; full settlement `amount == currentDebt` exempt only when `currentCashBalance >= amount`).
+  9. Lock opening balances (`lockAccounts`), create 1 `Transaction` (`PAYMENT_CHARGE`) and 1 `AllocationLine` targeting `to_account_id`, and commit atomically only when all validations pass. Any failure rolls back with zero partial records or balance changes.
+  10. Exclude repayment from `ExpenseTotal` (`BR-08`).
+* **UI Behavior (`client/src/components/RepaymentForm.tsx`):**
+  * Credit Card Account Card presents a dedicated "Pay Credit Card" button opening the repayment modal.
+  * Modal displays: **Latest Outstanding Credit-Card Debt**, **Computed Minimum Repayment Amount** (updated dynamically when card/debt changes), **Available Cash Balance**, **Estimated Remaining Cash After Repayment** (highlighting the `100.00 THB` partial-repayment reserve rule), and **Full-Settlement Status** ("Pay in Full" quick-fill).
+  * Client validation (`toCents` integer-cent arithmetic) provides UX warnings for minimum repayment and cash reserve without replacing authoritative backend validation, and displays server-provided `422` / `400` error messages consistently. On `201 Created`, modal closes and dashboard balances refresh.
 * **Acceptance Criteria:**
   * `AC-07-1`: Submitting valid repayment equal to debt (e.g., `3000.00 THB`) returns `201 Created`, creates 1 allocation line targeting `Loan Taken`, decreases bank balance to `27000.00`, and decreases credit debt to `0.00` (`TEST-REPAY-01`, `BR-07`).
   * `AC-07-2`: Verified that financial expense summary does not increase after repayment (`TEST-REPAY-02`, `BR-08`).
@@ -265,8 +278,19 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-07-4`: Submitting repayment amount strictly exceeding outstanding debt returns `422 Unprocessable Entity` with error code `REPAYMENT_EXCEEDS_DEBT` (`TEST-REPAY-03`).
   * `AC-07-5`: Submitting repayment when source bank balance is insufficient returns `422 Unprocessable Entity` with error code `INSUFFICIENT_FUNDS` (`TEST-REPAY-04`).
   * `AC-07-6`: Submitting non-positive repayment amount ($\le 0.00$) or non-numeric value returns `400 Bad Request` with error code `INVALID_AMOUNT` (`TEST-REPAY-06`).
-* **API Specification:**
-  * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created` or `422 Unprocessable Entity`
+  * `AC-07-7` *(Lab 7 v1.1)*: Submitting a repayment below the minimum repayment floor ($\max(500.00, \text{roundHalfUp}_2(\text{debt} \times 0.10))$ when $\text{debt} \ge 500.00$, or $< \text{debt}$ when $\text{debt} < 500.00$) returns `422 Unprocessable Entity` with error code `MIN_REPAYMENT_NOT_MET` (`TEST-REPAY-07`, `TEST-REPAY-08`).
+  * `AC-07-8` *(Lab 7 v1.1)*: Submitting a partial repayment that leaves $< 100.00$ THB in the funding Cash account returns `422 Unprocessable Entity` with error code `MINIMUM_CASH_RESERVE_VIOLATION` (`TEST-REPAY-09`); full settlement (`amount == currentDebt`) is exempt when `currentCashBalance >= amount` (`TEST-REPAY-10`).
+  * `AC-07-9` *(Lab 7 v1.1 — Proposed)*: If latest outstanding credit-card debt is `0.00 THB`, any repayment request is rejected with `422 Unprocessable Entity` (`ZERO_OUTSTANDING_DEBT`); zero records written (`TEST-REPAY-11`).
+  * `AC-07-10` *(Lab 7 v1.1 — Proposed)*: Targeting a non-`LOAN_TAKEN` account (`LOAN_GIVEN`, `CASH`, `INCOME`, `EXPENSE`) or non-`CASH` source account returns `400 Bad Request` (`INVALID_ACCOUNT_TYPE`), writes zero records, and leaves balances unchanged (`TEST-REPAY-14`). Additionally, `TEST-REPAY-15` verifies the `500.00 THB` floor at `Debt = 3000.00`, and `TEST-REPAY-16` verifies server validation precedence.
+* **API Specification (`POST /api/transactions/repayment`):**
+  * **Request Body:** `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06", "description": "..." }`
+  * **Success (`201 Created`):** `{ "success": true, "data": { "transaction": { ... }, "updated_cash_balance": "...", "updated_debt": "..." } }`
+  * **Error Responses (`{ "success": false, "error": { "code": "...", "message": "...", "details": [] } }`):**
+    * `401 UNAUTHORIZED` — unauthenticated request (`BR-09`).
+    * `403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN` — `ADMIN` user attempting financial access (`BR-10`).
+    * `404 NOT_FOUND` — `from_account_id` or `to_account_id` not found or owned by another user (`BR-01`).
+    * `400 INVALID_AMOUNT`, `400 INVALID_ACCOUNT_TYPE`, `400 INVALID_TRANSACTION_DATE`, `400 INVALID_DESCRIPTION`.
+    * `422 ZERO_OUTSTANDING_DEBT`, `422 REPAYMENT_EXCEEDS_DEBT`, `422 INSUFFICIENT_FUNDS`, `422 MIN_REPAYMENT_NOT_MET`, `422 MINIMUM_CASH_RESERVE_VIOLATION`.
 
 ---
 
@@ -308,3 +332,10 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-09-2`: Data persists and is returned identically across backend server process restarts (`TEST-PERSIST-01`, `NFR-DATA-01`).
 * **API Specification:**
   * `GET /api/transactions`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "transactions": [ ... ] } }`
+
+
+## 3. Lab 7 Maintenance Amendment and Revision History
+
+- **v1.0 — Accepted Sprint 1 baseline (`v0.1.0-sprint1`):** Preserve the originally accepted feature contracts (`f84e7b16`).
+- **v1.1 — Proposed Lab 7 amendment (PR #51):** Adds F-07 minimum repayment, small-debt full-settlement, cash-reserve, zero-debt, and Sprint 1 `LOAN_TAKEN` scoping contracts. Instructor/TA pre-approval for Sprint 1 Change Requests is waived per official Lab 7 Spec Sheet Change announcement; substantive teammate review (`@Apichaya251400`) and RED/GREEN + regression evidence remain required before implementation/merge.
+- **Sprint 2 (`FR-15`) prerequisite:** Add an explicit account subtype/discriminator or separate borrowing endpoint before Sprint 2 introduces generic `LOAN_TAKEN` borrowing accounts.
