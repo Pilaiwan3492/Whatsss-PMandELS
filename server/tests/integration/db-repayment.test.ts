@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { app } from '../../src/app.js';
+import { config } from '../../src/config/env.js';
 import { recordRepayment } from '../../src/services/repayment.service.js';
 import { assertTestDatabase, executeCleanupsSafely } from '../fixtures/testDbGuard.js';
 
@@ -63,8 +65,8 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
       await prisma.$queryRaw`SELECT 1`;
       isDbConnected = true;
     } catch (err) {
-      if (isCI) {
-        throw new Error(`[WP-05 CI FAILURE] PostgreSQL live database connection failed in CI environment: ${err}`);
+      if (isCI || allowLiveDb) {
+        throw new Error(`[WP-05 LIVE DB FAILURE] PostgreSQL live database connection failed: ${err}`);
       }
       return;
     }
@@ -84,22 +86,15 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
       if (setCookie && setCookie.length > 0) {
         demoUserSessionCookie = setCookie[0];
       }
-    } else if (isCI) {
+    } else if (isCI || allowLiveDb) {
       throw new Error(
-        `[WP-05 CI FAILURE] Failed to authenticate user_demo in live DB. Status: ${loginRes.status}, body: ${JSON.stringify(loginRes.body)}`
+        `[WP-05 LIVE DB FAILURE] Failed to authenticate user_demo in live DB. Status: ${loginRes.status}, body: ${JSON.stringify(loginRes.body)}`
       );
     }
 
     const user = await prisma.user.findUnique({ where: { username: 'user_demo' } });
     if (user) {
       demoUserId = user.id;
-      // Clean up any dangling test transactions for user_demo to ensure isolation
-      await prisma.allocationLine.deleteMany({
-        where: { transaction: { user_id: user.id } }
-      });
-      await prisma.transaction.deleteMany({
-        where: { user_id: user.id }
-      });
 
       const cc = await prisma.account.findFirst({
         where: { user_id: user.id, name: 'Visa Credit Card' }
@@ -740,5 +735,401 @@ describe('Integration Test: PostgreSQL Live Database Credit Card Repayment (WP-0
     expect(reportRes.status).toBe(200);
     expect(Number(reportRes.body.data.bank_balance)).toBe(1000.00);
     expect(Number(reportRes.body.data.credit_debt)).toBe(3000.00);
+  });
+});
+
+/**
+ * Isolated Live PostgreSQL Integration Tests for Lab 7 BR-07 v1.1 (LIVE-01..LIVE-09).
+ * Uses a dedicated test user, dedicated accounts, and tracked-ID cleanup only.
+ */
+describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-01..09)', () => {
+  let prisma: PrismaClient;
+  let isDbConnected = false;
+  const isGitHubActions = process.env.GITHUB_ACTIONS === 'true';
+  const isCI = process.env.CI === 'true' || isGitHubActions;
+  const allowLiveDb = process.env.ALLOW_LIVE_DB_TESTS === 'true';
+  const databaseUrl = process.env.DATABASE_URL || '';
+  const TRUSTED_ORIGIN = 'http://localhost:5173';
+
+  let testUserId = '';
+  let testSessionCookie = '';
+  let testCashAccountId = '';
+  let testCreditCardId = '';
+  let testExpenseAccountId = '';
+
+  const createdUserIds: string[] = [];
+  const createdAccountIds: string[] = [];
+  const createdTxnIds: string[] = [];
+  const createdAllocIds: string[] = [];
+
+  async function createRepaymentTestUser(): Promise<{ id: string; cookie: string }> {
+    const suffix = `lab7_live_${Date.now()}`;
+    const user = await prisma.user.create({
+      data: {
+        username: suffix,
+        email: `${suffix}@whatsss.test`,
+        password_hash: '$2b$10$liveTestHashPlaceholderNotForLogin000000000000000000000',
+        role: 'USER',
+        is_active: true
+      }
+    });
+    createdUserIds.push(user.id);
+    const token = jwt.sign(
+      { userId: user.id, username: user.username, role: 'USER' },
+      config.jwtSecret,
+      { expiresIn: config.jwtExpiresIn as any }
+    );
+    return { id: user.id, cookie: `token=${token}; Path=/; HttpOnly; SameSite=Lax` };
+  }
+
+  async function createRepaymentTestAccounts(
+    userId: string,
+    options?: { failAfterCash?: boolean }
+  ) {
+    const cash = await prisma.account.create({
+      data: { user_id: userId, name: 'Live Test Checking', type: 'CASH', opening_balance: new Prisma.Decimal('0.00') }
+    });
+    createdAccountIds.push(cash.id);
+
+    if (options?.failAfterCash) {
+      throw new Error('Simulated partial fixture setup failure after CASH account creation');
+    }
+
+    const cc = await prisma.account.create({
+      data: { user_id: userId, name: 'Live Test Credit Card', type: 'LOAN_TAKEN', opening_balance: new Prisma.Decimal('0.00') }
+    });
+    createdAccountIds.push(cc.id);
+
+    const expense = await prisma.account.create({
+      data: { user_id: userId, name: 'Live Test Dining', type: 'EXPENSE', opening_balance: new Prisma.Decimal('0.00') }
+    });
+    createdAccountIds.push(expense.id);
+
+    return { cashId: cash.id, ccId: cc.id, expenseId: expense.id };
+  }
+
+  async function createRepaymentScenario(cashBalance: string, debtAmount: string) {
+    await prisma.account.update({
+      where: { id: testCashAccountId },
+      data: { opening_balance: new Prisma.Decimal(cashBalance), is_opening_locked: false }
+    });
+    await prisma.account.update({
+      where: { id: testCreditCardId },
+      data: { opening_balance: new Prisma.Decimal('0.00'), is_opening_locked: false }
+    });
+
+    if (new Prisma.Decimal(debtAmount).greaterThan('0.00')) {
+      const txn = await prisma.transaction.create({
+        data: {
+          user_id: testUserId,
+          primary_account_id: testCreditCardId,
+          form: 'PAYMENT_CHARGE',
+          total_amount: new Prisma.Decimal(debtAmount),
+          transaction_date: new Date('2026-11-06T00:00:00.000Z'),
+          description: 'Live fixture CC purchase'
+        }
+      });
+      createdTxnIds.push(txn.id);
+
+      const alloc = await prisma.allocationLine.create({
+        data: {
+          transaction_id: txn.id,
+          target_account_id: testExpenseAccountId,
+          amount: new Prisma.Decimal(debtAmount),
+          notes: 'Live fixture expense'
+        }
+      });
+      createdAllocIds.push(alloc.id);
+    }
+  }
+
+  async function readPersistedRepaymentState() {
+    const cashAcc = await prisma.account.findUniqueOrThrow({ where: { id: testCashAccountId } });
+    const ccAcc = await prisma.account.findUniqueOrThrow({ where: { id: testCreditCardId } });
+    const txns = await prisma.transaction.findMany({
+      where: { user_id: testUserId },
+      include: { allocation_lines: true }
+    });
+
+    let cashInflow = new Prisma.Decimal('0.00');
+    let cashOutflow = new Prisma.Decimal('0.00');
+    let ccCharges = new Prisma.Decimal('0.00');
+    let ccRepayments = new Prisma.Decimal('0.00');
+    let allocCount = 0;
+
+    for (const t of txns) {
+      allocCount += t.allocation_lines.length;
+      if (t.primary_account_id === testCashAccountId) {
+        if (t.form === 'RECEIVE_MONEY') cashInflow = cashInflow.add(t.total_amount);
+        if (t.form === 'PAYMENT_CHARGE') cashOutflow = cashOutflow.add(t.total_amount);
+      }
+      if (t.primary_account_id === testCreditCardId && t.form === 'PAYMENT_CHARGE') {
+        ccCharges = ccCharges.add(t.total_amount);
+      }
+      for (const line of t.allocation_lines) {
+        if (line.target_account_id === testCreditCardId && t.primary_account_id === testCashAccountId) {
+          ccRepayments = ccRepayments.add(line.amount);
+        }
+      }
+    }
+
+    return {
+      cashBalance: new Prisma.Decimal(cashAcc.opening_balance.toString()).add(cashInflow).sub(cashOutflow),
+      debtBalance: new Prisma.Decimal(ccAcc.opening_balance.toString()).add(ccCharges).sub(ccRepayments),
+      txnCount: txns.length,
+      allocCount
+    };
+  }
+
+  async function postLiveRepayment(amount: number) {
+    return request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', testSessionCookie)
+      .send({
+        from_account_id: testCashAccountId,
+        to_account_id: testCreditCardId,
+        amount,
+        transaction_date: '2026-11-06',
+        description: 'Live BR-07 v1.1 repayment'
+      });
+  }
+
+  async function assertRejectedRepaymentUnchanged(
+    res: request.Response,
+    expectedStatus: number,
+    expectedCode: string,
+    before: Awaited<ReturnType<typeof readPersistedRepaymentState>>,
+    expectedCash: string,
+    expectedDebt: string,
+    expectedExpense: string
+  ) {
+    expect(res.status).toBe(expectedStatus);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe(expectedCode);
+
+    const after = await readPersistedRepaymentState();
+    expect(after.txnCount).toBe(before.txnCount);
+    expect(after.allocCount).toBe(before.allocCount);
+    expect(after.cashBalance.equals(new Prisma.Decimal(expectedCash))).toBe(true);
+    expect(after.debtBalance.equals(new Prisma.Decimal(expectedDebt))).toBe(true);
+
+    const summaryRes = await request(app).get('/api/reports/summary').set('Cookie', testSessionCookie);
+    expect(summaryRes.status).toBe(200);
+    expect(new Prisma.Decimal(summaryRes.body.data.total_expense.toString()).equals(new Prisma.Decimal(expectedExpense))).toBe(true);
+  }
+
+  async function assertAcceptedRepaymentPersisted(
+    res: request.Response,
+    before: Awaited<ReturnType<typeof readPersistedRepaymentState>>,
+    repayAmount: string,
+    expectedCash: string,
+    expectedDebt: string,
+    expectedExpense: string
+  ) {
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    const txnId: string = res.body.data.transaction.id;
+    createdTxnIds.push(txnId);
+    for (const a of res.body.data.transaction.allocations) {
+      createdAllocIds.push(a.id);
+    }
+
+    const persistedTxn = await prisma.transaction.findUniqueOrThrow({
+      where: { id: txnId },
+      include: { allocation_lines: true }
+    });
+    expect(persistedTxn.user_id).toBe(testUserId);
+    expect(persistedTxn.primary_account_id).toBe(testCashAccountId);
+    expect(persistedTxn.form).toBe('PAYMENT_CHARGE');
+    expect(new Prisma.Decimal(persistedTxn.total_amount.toString()).equals(new Prisma.Decimal(repayAmount))).toBe(true);
+    expect(persistedTxn.allocation_lines).toHaveLength(1);
+    expect(persistedTxn.allocation_lines[0].target_account_id).toBe(testCreditCardId);
+    expect(new Prisma.Decimal(persistedTxn.allocation_lines[0].amount.toString()).equals(new Prisma.Decimal(repayAmount))).toBe(true);
+
+    const after = await readPersistedRepaymentState();
+    expect(after.txnCount).toBe(before.txnCount + 1);
+    expect(after.allocCount).toBe(before.allocCount + 1);
+    expect(after.cashBalance.equals(new Prisma.Decimal(expectedCash))).toBe(true);
+    expect(after.debtBalance.equals(new Prisma.Decimal(expectedDebt))).toBe(true);
+
+    const summaryRes = await request(app).get('/api/reports/summary').set('Cookie', testSessionCookie);
+    expect(summaryRes.status).toBe(200);
+    expect(new Prisma.Decimal(summaryRes.body.data.total_expense.toString()).equals(new Prisma.Decimal(expectedExpense))).toBe(true);
+  }
+
+  async function cleanupTrackedTransactions() {
+    if (!isDbConnected) return;
+    if (createdAllocIds.length > 0) {
+      await prisma.allocationLine.deleteMany({ where: { id: { in: [...createdAllocIds] } } });
+      createdAllocIds.length = 0;
+    }
+    if (createdTxnIds.length > 0) {
+      await prisma.allocationLine.deleteMany({ where: { transaction_id: { in: [...createdTxnIds] } } });
+      await prisma.transaction.deleteMany({ where: { id: { in: [...createdTxnIds] } } });
+      createdTxnIds.length = 0;
+    }
+  }
+
+  beforeAll(async () => {
+    if (!isCI && !allowLiveDb) return;
+    assertTestDatabase(databaseUrl, { isCI, allowLiveDb, nodeEnv: process.env.NODE_ENV });
+
+    prisma = new PrismaClient();
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      isDbConnected = true;
+    } catch (err) {
+      if (isCI || allowLiveDb) {
+        throw new Error(`[Lab 7 Live DB FAILURE] Connection failed: ${err}`);
+      }
+      return;
+    }
+
+    const user = await createRepaymentTestUser();
+    testUserId = user.id;
+    testSessionCookie = user.cookie;
+    const accs = await createRepaymentTestAccounts(testUserId);
+    testCashAccountId = accs.cashId;
+    testCreditCardId = accs.ccId;
+    testExpenseAccountId = accs.expenseId;
+  });
+
+  afterEach(async () => {
+    await cleanupTrackedTransactions();
+  });
+
+  async function cleanupTrackedAccountsAndUsers() {
+    if (!isDbConnected || !prisma) return;
+    await cleanupTrackedTransactions();
+    if (createdAccountIds.length > 0) {
+      await prisma.account.deleteMany({ where: { id: { in: [...createdAccountIds] } } });
+      createdAccountIds.length = 0;
+    }
+    if (createdUserIds.length > 0) {
+      await prisma.user.deleteMany({ where: { id: { in: [...createdUserIds] } } });
+      createdUserIds.length = 0;
+    }
+  }
+
+  afterAll(async () => {
+    try {
+      await cleanupTrackedAccountsAndUsers();
+    } finally {
+      if (prisma) {
+        await prisma.$disconnect();
+      }
+    }
+  });
+
+  it('LIVE-01: rejects 599.99 below 10% minimum on 6000.00 debt with MIN_REPAYMENT_NOT_MET', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    await createRepaymentScenario('10000.00', '6000.00');
+    const before = await readPersistedRepaymentState();
+    const res = await postLiveRepayment(599.99);
+    await assertRejectedRepaymentUnchanged(res, 422, 'MIN_REPAYMENT_NOT_MET', before, '10000.00', '6000.00', '6000.00');
+  });
+
+  it('LIVE-02: accepts exact 600.00 minimum on 6000.00 debt and persists 1 txn + 1 alloc', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    await createRepaymentScenario('10000.00', '6000.00');
+    const before = await readPersistedRepaymentState();
+    const res = await postLiveRepayment(600.00);
+    await assertAcceptedRepaymentPersisted(res, before, '600.00', '9400.00', '5400.00', '6000.00');
+  });
+
+  it('LIVE-03: rejects partial 1500.00 leaving 99.99 (<100.00 reserve) with MINIMUM_CASH_RESERVE_VIOLATION', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    await createRepaymentScenario('1599.99', '3000.00');
+    const before = await readPersistedRepaymentState();
+    const res = await postLiveRepayment(1500.00);
+    await assertRejectedRepaymentUnchanged(res, 422, 'MINIMUM_CASH_RESERVE_VIOLATION', before, '1599.99', '3000.00', '3000.00');
+  });
+
+  it('LIVE-04: accepts partial 1500.00 leaving exact 100.00 cash reserve', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    await createRepaymentScenario('1600.00', '3000.00');
+    const before = await readPersistedRepaymentState();
+    const res = await postLiveRepayment(1500.00);
+    await assertAcceptedRepaymentPersisted(res, before, '1500.00', '100.00', '1500.00', '3000.00');
+  });
+
+  it('LIVE-05: rejects 500.00 on 0.00 debt with ZERO_OUTSTANDING_DEBT', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    await createRepaymentScenario('10000.00', '0.00');
+    const before = await readPersistedRepaymentState();
+    const res = await postLiveRepayment(500.00);
+    await assertRejectedRepaymentUnchanged(res, 422, 'ZERO_OUTSTANDING_DEBT', before, '10000.00', '0.00', '0.00');
+  });
+
+  it('LIVE-06: accepts full settlement 3000.00 when Cash is 3000.00 (reserve exemption)', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    await createRepaymentScenario('3000.00', '3000.00');
+    const before = await readPersistedRepaymentState();
+    const res = await postLiveRepayment(3000.00);
+    await assertAcceptedRepaymentPersisted(res, before, '3000.00', '0.00', '0.00', '3000.00');
+  });
+
+  it('LIVE-07: rejects full settlement 3000.00 when Cash is 2999.99 with INSUFFICIENT_FUNDS', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    await createRepaymentScenario('2999.99', '3000.00');
+    const before = await readPersistedRepaymentState();
+    const res = await postLiveRepayment(3000.00);
+    await assertRejectedRepaymentUnchanged(res, 422, 'INSUFFICIENT_FUNDS', before, '2999.99', '3000.00', '3000.00');
+  });
+
+  it('LIVE-08: enforces below-500 full settlement (499.98 rejected, 499.99 accepted)', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    await createRepaymentScenario('10000.00', '499.99');
+    const before = await readPersistedRepaymentState();
+    const failRes = await postLiveRepayment(499.98);
+    await assertRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', before, '10000.00', '499.99', '499.99');
+
+    const okRes = await postLiveRepayment(499.99);
+    await assertAcceptedRepaymentPersisted(okRes, before, '499.99', '9500.01', '0.00', '499.99');
+  });
+
+  it('LIVE-09: enforces ROUND_HALF_UP boundary on 5555.55 debt (555.55 rejected, 555.56 accepted)', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    await createRepaymentScenario('10000.00', '5555.55');
+    const before = await readPersistedRepaymentState();
+    const failRes = await postLiveRepayment(555.55);
+    await assertRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', before, '10000.00', '5555.55', '5555.55');
+
+    const okRes = await postLiveRepayment(555.56);
+    await assertAcceptedRepaymentPersisted(okRes, before, '555.56', '9444.44', '4999.99', '5555.55');
+  });
+
+  it('LIVE-CLEANUP-01: tracks and cleans up partially created accounts when fixture setup fails mid-way', async (ctx) => {
+    if (!isDbConnected) { ctx.skip(); return; }
+    const partialUser = await createRepaymentTestUser();
+    const partialUserId = partialUser.id;
+    let partialError: Error | null = null;
+
+    try {
+      await createRepaymentTestAccounts(partialUserId, { failAfterCash: true });
+    } catch (err: any) {
+      partialError = err;
+    }
+
+    expect(partialError).not.toBeNull();
+    // Verify the CASH account created before the failure was tracked immediately
+    const partialAccountsBeforeCleanup = await prisma.account.findMany({ where: { user_id: partialUserId } });
+    expect(partialAccountsBeforeCleanup).toHaveLength(1);
+    expect(createdAccountIds).toContain(partialAccountsBeforeCleanup[0].id);
+
+    // Clean up only the partially created account and user without affecting main suite fixtures
+    const partialAccId = partialAccountsBeforeCleanup[0].id;
+    await prisma.account.deleteMany({ where: { id: partialAccId } });
+    await prisma.user.deleteMany({ where: { id: partialUserId } });
+    const accIdx = createdAccountIds.indexOf(partialAccId);
+    if (accIdx !== -1) createdAccountIds.splice(accIdx, 1);
+    const usrIdx = createdUserIds.indexOf(partialUserId);
+    if (usrIdx !== -1) createdUserIds.splice(usrIdx, 1);
+
+    const remainingAccounts = await prisma.account.findMany({ where: { user_id: partialUserId } });
+    const remainingUsers = await prisma.user.findMany({ where: { id: partialUserId } });
+    expect(remainingAccounts).toHaveLength(0);
+    expect(remainingUsers).toHaveLength(0);
   });
 });
