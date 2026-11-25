@@ -265,6 +265,8 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-07-4`: Submitting repayment amount strictly exceeding outstanding debt returns `422 Unprocessable Entity` with error code `REPAYMENT_EXCEEDS_DEBT` (`TEST-REPAY-03`).
   * `AC-07-5`: Submitting repayment when source bank balance is insufficient returns `422 Unprocessable Entity` with error code `INSUFFICIENT_FUNDS` (`TEST-REPAY-04`).
   * `AC-07-6`: Submitting non-positive repayment amount ($\le 0.00$) or non-numeric value returns `400 Bad Request` with error code `INVALID_AMOUNT` (`TEST-REPAY-06`).
+  * `AC-07-7` *(Lab 7 v1.1)*: Submitting a repayment below the minimum repayment floor ($\max(500.00, \text{roundHalfUp}_2(\text{debt} \times 0.10))$ when $\text{debt} \ge 500.00$, or $< \text{debt}$ when $\text{debt} < 500.00$) returns `422 Unprocessable Entity` with error code `MIN_REPAYMENT_NOT_MET` (`TEST-REPAY-07`, `TEST-REPAY-08`).
+  * `AC-07-8` *(Lab 7 v1.1)*: Submitting a partial repayment that leaves $< 100.00$ THB in the funding Cash account returns `422 Unprocessable Entity` with error code `MINIMUM_CASH_RESERVE_VIOLATION` (`TEST-REPAY-09`); full settlement (`amount == currentDebt`) is exempt when `currentCashBalance >= amount` (`TEST-REPAY-10`).
 * **API Specification:**
   * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created` or `422 Unprocessable Entity`
 
