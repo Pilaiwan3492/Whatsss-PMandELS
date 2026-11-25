@@ -4,7 +4,7 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part A: SRS and Product Scope)  
-> **Status:** Authoritative Baseline (Frozen)  
+> **Status:** Accepted Sprint 1 baseline v1.0; Lab 7 v1.1 maintenance amendment proposed (not yet approved)  
 
 ---
 
@@ -120,7 +120,7 @@ The system strictly enforces the following domain rules:
 * **`BR-06 (Allocation Balance Integrity):`** The total transaction amount must strictly equal the mathematical sum of all individual allocation line amounts:
   $$\sum \text{allocation.amount} = \text{transaction.total\_amount}$$
   Any transaction where the allocation sum does not equal the total amount shall be rejected.
-* **`BR-07 (Debt Settlement Invariant & Minimum Repayment/Reserve Policy — v1.1 Lab 7):`** A credit card repayment shall reduce the funding Cash account balance and reduce the outstanding credit card debt balance by an equal amount. The rule applies only to the credit-card repayment flow (`F-07`), not generic borrowing or other `Loan Taken` transactions. Furthermore: (a) for latest outstanding debt $\ge 500.00$ THB, the minimum repayment is $\max(500.00, \text{roundHalfUp}_2(\text{debt} \times 0.10))$; for debt $0.00 < \text{debt} < 500.00$ THB, only full settlement is permitted; (b) partial repayments must leave at least $100.00$ THB in the funding Cash account, while full settlement is exempt from the reserve only when sufficient cash exists; (c) if latest outstanding debt is $0.00$ THB, reject the request with `ZERO_OUTSTANDING_DEBT` and create no records. The backend must evaluate these rules using decimal-safe arithmetic against the latest balances inside the existing atomic transaction and account-locking strategy.
+* **`BR-07 (Debt Settlement Invariant & Minimum Repayment/Reserve Policy — proposed v1.1 Lab 7 amendment):`** A credit-card repayment shall reduce the funding Cash account balance and reduce the outstanding credit-card debt balance by an equal amount. The proposed rule applies only to the verified credit-card repayment flow (`F-07`), not generic borrowing or other `Loan Taken` transactions. The broad `Loan Taken` account type alone is not a sufficient credit-card identifier; the existing schema/data discriminator must be verified before implementation. If no reliable discriminator exists, record an unresolved design decision and obtain approval before implementation. Furthermore: (a) for latest outstanding debt $\ge 500.00$ THB, the minimum repayment is $\max(500.00, \text{roundHalfUp}_2(\text{debt} \times 0.10))$; for debt $0.00 < \text{debt} < 500.00$ THB, only full settlement is permitted; (b) partial repayments must leave at least $100.00$ THB in the funding Cash account, while full settlement is exempt from the reserve only when sufficient cash exists; (c) if latest outstanding debt is $0.00$ THB, reject the request with `ZERO_OUTSTANDING_DEBT` and create no records. The backend must evaluate these proposed rules using decimal-safe arithmetic against the latest balances inside the existing atomic transaction and account-locking strategy. These are Whatsss product rules, not universal banking or legal requirements. This v1.1 amendment remains proposed pending teammate review and mandatory Instructor/TA approval.
 * **`BR-08 (Debt Settlement & Financing Cashflow Exclusion):`** Debt repayments shall not be counted as an expense, because the underlying expenditure was already recognized when the charge occurred. Furthermore, proceeds from borrowings (`Loan Taken`, `FR-15`) and recoveries of loans given (`Loan Given`, `FR-14`) shall not be counted as income, and principal disbursed as loans given shall not be counted as expenses.
 * **`BR-09 (Authentication Boundary):`** Any unauthenticated request attempting to access protected financial or administrative resources shall be rejected.
 * **`BR-10 (Administrative Financial Privacy):`** Administrators shall have no access to view, query, or modify users' financial accounts, transactions, balances, or summaries. All financial endpoints shall enforce this exclusion on the backend.
@@ -150,3 +150,10 @@ The system must satisfy the following measurable non-functional requirements:
 1. **Local Development Baseline:** Sprint 1 runs in a local environment with Dockerized PostgreSQL and Node.js; cloud deployment on GCP is scheduled for Lab 5.
 2. **Deterministic Seed Environment:** Seeded accounts and test users (`USER` and `ADMIN`) are provided for local reproduction and evaluation of the Golden Domain Journey.
 3. **Single Currency:** All monetary values are recorded and computed in Thai Baht (`THB`) with two decimal places of precision.
+
+
+## 8. Lab 7 Maintenance Amendment and Revision History
+
+- **v1.0 — Accepted Sprint 1 baseline:** Preserve the original accepted SRS and its historical approval evidence.
+- **v1.1 — Proposed Lab 7 amendment:** Proposes the F-07 / BR-07 repayment minimum, small-debt full-settlement, cash-reserve, zero-debt, and credit-card eligibility clarifications. This amendment is not approved and must not be treated as the accepted baseline until substantive teammate review and mandatory Instructor/TA approval are evidenced.
+- **Open dependency:** Verify the existing data-model discriminator that distinguishes credit-card debt accounts from generic `Loan Taken` borrowing records. Do not invent a new field or apply F-07 rules to generic borrowing by assumption.
