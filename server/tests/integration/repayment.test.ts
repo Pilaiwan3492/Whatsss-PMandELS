@@ -912,6 +912,17 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(500.00);
       await expectRejectedRepaymentUnchanged(res, 422, 'ZERO_OUTSTANDING_DEBT', txnBefore, allocBefore, 10000.00, 0.00);
+      expect(res.body.error.message).toBe('Outstanding repayment debt is 0.00; no repayment is required.');
+    });
+
+    it('prioritizes ZERO_OUTSTANDING_DEBT over REPAYMENT_EXCEEDS_DEBT and INSUFFICIENT_FUNDS (Debt 0.00, Cash 100.00, Repay 500.00)', async () => {
+      seedDebtFixture('100.00', '0.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
+      const res = await postRepayment(500.00);
+      await expectRejectedRepaymentUnchanged(res, 422, 'ZERO_OUTSTANDING_DEBT', txnBefore, allocBefore, 100.00, 0.00);
+      expect(res.body.error.code).not.toBe('REPAYMENT_EXCEEDS_DEBT');
+      expect(res.body.error.code).not.toBe('INSUFFICIENT_FUNDS');
     });
   });
 

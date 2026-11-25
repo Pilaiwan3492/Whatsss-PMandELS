@@ -416,9 +416,18 @@ export async function recordRepayment(
     const currentDebt = toOpening.add(toCharges).sub(toRepayments);
 
     // E. Fresh Boundary Checks against locked state (AC-07-4, AC-07-5, AC-07-7..9, BR-07 v1.1)
+    // Actual validation precedence:
+    //   1. Request parameter and amount validation (pre-transaction: 400 INVALID_AMOUNT, etc.)
+    //   2. Account ownership (404 NOT_FOUND) and account type validation (400 INVALID_ACCOUNT_TYPE)
+    //   3. ZERO_OUTSTANDING_DEBT (422) — exceptional guard before debt-dependent amount/cash checks
+    //   4. REPAYMENT_EXCEEDS_DEBT (422)
+    //   5. INSUFFICIENT_FUNDS (422)
+    //   6. MIN_REPAYMENT_NOT_MET (422)
+    //   7. MINIMUM_CASH_RESERVE_VIOLATION (422)
+    //   8. Database writes (lockAccounts, Transaction, AllocationLine)
     if (currentDebt.lessThanOrEqualTo(zero)) {
       throw new RepaymentError(
-        'Outstanding credit card debt is 0.00; no repayment is required.',
+        'Outstanding repayment debt is 0.00; no repayment is required.',
         422,
         'ZERO_OUTSTANDING_DEBT'
       );
