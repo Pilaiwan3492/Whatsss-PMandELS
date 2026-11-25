@@ -5,7 +5,7 @@
 > **Team:** Pilaiwan Churdchu (`67070503492`, `@Pilaiwan3492`) & Aphichaya Klinhual (`67070503447`, `@Apichaya251400`)  
 > **Accepted Sprint 1 Baseline:** `v0.1.0-sprint1`  
 > **Pre-Change Implementation Commit (`origin/main`):** `098c28f` (PR #44, Lab 6 Release)  
-> **Contract Revision Status:** Proposed for Teammate Review (per Lab 7 Spec & Announcement: Team-selected bounded complex Sprint 1 rule change; Instructor/TA pre-approval waived)
+> **Contract Revision Status:** Proposed for substantive teammate review. Instructor/TA pre-approval applicability must be confirmed against the official Lab 7 handout/announcement before implementation.
 
 ---
 
@@ -24,6 +24,7 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
      *(10% of outstanding debt rounded half-up to 2 decimal places, or `500.00 THB`, whichever is greater; capped at `currentDebt` if `currentDebt == 500.00`).*
    * When `0.00 < currentDebt < 500.00 THB`, partial repayment is disallowed: the repayment amount **must equal** `currentDebt` (`amount == currentDebt`).
    * Full settlement (`amount == currentDebt`) always satisfies the minimum repayment floor.
+   * If the latest outstanding debt is `0.00 THB`, reject the repayment with `422 ZERO_OUTSTANDING_DEBT`; do not create a transaction or allocation line.
 
 2. **Minimum Cash Reserve Protection (`MINIMUM_CASH_RESERVE_VIOLATION`, HTTP `422`):**
    * For partial repayments (`amount < currentDebt`), the source `CASH` account must retain at least **`100.00 THB`** after the transaction:
@@ -49,12 +50,13 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
   * `currentCashBalance = 1600.00`, `currentDebt = 3000.00`, `amount = 1500.00`: remaining cash = `100.00` $\rightarrow$ **Accepted (`201`)**.
   * `currentCashBalance = 1599.99`, `currentDebt = 3000.00`, `amount = 1500.00`: remaining cash = `99.99 < 100.00` (partial) $\rightarrow$ **Rejected (`422 MINIMUM_CASH_RESERVE_VIOLATION`)**.
   * `currentCashBalance = 3000.00`, `currentDebt = 3000.00`, `amount = 3000.00` (full settlement): remaining cash = `0.00`, full settlement exception applies $\rightarrow$ **Accepted (`201`)**.
-* **Validation Precedence (Server):**
-  1. `INVALID_AMOUNT` (`400`) — non-positive, >2 decimals, non-numeric.
-  2. `REPAYMENT_EXCEEDS_DEBT` (`422`) — `amount > currentDebt`.
-  3. `INSUFFICIENT_FUNDS` (`422`) — `amount > currentCashBalance`.
-  4. `MIN_REPAYMENT_NOT_MET` (`422`) — `amount < minRepayment`.
-  5. `MINIMUM_CASH_RESERVE_VIOLATION` (`422`) — `amount < currentDebt` and `currentCashBalance - amount < 100.00`.
+* **Validation Precedence (Server; evaluated against locked, latest database values):**
+  1. `INVALID_AMOUNT` (`400`) — missing, non-numeric, non-positive, or more than 2 decimal places.
+  2. `ZERO_OUTSTANDING_DEBT` (`422`) — latest outstanding credit-card debt is `0.00`.
+  3. `REPAYMENT_EXCEEDS_DEBT` (`422`) — `amount > currentDebt`.
+  4. `INSUFFICIENT_FUNDS` (`422`) — `amount > currentCashBalance`.
+  5. `MIN_REPAYMENT_NOT_MET` (`422`) — `amount < minRepayment`.
+  6. `MINIMUM_CASH_RESERVE_VIOLATION` (`422`) — `amount < currentDebt` and `currentCashBalance - amount < 100.00`.
 * **Access Expectations:**
   * Authenticated `USER` only, strictly scoped to `user_id` (`BR-01`, `404 NOT_FOUND` on cross-tenant accounts).
   * `ADMIN` strictly barred (`BR-10`, `403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN`).
@@ -66,17 +68,17 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
 
 | Req ID | Feature | SRS Section | Feature SDS (`feature-contracts.md`) | System SDS (`system-sds.md`) | Acceptance Criteria | STS Test IDs | Code Modules |
 |---|---|---|---|---|---|---|---|
-| `FR-09`, `BR-07` | `F-07` Credit Card Repayment Engine | §4.1 (`FR-09`), §5 (`BR-07`) | `Feature F-07` (`AC-07-3`, `AC-07-7`, `AC-07-8`, API error codes) | **Unchanged (`docs/system-sds.md` remains valid)** — domain-level validation added inside existing atomic service transaction | `AC-07-1`..`AC-07-6` (preserved), `AC-07-7`, `AC-07-8` (new) | `TEST-REPAY-01`..`06`, `TEST-REPAY-CONCURRENT-*`, **`TEST-REPAY-07`..`10`** (new) | `server/src/services/repayment.service.ts`, `client/src/components/RepaymentForm.tsx`, `server/tests/integration/repayment.test.ts`, `client/src/components/RepaymentForm.test.tsx` |
+| `FR-09`, `BR-07` | `F-07` Credit Card Repayment Engine | §4.1 (`FR-09`), §5 (`BR-07`) | `Feature F-07` (`AC-07-3`, `AC-07-7`, `AC-07-8`, API error codes) | **Unchanged (`docs/system-sds.md` remains valid)** — domain-level validation added inside existing atomic service transaction | `AC-07-1`..`AC-07-6` (preserved), `AC-07-7`, `AC-07-8` (new) | `TEST-REPAY-01`..`06`, `TEST-REPAY-CONCURRENT-*`, **`TEST-REPAY-07`..`13`** (new) | `server/src/services/repayment.service.ts`, `client/src/components/RepaymentForm.tsx`, `server/tests/integration/repayment.test.ts`, `client/src/components/RepaymentForm.test.tsx` |
 
 ### Applicability Assessment for System Layers
-* **System-Level SDS (`docs/system-sds.md` — Unchanged):** `docs/system-sds.md` is intentionally not modified because it remains 100% valid as-is. This change adds domain-level validation strictly within the existing repayment service (`repayment.service.ts`) and its existing atomic database transaction, without changing the system architecture, middleware sequence (`authGuard` $\rightarrow$ `roleGuard` $\rightarrow$ controller $\rightarrow$ service), transaction boundaries, database schema, or persistence model.
+* **System-Level SDS (`docs/system-sds.md`):** No system-level architecture or schema change is proposed. The impact assessment assumes the existing authentication/authorization and transaction boundaries remain in place; confirm the actual locking and service flow against the implementation during Part B before treating this layer as unaffected.
 * **Callers / Dependencies:** `transaction.controller.ts` delegates directly to `recordRepayment()` and forwards `RepaymentError.statusCode` and `code`, so no controller signature change is needed. `RepaymentForm.tsx` calls `recordRepayment()` in `transactionApi.ts`.
-* **UI / API Validation:** Both server (`repayment.service.ts`) and client (`RepaymentForm.tsx`) must enforce and display the new minimum repayment and cash reserve rules using integer-cent / `Prisma.Decimal` arithmetic.
-* **Roles / Ownership:** Unchanged; `authGuard`, `roleGuard(['USER'])`, `acquireAccountRowLocks()`, and `user_id` ownership filters remain strictly enforced (`BR-01`, `BR-09`, `BR-10`).
-* **Persistence, Historical Data & Migrations:** **Not Applicable (N/A)** — No new tables or columns are required; existing `transactions` and `allocation_lines` records remain valid, and no Prisma migration is needed because the new rules govern validation of *new* repayment submissions only.
+* **UI / API Validation:** The backend is authoritative and must validate the request using decimal-safe arithmetic (`Prisma.Decimal` or integer satang/cents) after locking and re-reading the latest balances. The client may display the computed minimum and estimated post-payment cash, but client validation is UX only and must never be trusted as a security or correctness boundary.
+* **Roles / Ownership:** Preserve `USER`-only access, authentication, administrator denial, and per-user ownership checks (`BR-01`, `BR-09`, `BR-10`). Verify the concrete middleware, ownership predicates, and lock helper in the implementation before sign-off; this document does not replace those tests.
+* **Persistence, Historical Data & Migrations:** No schema migration is proposed. The new rules govern new repayment submissions only; historical transactions and allocation lines must remain unchanged. Confirm this with schema and balance-regression tests during implementation.
 
 ### Preserved Sprint 1 Behavior & Regression Protection
 * **Preserved Behavior:**
   * Golden Journey (`TEST-REPAY-01`: `3000.00` full repayment from `30000.00` cash; `TEST-REPAY-05`: `1500.00` partial repayment from `27000.00` cash against `3000.00` debt) remains valid.
   * Expense exclusion (`BR-08`, `TEST-REPAY-02`), user isolation (`BR-01`, `access.test.ts`), Admin 403 denial (`BR-10`, `roleGuard.test.ts`), and concurrent row-locking (`TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`) remain unchanged.
-* **Regression Protection:** Protected by running `repayment.test.ts`, `access.test.ts`, `db-repayment.test.ts`, `golden-journey.test.ts`, `balance.test.ts`, and `RepaymentForm.test.tsx`.
+* **Regression Protection:** Run `repayment.test.ts`, `access.test.ts`, `db-repayment.test.ts`, `golden-journey.test.ts`, `balance.test.ts`, and `RepaymentForm.test.tsx`; record actual outcomes and CI evidence in Part B. The current contract PR does not claim these tests have already passed.
