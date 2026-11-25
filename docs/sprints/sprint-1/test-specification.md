@@ -4,13 +4,13 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part E: Software Test Specification)  
-> **Status:** Authoritative Baseline (Frozen)  
+> **Status:** Accepted Sprint 1 baseline v1.0; Lab 7 v1.1 maintenance amendment proposed (not yet approved)  
 
 ---
 
 ## 1. Test Specification Matrix
 
-The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or system-level contract to an executable automated test case (`TEST-XX`), specifying test level, preconditions, inputs, and expected outcomes across 33 defined test cases (30 core domain and accounting tests plus 3 dedicated security boundary tests).
+The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or system-level contract to an executable automated test case (`TEST-XX`), specifying test level, preconditions, inputs, and expected outcomes across 42 uniquely identified test cases. Current feature-group counts: Authentication 5, Security 6, Opening Balance 4, Income 2, Expense 3, Allocations 3, Repayment 15 (including 2 concurrency cases), Balance 1, History 1, Persistence 1, and Golden Journey E2E 1.
 
 | Test ID | Linked AC / System Contract | Target Feature | Test Level | Preconditions & Input | Expected Result |
 |---|---|:---:|:---:|---|---|
@@ -43,7 +43,7 @@ The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or s
 | **`TEST-REPAY-04`** | `AC-07-5` | `F-07` | Integration | Dedicated fixture: Bank = `27000.00`, Debt = `50000.00`. Submit repayment request of `30000.00 THB`. | HTTP `422 Unprocessable Entity` (`INSUFFICIENT_FUNDS`), zero records written, balances unchanged. |
 | **`TEST-REPAY-05`** | `AC-07-3` | `F-07` | Integration | Dedicated fixture: Bank = `27000.00`, Debt = `3000.00`. Submit partial repayment of `1500.00 THB`. | HTTP `201 Created`, Debt decreases to `1500.00`, Bank decreases to `25500.00`, zero Expense impact. |
 | **`TEST-REPAY-06`** | `AC-07-6` | `F-07` | Integration | Submit repayment with non-positive amount ($\le 0.00$) or non-numeric amount. | HTTP `400 Bad Request` (`INVALID_AMOUNT`), zero transaction recorded. |
-| **`TEST-REPAY-07`** | `AC-07-7`, `BR-07` | `F-07` | Integration | Separate/reset fixtures per scenario (Bank = `10000.00`): (a) Debt = `6000.00` (10% = `600.00`): submit `599.99`, reset/new fixture submit `600.00`; (b) Debt = `5555.55` (10% = `555.555`, half-up `555.56`): submit `555.55`, reset/new fixture submit `555.56`. | Scenario (a): `599.99` returns HTTP `422` (`MIN_REPAYMENT_NOT_MET`); `600.00` returns HTTP `201 Created`. Scenario (b): `555.55` returns HTTP `422` (`MIN_REPAYMENT_NOT_MET`, zero records written); `555.56` returns HTTP `201 Created`, Debt = `4999.99`. |
+| **`TEST-REPAY-07`** | `AC-07-7`, `BR-07` | `F-07` | Integration | Separate/reset fixtures per scenario: (a) Bank = `10000.00`, Debt = `6000.00`: submit `599.99`, then `600.00`; (b) Bank = `10000.00`, Debt = `5555.55`: submit `555.55`, then `555.56`; (c) Bank = `10000.00`, Debt = `3000.00` (10% = `300.00`, so the `500.00` floor controls): submit `499.99`, then `500.00`. Reset or use an isolated fixture between attempts. | (a) `599.99` returns HTTP `422` (`MIN_REPAYMENT_NOT_MET`); `600.00` returns HTTP `201 Created`. (b) `555.55` returns HTTP `422` (`MIN_REPAYMENT_NOT_MET`, zero records written); `555.56` returns HTTP `201 Created`, Debt = `4999.99`. (c) `499.99` returns HTTP `422` (`MIN_REPAYMENT_NOT_MET`, zero records written); `500.00` returns HTTP `201 Created`. |
 | **`TEST-REPAY-08`** | `AC-07-7`, `BR-07` | `F-07` | Integration | Separate/reset fixtures per scenario (Bank = `10000.00`): (a) Minimum debt boundary Debt = `500.00`: submit `499.99`, reset/new fixture submit `500.00`; (b) Below-500 full-settlement boundary Debt = `499.99`: submit `499.98`, reset/new fixture submit `499.99`. | Scenario (a): `499.99` returns HTTP `422` (`MIN_REPAYMENT_NOT_MET`); `500.00` returns HTTP `201 Created`, Debt = `0.00`. Scenario (b): `499.98` returns HTTP `422` (`MIN_REPAYMENT_NOT_MET`); `499.99` returns HTTP `201 Created`, Debt = `0.00`. |
 | **`TEST-REPAY-09`** | `AC-07-8`, `BR-07` | `F-07` | Integration | Dedicated fixture: Bank = `1599.99`, Debt = `3000.00`. Submit partial repayment of `1500.00` (remaining cash `99.99 < 100.00`). | HTTP `422` (`MINIMUM_CASH_RESERVE_VIOLATION`), zero records written, Bank = `1599.99`, Debt = `3000.00`. |
 | **`TEST-REPAY-10`** | `AC-07-8`, `BR-07` | `F-07` | Integration | Boundary fixtures: (a) Bank = `1600.00`, Debt = `3000.00`, partial `1500.00` (remaining `100.00`); (b) Bank = `3000.00`, Debt = `3000.00`, full `3000.00` (remaining `0.00`). | Both succeed with HTTP `201 Created` (exact `100.00` reserve boundary and full-settlement exemption). |
@@ -56,3 +56,10 @@ The following test suite maps each applicable Acceptance Criteria (`AC-XX`) or s
 | **`TEST-HIST-01`** | `AC-09-1` | `F-09` | Integration | Query `GET /api/transactions` for `user_demo`. | HTTP `200 OK`, returns exactly 3 transactions and 4 allocation lines total. |
 | **`TEST-PERSIST-01`** | `AC-09-2`, `NFR-DATA-01`| `F-09` | Integration | Restart backend server process without re-seeding database and re-query endpoints. | Exactly 3 committed transactions, 4 allocation lines, and all balances match post-journey state identically. |
 | **`TEST-E2E-01`** | All Golden ACs | All S1 | UI / E2E | Execute sequential Golden Journey happy path (isolated from standalone negative tests). | Complete 4-step sequence passes end-to-end with exact expected final figures. |
+
+
+## 2. Lab 7 Maintenance Amendment and Revision History
+
+- **v1.0 — Accepted Sprint 1 baseline:** Original test specification accepted for Deliverable 1. Preserve this baseline and its historical acceptance evidence.
+- **v1.1 — Proposed Lab 7 amendment:** Adds repayment-policy coverage (`TEST-REPAY-07` through `TEST-REPAY-13`) and clarifies the test-suite inventory. This amendment remains **proposed / pending substantive teammate review and Instructor/TA approval**; it is not an approved replacement baseline.
+- **Test inventory check:** The current matrix contains 42 unique Test IDs. Counts by feature group are Authentication 5, Security 6, Opening Balance 4, Income 2, Expense 3, Allocations 3, Repayment 15 (13 numbered repayment cases plus 2 concurrency cases), Balance 1, History 1, Persistence 1, and Golden Journey E2E 1. These groups total 42.
