@@ -88,9 +88,38 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
     Number(selectedCC?.current_balance ?? selectedCC?.opening_balance ?? 0) * 100
   );
 
+  // BR-07 v1.1 Constants (in integer cents)
+  const MIN_REPAYMENT_FLOOR_CENTS = 50000; // 500.00 THB
+  const MIN_CASH_RESERVE_CENTS = 10000; // 100.00 THB
+
+  // Compute Minimum Required Repayment in cents (max(500.00, roundHalfUp2(debt * 0.10)) for debt >= 500.00, or full debt for 0 < debt < 500.00)
+  const computeMinRepaymentCents = (currentDebtCents: number): number => {
+    if (currentDebtCents <= 0) return 0;
+    if (currentDebtCents < MIN_REPAYMENT_FLOOR_CENTS) return currentDebtCents;
+    // roundHalfUp2(debt * 0.10) in integer cents: Math.floor((currentDebtCents + 5) / 10)
+    const tenPercentRoundedHalfUpCents = Math.floor((currentDebtCents + 5) / 10);
+    return Math.max(MIN_REPAYMENT_FLOOR_CENTS, tenPercentRoundedHalfUpCents);
+  };
+
+  const minRepaymentCents = computeMinRepaymentCents(debtCents);
+  const availableAfterReserveCents = Math.max(0, bankBalanceCents - MIN_CASH_RESERVE_CENTS);
+
   const amountCents = toCents(amount);
+  const isFullSettlement = debtCents > 0 && amountCents === debtCents;
   const isExceedingDebt = amountCents > debtCents;
   const isInsufficientFunds = amountCents > bankBalanceCents;
+  const isBelowMinRepayment =
+    amountCents > 0 &&
+    !isExceedingDebt &&
+    !isInsufficientFunds &&
+    amountCents < minRepaymentCents;
+  const isCashReserveViolation =
+    amountCents > 0 &&
+    !isExceedingDebt &&
+    !isInsufficientFunds &&
+    !isBelowMinRepayment &&
+    !isFullSettlement &&
+    bankBalanceCents - amountCents < MIN_CASH_RESERVE_CENTS;
 
   const remainingCashCents = bankBalanceCents - amountCents;
   const remainingDebtCents = Math.max(0, debtCents - amountCents);
@@ -101,7 +130,9 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
     amountCents > 0 &&
     /^\d+(\.\d{1,2})?$/.test(amount.trim()) &&
     !isExceedingDebt &&
-    !isInsufficientFunds;
+    !isInsufficientFunds &&
+    !isBelowMinRepayment &&
+    !isCashReserveViolation;
 
   const handlePayFullDebt = () => {
     if (debtCents > 0) {
@@ -144,6 +175,20 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
     if (isInsufficientFunds) {
       setErrorMessage(
         `Insufficient funds in source account. Available balance is ${formatCurrency(bankBalanceCents / 100)}.`
+      );
+      return;
+    }
+
+    if (isBelowMinRepayment) {
+      setErrorMessage(
+        `Repayment amount (${formatCurrency(amountCents / 100)}) is below the minimum required repayment of ${formatCurrency(minRepaymentCents / 100)}.`
+      );
+      return;
+    }
+
+    if (isCashReserveViolation) {
+      setErrorMessage(
+        `Partial repayment must leave at least 100.00 THB in the source cash account (remaining: ${formatCurrency(remainingCashCents / 100)}).`
       );
       return;
     }
@@ -294,6 +339,31 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                 )}
               </div>
 
+              {/* BR-07 v1.1 Minimum Required Repayment & Cash Reserve Summary */}
+              <div className="repayment-preview-card" style={{ marginBottom: '0.75rem' }}>
+                <div className="repayment-preview-item">
+                  <span className="repayment-preview-label">
+                    Minimum Required Repayment
+                    {debtCents > 0 && debtCents < MIN_REPAYMENT_FLOOR_CENTS
+                      ? ' (Full Settlement Required < 500.00 THB)'
+                      : ' (max(500.00 THB, 10%))'}
+                  </span>
+                  <span className="repayment-preview-value">
+                    {formatCurrency(minRepaymentCents / 100)}
+                  </span>
+                </div>
+                <div className="repayment-preview-item">
+                  <span className="repayment-preview-label">
+                    Available Cash After 100.00 THB Reserve (Partial)
+                  </span>
+                  <span className="repayment-preview-value">
+                    {isFullSettlement
+                      ? `${formatCurrency(bankBalanceCents / 100)} (Full Settlement Reserve Exempt)`
+                      : formatCurrency(availableAfterReserveCents / 100)}
+                  </span>
+                </div>
+              </div>
+
               <div className="repayment-form-group">
                 <label htmlFor="repaymentAmountInput" className="repayment-label">
                   <span>Repayment Amount (THB)</span>
@@ -307,13 +377,25 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                       Exceeds bank balance ({formatCurrency(bankBalanceCents / 100)})
                     </span>
                   )}
+                  {isBelowMinRepayment && (
+                    <span className="text-danger small fw-semibold">
+                      Below minimum repayment ({formatCurrency(minRepaymentCents / 100)})
+                    </span>
+                  )}
+                  {isCashReserveViolation && (
+                    <span className="text-danger small fw-semibold">
+                      Violates 100.00 THB cash reserve (remaining: {formatCurrency(remainingCashCents / 100)})
+                    </span>
+                  )}
                 </label>
                 <input
                   id="repaymentAmountInput"
                   type="text"
                   inputMode="decimal"
                   className={`repayment-input amount-input ${
-                    isExceedingDebt || isInsufficientFunds ? 'has-error' : ''
+                    isExceedingDebt || isInsufficientFunds || isBelowMinRepayment || isCashReserveViolation
+                      ? 'has-error'
+                      : ''
                   }`}
                   placeholder="0.00"
                   value={amount}
