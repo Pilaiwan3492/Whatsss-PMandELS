@@ -4,7 +4,7 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part E: Sprint 1 Feature Engineering Contracts)  
-> **Status:** Authoritative Baseline (Frozen)  
+> **Status:** Accepted Sprint 1 baseline v1.0; Lab 7 v1.1 maintenance amendment proposed (not yet approved)  
 
 ---
 
@@ -245,12 +245,12 @@ This document establishes the binding engineering contracts for all nine Sprint 
 ### Feature F-07: Credit Card Repayment Engine
 * **Feature ID:** `F-07`
 * **Linked Requirements:** `FR-09`, `BR-07`, `BR-08`
-* **Preconditions:** Authenticated `USER` has Cash account (Bank) and Credit Card account (`Loan Taken`) with debt.
+* **Preconditions:** Authenticated `USER` has a funding Cash account and an eligible credit-card debt account with outstanding debt. The generic `Loan Taken` account type alone is not a sufficient identifier for credit-card eligibility; the existing schema/data discriminator must be verified before implementation. Until verified, this distinction is an unresolved design dependency and F-07 implementation remains blocked.
 * **Repayment Allocation Specification:**
-  > Repayment records a Transaction (Transaction 3 of Golden Journey) with **1 Allocation Line** targeting the `Loan Taken` account of the credit card. Because the allocation target is of type `Loan Taken` (debt settlement) rather than `Expense`, the financial summary engine excludes this amount from the total expenses (`BR-08`).
+  > Repayment records a Transaction (Transaction 3 of Golden Journey) with **1 Allocation Line** targeting the verified credit-card debt account. The existing broad `Loan Taken` type must not be treated as proof that an account is a credit card. The implementation must use a verified existing discriminator; if none exists, stop and obtain an approved design decision rather than inventing a schema field. Generic borrowing records covered by `FR-15` are excluded from F-07. Because the allocation represents debt settlement rather than `Expense`, the financial summary engine excludes this amount from total expenses (`BR-08`).
 * **Main Workflow:**
   1. User submits credit card repayment specifying funding bank account (`from_account_id`), target credit card account (`to_account_id`), repayment amount, and date.
-  2. Server validates the amount format and verifies that the authenticated `USER` owns both accounts and that the target is the credit-card debt account covered by `F-07` (not a generic `Loan Taken` borrowing record).
+  2. Server validates the amount format and verifies that the authenticated `USER` owns both accounts. It must identify the target as an eligible credit-card debt account using a verified existing schema/data discriminator. The broad `Loan Taken` account type alone is insufficient. Generic `Loan Taken` borrowing records under `FR-15` must not enter this F-07 flow. If no reliable discriminator exists, implementation is blocked pending an approved design decision.
   3. Inside the existing database transaction, the server acquires the established account row locks, re-reads the latest cash balance and outstanding credit-card debt, and performs all repayment validations against those locked values. A zero debt balance is rejected; a full settlement is identified only by `amount == latestOutstandingDebt`.
   4. Server records transaction (Transaction 3) with 1 allocation line targeting the credit card account. All writes must roll back if any validation or persistence step fails.
   5. Server atomically decreases bank balance and credit-card debt by the same repayment amount (`BR-07`).
@@ -269,6 +269,7 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-07-7` *(Lab 7 v1.1)*: Submitting a repayment below the minimum repayment floor ($\max(500.00, \text{roundHalfUp}_2(\text{debt} \times 0.10))$ when $\text{debt} \ge 500.00$, or $< \text{debt}$ when $\text{debt} < 500.00$) returns `422 Unprocessable Entity` with error code `MIN_REPAYMENT_NOT_MET` (`TEST-REPAY-07`, `TEST-REPAY-08`).
   * `AC-07-8` *(Lab 7 v1.1)*: Submitting a partial repayment that leaves $< 100.00$ THB in the funding Cash account returns `422 Unprocessable Entity` with error code `MINIMUM_CASH_RESERVE_VIOLATION` (`TEST-REPAY-09`); full settlement (`amount == currentDebt`) is exempt when `currentCashBalance >= amount` (`TEST-REPAY-10`).
   * `AC-07-9` *(Lab 7 v1.1)*: If the latest outstanding credit-card debt is `0.00 THB`, any repayment request is rejected with `422 Unprocessable Entity` and error code `ZERO_OUTSTANDING_DEBT`; no transaction or allocation line is created (`TEST-REPAY-11`).
+  * `AC-07-10` *(Lab 7 v1.1; pending account-discriminator verification)*: A generic borrowing account under `FR-15` must not be accepted as an F-07 credit-card repayment target. The request is rejected without creating a transaction or allocation line (`TEST-REPAY-14`). This test must use the verified existing account discriminator; do not invent one.
 * **API Specification:**
   * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created` or `422 Unprocessable Entity`
 
@@ -312,3 +313,10 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-09-2`: Data persists and is returned identically across backend server process restarts (`TEST-PERSIST-01`, `NFR-DATA-01`).
 * **API Specification:**
   * `GET /api/transactions`: Cookie: `token=...` $\rightarrow$ `200 OK` `{ "success": true, "data": { "transactions": [ ... ] } }`
+
+
+## 3. Lab 7 Maintenance Amendment and Revision History
+
+- **v1.0 — Accepted Sprint 1 baseline:** Preserve the originally accepted feature contracts and their historical approval evidence.
+- **v1.1 — Proposed Lab 7 amendment:** Adds F-07 minimum repayment, small-debt full-settlement, cash-reserve, zero-debt, and generic-borrowing exclusion contracts. This amendment is proposed only and remains pending substantive teammate review and mandatory Instructor/TA approval; it is not an approved replacement baseline.
+- **Open dependency:** The existing account model's reliable discriminator between credit-card debt and generic `Loan Taken` borrowing has not yet been verified. F-07 implementation must not begin until this is resolved and approved.
