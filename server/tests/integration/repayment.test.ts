@@ -743,4 +743,210 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       expect(res.body.success).toBe(false);
     });
   });
+
+  // =========================================================================
+  // Lab 7 (BR-07 v1.1): Minimum Repayment Floor, Zero-Debt, Cash Reserve & Precedence
+  // =========================================================================
+
+  function seedDebtFixture(bankBalance: string, ccDebt: string) {
+    const bank = mockAccounts.find((a) => a.id === CHECKING_ID);
+    if (bank) {
+      bank.opening_balance = new Prisma.Decimal(bankBalance);
+    }
+    if (new Prisma.Decimal(ccDebt).greaterThan(0)) {
+      const txnId = `txn-fixture-${Date.now()}-${Math.random()}`;
+      mockTransactions.push({
+        id: txnId,
+        user_id: USER_A_ID,
+        primary_account_id: CC_ACCOUNT_ID,
+        form: 'PAYMENT_CHARGE' as const,
+        total_amount: new Prisma.Decimal(ccDebt),
+        transaction_date: new Date('2026-11-06T00:00:00.000Z'),
+        description: 'Fixture CC purchase',
+        created_at: new Date('2026-11-06T00:00:00.000Z')
+      });
+      mockAllocationLines.push({
+        id: `alloc-fixture-${Date.now()}-${Math.random()}`,
+        transaction_id: txnId,
+        target_account_id: DINING_ID,
+        amount: new Prisma.Decimal(ccDebt),
+        notes: 'Dining'
+      });
+    }
+  }
+
+  async function postRepayment(amount: number | string, toAccountId = CC_ACCOUNT_ID) {
+    return request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', userACookie)
+      .send({
+        from_account_id: CHECKING_ID,
+        to_account_id: toAccountId,
+        amount,
+        transaction_date: '2026-11-06'
+      });
+  }
+
+  describe('TEST-REPAY-07: 10% Minimum & ROUND_HALF_UP Boundaries (AC-07-7, BR-07)', () => {
+    it('rejects 599.99 on 6000.00 debt with 422 MIN_REPAYMENT_NOT_MET', async () => {
+      seedDebtFixture('10000.00', '6000.00');
+      const res = await postRepayment(599.99);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+    });
+
+    it('accepts 600.00 on 6000.00 debt with 201 Created', async () => {
+      seedDebtFixture('10000.00', '6000.00');
+      const res = await postRepayment(600.00);
+      expect(res.status).toBe(201);
+      expect(res.body.data.updated_debt).toBe('5400.00');
+    });
+
+    it('rejects 500.49 and accepts 500.50 on 5005.00 debt', async () => {
+      seedDebtFixture('10000.00', '5005.00');
+      const failRes = await postRepayment(500.49);
+      expect(failRes.status).toBe(422);
+      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+
+      const okRes = await postRepayment(500.50);
+      expect(okRes.status).toBe(201);
+      expect(okRes.body.data.updated_debt).toBe('4504.50');
+    });
+
+    it('rejects 555.55 and accepts 555.56 (ROUND_HALF_UP) on 5555.55 debt', async () => {
+      seedDebtFixture('10000.00', '5555.55');
+      const txnBefore = mockTransactions.length;
+      const failRes = await postRepayment(555.55);
+      expect(failRes.status).toBe(422);
+      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+      expect(mockTransactions.length).toBe(txnBefore);
+
+      const okRes = await postRepayment(555.56);
+      expect(okRes.status).toBe(201);
+      expect(okRes.body.data.updated_debt).toBe('4999.99');
+    });
+  });
+
+  describe('TEST-REPAY-08: Exact 500.00 & Below-500.00 Full-Settlement Boundaries (AC-07-7, BR-07)', () => {
+    it('rejects 499.99 and accepts 500.00 on exact 500.00 debt', async () => {
+      seedDebtFixture('10000.00', '500.00');
+      const failRes = await postRepayment(499.99);
+      expect(failRes.status).toBe(422);
+      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+
+      const okRes = await postRepayment(500.00);
+      expect(okRes.status).toBe(201);
+      expect(okRes.body.data.updated_debt).toBe('0.00');
+    });
+
+    it('rejects 499.98 and accepts 499.99 on 499.99 debt', async () => {
+      seedDebtFixture('10000.00', '499.99');
+      const failRes = await postRepayment(499.98);
+      expect(failRes.status).toBe(422);
+      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+
+      const okRes = await postRepayment(499.99);
+      expect(okRes.status).toBe(201);
+      expect(okRes.body.data.updated_debt).toBe('0.00');
+    });
+  });
+
+  describe('TEST-REPAY-09: Cash Reserve Violation (AC-07-8, BR-07)', () => {
+    it('rejects partial 1500.00 when Bank is 1599.99 (remaining 99.99 < 100.00)', async () => {
+      seedDebtFixture('1599.99', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const res = await postRepayment(1500.00);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+      expect(mockTransactions.length).toBe(txnBefore);
+    });
+  });
+
+  describe('TEST-REPAY-10: Exact Reserve Boundary & Full-Settlement Exemption (AC-07-8, BR-07)', () => {
+    it('accepts partial 1500.00 when Bank is 1600.00 (remaining 100.00)', async () => {
+      seedDebtFixture('1600.00', '3000.00');
+      const res = await postRepayment(1500.00);
+      expect(res.status).toBe(201);
+      expect(res.body.data.updated_cash_balance).toBe('100.00');
+    });
+
+    it('accepts full settlement 3000.00 when Bank is 3000.00 (remaining 0.00)', async () => {
+      seedDebtFixture('3000.00', '3000.00');
+      const res = await postRepayment(3000.00);
+      expect(res.status).toBe(201);
+      expect(res.body.data.updated_cash_balance).toBe('0.00');
+      expect(res.body.data.updated_debt).toBe('0.00');
+    });
+  });
+
+  describe('TEST-REPAY-11: Zero Outstanding Debt Rejection (AC-07-9, BR-07)', () => {
+    it('rejects 500.00 when Debt is 0.00 with 422 ZERO_OUTSTANDING_DEBT', async () => {
+      seedDebtFixture('10000.00', '0.00');
+      const txnBefore = mockTransactions.length;
+      const res = await postRepayment(500.00);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('ZERO_OUTSTANDING_DEBT');
+      expect(mockTransactions.length).toBe(txnBefore);
+    });
+  });
+
+  describe('TEST-REPAY-12: Insufficient Funds During Full Settlement (AC-07-5, AC-07-8)', () => {
+    it('rejects full settlement 3000.00 when Bank is 2999.99 with 422 INSUFFICIENT_FUNDS', async () => {
+      seedDebtFixture('2999.99', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const res = await postRepayment(3000.00);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('INSUFFICIENT_FUNDS');
+      expect(mockTransactions.length).toBe(txnBefore);
+    });
+  });
+
+  describe('TEST-REPAY-13: Over-Precision & Missing Amount Validation (AC-07-6)', () => {
+    it('rejects 500.001 (>2 decimals) with 400 INVALID_AMOUNT', async () => {
+      seedDebtFixture('10000.00', '3000.00');
+      const res = await postRepayment(500.001);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('INVALID_AMOUNT');
+    });
+  });
+
+  describe('TEST-REPAY-14: Target Account Scope Enforcement (AC-07-10, BR-07)', () => {
+    it('rejects non-LOAN_TAKEN targets (EXPENSE / CASH) with 400 INVALID_ACCOUNT_TYPE', async () => {
+      seedDebtFixture('10000.00', '3000.00');
+      const res = await postRepayment(500.00, DINING_ID);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('INVALID_ACCOUNT_TYPE');
+    });
+  });
+
+  describe('TEST-REPAY-15: Fixed 500.00 THB Minimum Floor on 3000.00 Debt (AC-07-7, BR-07)', () => {
+    it('rejects 499.99 and accepts 500.00 on 3000.00 debt', async () => {
+      seedDebtFixture('10000.00', '3000.00');
+      const failRes = await postRepayment(499.99);
+      expect(failRes.status).toBe(422);
+      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+
+      const okRes = await postRepayment(500.00);
+      expect(okRes.status).toBe(201);
+      expect(okRes.body.data.updated_debt).toBe('2500.00');
+      expect(okRes.body.data.updated_cash_balance).toBe('9500.00');
+    });
+  });
+
+  describe('TEST-REPAY-16: Server Validation Precedence (AC-07-7..9, BR-07)', () => {
+    it('prioritizes INSUFFICIENT_FUNDS over MIN_REPAYMENT_NOT_MET', async () => {
+      seedDebtFixture('200.00', '3000.00');
+      const res = await postRepayment(400.00);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('INSUFFICIENT_FUNDS');
+    });
+
+    it('prioritizes MIN_REPAYMENT_NOT_MET over MINIMUM_CASH_RESERVE_VIOLATION', async () => {
+      seedDebtFixture('450.00', '3000.00');
+      const res = await postRepayment(400.00);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+    });
+  });
 });
