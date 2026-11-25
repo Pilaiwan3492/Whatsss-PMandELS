@@ -3,9 +3,10 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents (Semester 1/2026)  
 > **Project:** Whatsss — Personal Money and Expense Logging System (Theme 7)  
 > **Team:** Pilaiwan Churdchu (`67070503492`, `@Pilaiwan3492`) & Aphichaya Klinhual (`67070503447`, `@Apichaya251400`)  
-> **Accepted Sprint 1 Baseline:** `v0.1.0-sprint1`  
-> **Pre-Change Implementation Commit (`origin/main`):** `098c28f` (PR #44, Lab 6 Release)  
-> **Contract Revision Status:** Proposed for substantive teammate review. Instructor/TA pre-approval applicability must be confirmed against the official Lab 7 handout/announcement before implementation.
+> **Accepted Sprint 1 Baseline:** `v0.1.0-sprint1` (`f84e7b1`, Merge PR #14 from `sprint-1`)  
+> **Pre-Change Implementation Commit (`origin/main`):** `098c28f7beefd34c5c0cf70a0f04630f865b282c` (`098c28f`, Merge PR #44 from `staging-lab5`, Lab 6 Release)  
+> **Base Branch Sync (`staging-lab5`):** Includes `62f3641` / `0f5bfde` (PR #45, Lab 6 SingSlot retest sign-off, docs/evidence only)  
+> **Contract Revision Status:** **PENDING TEAMMATE REVIEW & INSTRUCTOR/TA APPROVAL** — `@Apichaya251400` review and Instructor/TA approval are **required before implementation**. Do not start implementation until recorded approval evidence exists.
 
 ---
 
@@ -31,8 +32,14 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
      $$\text{currentCashBalance} - \text{amount} \ge 100.00$$
    * **Boundary Exception (Full Settlement):** If the user is paying off the **entire remaining debt** (`amount == currentDebt`) and has sufficient funds (`currentCashBalance >= amount`), the `100.00 THB` reserve requirement is waived so a user can clear 100% of their credit card debt without being blocked by the reserve buffer.
 
-3. **Reason for Change:**
-   * Real-world personal finance and credit card billing policies enforce minimum monthly payments (preventing micro-payments on large balances and requiring full payoff of trivial balances `< 500.00 THB`) and protect users from accidentally draining their primary checking account to `0.00 THB` on partial repayments.
+3. **Reason for Change (Whatsss Product Rationale):**
+   * The `500.00 THB` minimum floor, `10%` minimum calculation, `< 500.00 THB` full-settlement requirement, and `100.00 THB` partial-repayment cash reserve are **Whatsss product/business rules chosen by the project team** — they are **not** universal credit-card rules, banking regulations, legal requirements, or financial advice.
+   * **Product Rationale:** (a) prevent repayments that are too small to meaningfully reduce debt; (b) encourage meaningful debt reduction via a `MAX(500.00, 10%)` floor; (c) maintain a `100.00 THB` cash buffer for partial repayments; and (d) allow users to fully settle small balances (`< 500.00 THB`) without being blocked by the reserve buffer.
+
+### 1.3 Account Identification & Scope (`F-07` vs. Generic `Loan Taken`)
+* **Covered:** `F-07` (`POST /api/transactions/repayment`) settling debt from a `CASH` account (`from_account_id`) to an eligible Credit Card `LOAN_TAKEN` account (`to_account_id`).
+* **Excluded:** `LOAN_GIVEN` (`FR-14`), `INCOME`, `EXPENSE`, internal `CASH` transfers (`FR-13`), and generic `LOAN_TAKEN` borrowing (`FR-15`, Sprint 2).
+* **Current Schema & Unresolved Design Issue:** In `server/prisma/schema.prisma`, `AccountType` contains `CASH`, `LOAN_TAKEN`, `LOAN_GIVEN`, `INCOME`, and `EXPENSE` with **no** subtype/discriminator column. In Sprint 1, `Visa Credit Card` (`seed.ts`) is the only `LOAN_TAKEN` account, so `repayment.service.ts` checks `toAccount.type !== 'LOAN_TAKEN'`. **Unresolved Design Issue:** Before Sprint 2 introduces generic `LOAN_TAKEN` borrowing (`FR-15`), a schema discriminator or separate borrowing-repayment service boundary must be decided by the team/instructor so generic borrowing records never accidentally receive `F-07` credit-card rules.
 
 ### 1.3 Scope, Boundaries, Invalid Cases & Access Expectations
 * **In-Scope:**
@@ -68,7 +75,7 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
 
 | Req ID | Feature | SRS Section | Feature SDS (`feature-contracts.md`) | System SDS (`system-sds.md`) | Acceptance Criteria | STS Test IDs | Code Modules |
 |---|---|---|---|---|---|---|---|
-| `FR-09`, `BR-07` | `F-07` Credit Card Repayment Engine | §4.1 (`FR-09`), §5 (`BR-07`) | `Feature F-07` (`AC-07-3`, `AC-07-7`, `AC-07-8`, API error codes) | **Unchanged (`docs/system-sds.md` remains valid)** — domain-level validation added inside existing atomic service transaction | `AC-07-1`..`AC-07-6` (preserved), `AC-07-7`, `AC-07-8` (new) | `TEST-REPAY-01`..`06`, `TEST-REPAY-CONCURRENT-*`, **`TEST-REPAY-07`..`13`** (new) | `server/src/services/repayment.service.ts`, `client/src/components/RepaymentForm.tsx`, `server/tests/integration/repayment.test.ts`, `client/src/components/RepaymentForm.test.tsx` |
+| `FR-09`, `BR-07` | `F-07` Credit Card Repayment Engine | §4.1 (`FR-09`), §5 (`BR-07` v1.1) | `Feature F-07` (`AC-07-3`, `AC-07-7`..`AC-07-10`, API error codes) | **Unchanged (`docs/system-sds.md` remains valid)** — domain-level validation added inside existing atomic service transaction | `AC-07-1`..`AC-07-6` (preserved), `AC-07-7`..`AC-07-10` (proposed) | `TEST-REPAY-01`..`06`, `TEST-REPAY-CONCURRENT-*`, **`TEST-REPAY-07`..`15`** (proposed) | `server/src/services/repayment.service.ts`, `client/src/components/RepaymentForm.tsx`, `server/tests/integration/repayment.test.ts`, `client/src/components/RepaymentForm.test.tsx` |
 
 ### Applicability Assessment for System Layers
 * **System-Level SDS (`docs/system-sds.md`):** No system-level architecture or schema change is proposed. The impact assessment assumes the existing authentication/authorization and transaction boundaries remain in place; confirm the actual locking and service flow against the implementation during Part B before treating this layer as unaffected.
@@ -82,3 +89,21 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
   * Golden Journey (`TEST-REPAY-01`: `3000.00` full repayment from `30000.00` cash; `TEST-REPAY-05`: `1500.00` partial repayment from `27000.00` cash against `3000.00` debt) remains valid.
   * Expense exclusion (`BR-08`, `TEST-REPAY-02`), user isolation (`BR-01`, `access.test.ts`), Admin 403 denial (`BR-10`, `roleGuard.test.ts`), and concurrent row-locking (`TEST-REPAY-CONCURRENT-DEBT`, `TEST-REPAY-CONCURRENT-FUNDS`) remain unchanged.
 * **Regression Protection:** Run `repayment.test.ts`, `access.test.ts`, `db-repayment.test.ts`, `golden-journey.test.ts`, `balance.test.ts`, and `RepaymentForm.test.tsx`; record actual outcomes and CI evidence in Part B. The current contract PR does not claim these tests have already passed.
+
+---
+
+## 3. Baseline Traceability & Required Approval Gates
+
+### 3.1 Verified Baseline & Pre-Change History
+* **Accepted Sprint 1 Baseline:** Tag `v0.1.0-sprint1` $\rightarrow$ commit `f84e7b1` (Merge PR #14 from `sprint-1`).
+* **Intervening Lab 5 & Lab 6 History (`v0.1.0-sprint1` $\rightarrow$ `098c28f`):** Cloud/CI/GCP deployment PRs (`#24`–`#28`, `#30`–`#36`) and Lab 6 UAT & defect-resolution PRs (`#39`, `#41`, `#42`, `#43`, `#44`), culminating in `098c28f7beefd34c5c0cf70a0f04630f865b282c` (Merge PR #44 from `staging-lab5`).
+* **Latest Base Sync (`staging-lab5`):** Commit `62f3641` / `0f5bfde` (Merge PR #45, SingSlot retest sign-off docs) merged into this PR branch with zero conflicts.
+* **Amended Requirements:** Strictly `BR-07` (`BR-07 v1.1`), `Feature F-07` (`AC-07-7`..`AC-07-10`), and STS (`TEST-REPAY-07`..`15`). Original Sprint 1 baseline (`v0.1.0-sprint1`) is preserved intact.
+
+### 3.2 Approval Gate (Implementation Blocked Until Recorded)
+* **Teammate Review (`@Apichaya251400` on PR #51):** **PENDING / BLOCKED** — Must review repayment business rules, account distinction, impact analysis, and test coverage before merging PR #51.
+* **Instructor / TA Approval (Required per Lab 7 Spec):** **PENDING / BLOCKED** — Implementation must NOT start until explicit approval is recorded with:
+  1. **Approver Identity / Role:** *(Pending)*
+  2. **Approval Date:** *(Pending)*
+  3. **Approval Decision:** *(Pending)*
+  4. **Approved Change Scope / Reference:** *(Pending — `F-07` / `BR-07 v1.1` per PR #51)*

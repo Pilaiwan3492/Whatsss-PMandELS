@@ -4,7 +4,13 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part A: SRS and Product Scope)  
-> **Status:** Authoritative Baseline (Frozen)  
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Proposed Lab 7 Maintenance Revision (`BR-07 v1.1`, PR #51 — **Pending Teammate Review & Instructor/TA Approval**)
+
+### Document Revision History
+| Version | Status | Date | Scope / Reference | Summary |
+|---|---|---|---|---|
+| `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b1`) | Original Sprint 1 SRS and Business Rules (`BR-01`..`BR-10`). |
+| `v1.1-draft` | **Proposed (Pending Review & Approval)** | 2026-11-25 | Lab 7 / PR #51 | Proposes `BR-07 v1.1` amendment to `F-07` Credit Card Repayment (`FR-09`); does not alter accepted baseline until approved. |  
 
 ---
 
@@ -120,7 +126,13 @@ The system strictly enforces the following domain rules:
 * **`BR-06 (Allocation Balance Integrity):`** The total transaction amount must strictly equal the mathematical sum of all individual allocation line amounts:
   $$\sum \text{allocation.amount} = \text{transaction.total\_amount}$$
   Any transaction where the allocation sum does not equal the total amount shall be rejected.
-* **`BR-07 (Debt Settlement Invariant & Minimum Repayment/Reserve Policy — v1.1 Lab 7):`** A credit card repayment shall reduce the funding Cash account balance and reduce the outstanding credit card debt balance by an equal amount. The rule applies only to the credit-card repayment flow (`F-07`), not generic borrowing or other `Loan Taken` transactions. Furthermore: (a) for latest outstanding debt $\ge 500.00$ THB, the minimum repayment is $\max(500.00, \text{roundHalfUp}_2(\text{debt} \times 0.10))$; for debt $0.00 < \text{debt} < 500.00$ THB, only full settlement is permitted; (b) partial repayments must leave at least $100.00$ THB in the funding Cash account, while full settlement is exempt from the reserve only when sufficient cash exists; (c) if latest outstanding debt is $0.00$ THB, reject the request with `ZERO_OUTSTANDING_DEBT` and create no records. The backend must evaluate these rules using decimal-safe arithmetic against the latest balances inside the existing atomic transaction and account-locking strategy.
+* **`BR-07 (Debt Settlement Invariant — Accepted Sprint 1 Baseline `v0.1.0-sprint1`):`** A credit card repayment shall reduce the funding Cash account balance and reduce the outstanding credit card debt balance by an equal amount.
+  * **`BR-07 v1.1 (Proposed Lab 7 Amendment — 2026-11-25, PR #51, Pending Review & Approval):`**
+    * *Previous Behavior (`v0.1.0-sprint1`):* Any positive repayment (`0.00 < amount <= currentDebt` and `amount <= currentCashBalance`, max 2 decimal places) was accepted with no minimum repayment floor and no cash reserve buffer.
+    * *New Proposed Behavior:* Applies **only** to Credit Card Debt Settlement (`F-07` / `FR-09`), not generic `Loan Taken` borrowing (`FR-15`) or other account types (`Loan Given`, `Income`, `Expense`, internal `Cash` transfers `FR-13`): (a) for latest outstanding debt $\ge 500.00$ THB, minimum repayment is $\max(500.00, \text{roundHalfUp}_2(\text{debt} \times 0.10))$ using 2-decimal `ROUND_HALF_UP` arithmetic; for $0.00 < \text{debt} < 500.00$ THB, only full settlement (`amount == latestOutstandingDebt`) is permitted; (b) partial repayments must leave at least $100.00$ THB in the funding Cash account, while full settlement is exempt from the reserve only when sufficient cash exists; (c) if latest outstanding debt is $0.00$ THB, reject with `422 ZERO_OUTSTANDING_DEBT` and create no records. Evaluated inside the existing atomic transaction and pessimistic row-locking strategy.
+    * *Account Identification Note (Unresolved Design Issue for Sprint 2):* In Sprint 1 (`schema.prisma`), `AccountType.LOAN_TAKEN` has no subtype discriminator because only Credit Card accounts (`Visa Credit Card`) exist. Before Sprint 2 introduces generic borrowing (`FR-15`), a schema discriminator or separate service boundary must be decided so generic `Loan Taken` records never receive `F-07` rules.
+    * *Reason for Change:* Whatsss product-level rules chosen by the project team to prevent micro-repayments, encourage meaningful debt reduction, maintain a `100.00 THB` partial-payment cash buffer, and allow full payoff of small balances.
+    * *Traceability:* `docs/labs/lab-07/change-request-and-impact.md` (PR #51); `AC-07-7`..`AC-07-10`; `TEST-REPAY-07`..`15`.
 * **`BR-08 (Debt Settlement & Financing Cashflow Exclusion):`** Debt repayments shall not be counted as an expense, because the underlying expenditure was already recognized when the charge occurred. Furthermore, proceeds from borrowings (`Loan Taken`, `FR-15`) and recoveries of loans given (`Loan Given`, `FR-14`) shall not be counted as income, and principal disbursed as loans given shall not be counted as expenses.
 * **`BR-09 (Authentication Boundary):`** Any unauthenticated request attempting to access protected financial or administrative resources shall be rejected.
 * **`BR-10 (Administrative Financial Privacy):`** Administrators shall have no access to view, query, or modify users' financial accounts, transactions, balances, or summaries. All financial endpoints shall enforce this exclusion on the backend.

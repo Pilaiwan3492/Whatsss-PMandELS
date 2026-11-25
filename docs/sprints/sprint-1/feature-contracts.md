@@ -4,7 +4,13 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part E: Sprint 1 Feature Engineering Contracts)  
-> **Status:** Authoritative Baseline (Frozen)  
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Proposed Lab 7 Maintenance Revision (`F-07` / `BR-07 v1.1`, PR #51 — **Pending Teammate Review & Instructor/TA Approval**)
+
+### Document Revision History
+| Version | Status | Date | Scope / Reference | Summary |
+|---|---|---|---|---|
+| `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b1`) | Original Sprint 1 feature contracts (`F-01`..`F-09`). |
+| `v1.1-draft` | **Proposed (Pending Review & Approval)** | 2026-11-25 | Lab 7 / PR #51 | Proposes `BR-07 v1.1` updates to `Feature F-07` (`AC-07-7`..`AC-07-10`); baseline contracts remain unchanged until approved. |  
 
 ---
 
@@ -248,13 +254,19 @@ This document establishes the binding engineering contracts for all nine Sprint 
 * **Preconditions:** Authenticated `USER` has Cash account (Bank) and Credit Card account (`Loan Taken`) with debt.
 * **Repayment Allocation Specification:**
   > Repayment records a Transaction (Transaction 3 of Golden Journey) with **1 Allocation Line** targeting the `Loan Taken` account of the credit card. Because the allocation target is of type `Loan Taken` (debt settlement) rather than `Expense`, the financial summary engine excludes this amount from the total expenses (`BR-08`).
-* **Main Workflow:**
-  1. User submits credit card repayment specifying funding bank account (`from_account_id`), target credit card account (`to_account_id`), repayment amount, and date.
-  2. Server validates the amount format and verifies that the authenticated `USER` owns both accounts and that the target is the credit-card debt account covered by `F-07` (not a generic `Loan Taken` borrowing record).
-  3. Inside the existing database transaction, the server acquires the established account row locks, re-reads the latest cash balance and outstanding credit-card debt, and performs all repayment validations against those locked values. A zero debt balance is rejected; a full settlement is identified only by `amount == latestOutstandingDebt`.
-  4. Server records transaction (Transaction 3) with 1 allocation line targeting the credit card account. All writes must roll back if any validation or persistence step fails.
-  5. Server atomically decreases bank balance and credit-card debt by the same repayment amount (`BR-07`).
-  6. Server ensures repayment is excluded from expense summaries (`BR-08`).
+* **Account Identification & Scope (`F-07` vs. Generic `Loan Taken`):**
+  > In the Sprint 1 schema (`server/prisma/schema.prisma`), `AccountType` has no subtype column; `Visa Credit Card` is the only `LOAN_TAKEN` account in Sprint 1 (`seed.ts`), and `repayment.service.ts` validates `fromAccount.type === 'CASH'` and `toAccount.type === 'LOAN_TAKEN'`. `F-07` / `BR-07 v1.1` applies **only** to eligible credit-card debt accounts and explicitly excludes `LOAN_GIVEN` (`FR-14`), `INCOME`, `EXPENSE`, internal `CASH` transfers (`FR-13`), and generic `LOAN_TAKEN` borrowing (`FR-15`, Sprint 2). **Unresolved Design Issue:** Before Sprint 2 implements `FR-15`, a schema discriminator or separate borrowing-repayment boundary must be established so generic `Loan Taken` records never receive `F-07` rules.
+* **Main Workflow & Atomic Transaction / Concurrency Contract:**
+  1. User submits credit card repayment specifying funding `CASH` account (`from_account_id`), target credit-card `LOAN_TAKEN` account (`to_account_id`), repayment amount, and `transaction_date`.
+  2. Server validates request format (`INVALID_AMOUNT`, `400` for missing, non-numeric, non-positive, exponent notation, or `> 2` decimal places) and verifies `USER` authentication (`401`), non-`ADMIN` role (`403`, `BR-10`), and ownership (`404`, `BR-01`).
+  3. Server starts a single atomic database transaction (`prismaClient.$transaction`) and acquires sorted pessimistic row-level write locks (`acquireAccountRowLocks` / `SELECT ... FOR UPDATE`) on both accounts to prevent concurrent requests from reading stale balances.
+  4. Inside the locked transaction, server reads the latest `currentCashBalance` and calculates authoritative `currentDebt` (never trusting client-supplied debt values).
+  5. Server rejects `currentDebt == 0.00` (`422 ZERO_OUTSTANDING_DEBT`), `amount > currentDebt` (`422 REPAYMENT_EXCEEDS_DEBT`), and `amount > currentCashBalance` (`422 INSUFFICIENT_FUNDS`).
+  6. Server applies the `500.00 THB` minimum repayment rule using 2-decimal `Prisma.Decimal` `ROUND_HALF_UP`: `MAX(500.00, roundHalfUp2(currentDebt * 0.10))` when `currentDebt >= 500.00`, or `amount == currentDebt` when `0.00 < currentDebt < 500.00` (`422 MIN_REPAYMENT_NOT_MET`).
+  7. Server applies the `100.00 THB` cash reserve rule for partial repayments (`amount < currentDebt` must leave `currentCashBalance - amount >= 100.00`, else `422 MINIMUM_CASH_RESERVE_VIOLATION`); full settlement (`amount == currentDebt`) is exempt from the `100.00 THB` reserve **only** when `currentCashBalance >= amount`.
+  8. Server locks opening balances (`lockAccounts`), creates 1 `Transaction` (`PAYMENT_CHARGE`) and 1 `AllocationLine` targeting `to_account_id`, and updates balances atomically.
+  9. If any validation or persistence step fails, the entire transaction rolls back atomically with zero partial balance updates or incomplete financial records.
+  10. Server ensures repayment is excluded from expense summaries (`BR-08`).
 * **UI Behavior:**
   * Credit Card Account Card presents a dedicated "Pay Credit Card" button.
   * Clicking opens modal displaying Current Outstanding Debt (e.g., `3,000.00 THB`) with "Pay in Full" quick-fill button, Funding Bank selector (displaying available balance), Repayment Amount input, and Transaction Date picker.
@@ -268,9 +280,10 @@ This document establishes the binding engineering contracts for all nine Sprint 
   * `AC-07-6`: Submitting non-positive repayment amount ($\le 0.00$) or non-numeric value returns `400 Bad Request` with error code `INVALID_AMOUNT` (`TEST-REPAY-06`).
   * `AC-07-7` *(Lab 7 v1.1)*: Submitting a repayment below the minimum repayment floor ($\max(500.00, \text{roundHalfUp}_2(\text{debt} \times 0.10))$ when $\text{debt} \ge 500.00$, or $< \text{debt}$ when $\text{debt} < 500.00$) returns `422 Unprocessable Entity` with error code `MIN_REPAYMENT_NOT_MET` (`TEST-REPAY-07`, `TEST-REPAY-08`).
   * `AC-07-8` *(Lab 7 v1.1)*: Submitting a partial repayment that leaves $< 100.00$ THB in the funding Cash account returns `422 Unprocessable Entity` with error code `MINIMUM_CASH_RESERVE_VIOLATION` (`TEST-REPAY-09`); full settlement (`amount == currentDebt`) is exempt when `currentCashBalance >= amount` (`TEST-REPAY-10`).
-  * `AC-07-9` *(Lab 7 v1.1)*: If the latest outstanding credit-card debt is `0.00 THB`, any repayment request is rejected with `422 Unprocessable Entity` and error code `ZERO_OUTSTANDING_DEBT`; no transaction or allocation line is created (`TEST-REPAY-11`).
+  * `AC-07-9` *(Lab 7 v1.1 — Pending Approval)*: If the latest outstanding credit-card debt is `0.00 THB`, any repayment request is rejected with `422 Unprocessable Entity` and error code `ZERO_OUTSTANDING_DEBT`; no transaction or allocation line is created (`TEST-REPAY-11`).
+  * `AC-07-10` *(Lab 7 v1.1 — Pending Approval)*: For `currentDebt = 3000.00 THB` (where 10% = `300.00 < 500.00`), submitting `499.99` is rejected with `422 MIN_REPAYMENT_NOT_MET` and `500.00` is accepted with `201 Created` (`TEST-REPAY-14`). Non-credit-card / excluded account types are rejected with `400 INVALID_ACCOUNT_TYPE`, and generic `Loan Taken` borrowing (`FR-15`) is excluded from `F-07` (`TEST-REPAY-15`).
 * **API Specification:**
-  * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created` or `422 Unprocessable Entity`
+  * `POST /api/transactions/repayment`: Body: `{ "from_account_id": "acc-bank", "to_account_id": "acc-credit-card", "amount": 3000.00, "transaction_date": "2026-11-06" }` $\rightarrow$ `201 Created`, `400 Bad Request` (`INVALID_AMOUNT`, `INVALID_ACCOUNT_TYPE`), or `422 Unprocessable Entity` (`ZERO_OUTSTANDING_DEBT`, `REPAYMENT_EXCEEDS_DEBT`, `INSUFFICIENT_FUNDS`, `MIN_REPAYMENT_NOT_MET`, `MINIMUM_CASH_RESERVE_VIOLATION`)
 
 ---
 
