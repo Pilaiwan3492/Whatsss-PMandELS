@@ -1100,49 +1100,176 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
     await assertAcceptedRepaymentPersisted(okRes, before, '555.56', '9444.44', '4999.99', '5555.55');
   });
 
-  it('LIVE-10: serializes concurrent partial repayments under SELECT ... FOR UPDATE row locks when stale cash balance (1600.00 THB) no longer satisfies the 100.00 THB cash reserve after first repayment (800.00 THB) commits (422 MINIMUM_CASH_RESERVE_VIOLATION)', async (ctx) => {
+  it('LIVE-10: deterministically proves PostgreSQL SELECT ... FOR UPDATE row locking and stale-initial-balance rejection via an explicit synchronization barrier (422 MINIMUM_CASH_RESERVE_VIOLATION)', async (ctx) => {
     if (!isDbConnected) { ctx.skip(); return; }
-    // Initial state: Cash = 1,600.00 THB, Debt = 3,000.00 THB.
-    // Two tabs open the repayment modal while seeing Cash = 1,600.00 THB and each submit a partial repayment of 800.00 THB.
-    // Individually, 1,600.00 - 800.00 = 800.00 >= 100.00 reserve, and 800.00 >= 500.00 min repayment.
-    // Under PostgreSQL SELECT ... FOR UPDATE row locks:
-    // - Request 1 commits first: Cash becomes 800.00 THB, Debt becomes 2,200.00 THB.
-    // - Request 2 reads the fresh locked Cash = 800.00 THB and Debt = 2,200.00 THB:
-    //   800.00 <= 2,200.00 (not exceeding debt), 800.00 <= 800.00 (sufficient funds), 800.00 >= 500.00 (meets min repayment),
-    //   but 800.00 < 2,200.00 (partial repayment) and 800.00 - 800.00 = 0.00 < 100.00 -> rejected with 422 MINIMUM_CASH_RESERVE_VIOLATION!
+    // This test verifies concurrent API/service invocations that both observe the same initial PostgreSQL state
+    // (Cash = 1,600.00 THB, Debt = 3,000.00 THB) — not real browser tabs — and deterministically proves row-lock
+    // acquisition order using an explicit synchronization barrier without altering production code paths:
+    // 1. Both Request A and Request B read the identical initial state (Cash = 1,600.00 THB, Debt = 3,000.00 THB) before submitting 800.00 THB.
+    // 2. Request A enters prisma.$transaction and executes SELECT ... FOR UPDATE (acquireAccountRowLocks) on the live PostgreSQL accounts,
+    //    then signals `lockAcquiredByA` and pauses at `releaseCommitA` while still holding the PostgreSQL row lock.
+    // 3. Request B starts ONLY after `lockAcquiredByA` fires (guaranteed to contend on the exact PostgreSQL row lock held by Request A)
+    //    and signals `enteredTxB` right before issuing its own SELECT ... FOR UPDATE query, which blocks in PostgreSQL.
+    // 4. Once Request B is waiting on the lock, `releaseCommitA` releases Request A to commit its 800.00 THB repayment
+    //    (Cash becomes 800.00 THB, Debt becomes 2,200.00 THB).
+    // 5. Request B unblocks from SELECT ... FOR UPDATE, reads the fresh locked Cash = 800.00 THB and Debt = 2,200.00 THB,
+    //    evaluates 800.00 < 2,200.00 (partial repayment) with 800.00 - 800.00 = 0.00 < 100.00 reserve, and deterministically
+    //    rejects with RepaymentError (422 MINIMUM_CASH_RESERVE_VIOLATION) without creating any Transaction or AllocationLine.
     await createRepaymentScenario('1600.00', '3000.00');
-    const before = await readPersistedRepaymentState();
+    const initialStateForA = await readPersistedRepaymentState();
+    const initialStateForB = await readPersistedRepaymentState();
 
-    const [res1, res2] = await Promise.all([
-      postLiveRepayment(800.00),
-      postLiveRepayment(800.00)
-    ]);
+    // Confirm both concurrent callers observe the exact same initial persisted state
+    expect(initialStateForA.cashBalance.toFixed(2)).toBe('1600.00');
+    expect(initialStateForA.debtBalance.toFixed(2)).toBe('3000.00');
+    expect(initialStateForB.cashBalance.toFixed(2)).toBe('1600.00');
+    expect(initialStateForB.debtBalance.toFixed(2)).toBe('3000.00');
+    expect(initialStateForA.txnCount).toBe(initialStateForB.txnCount);
+    expect(initialStateForA.allocCount).toBe(initialStateForB.allocCount);
 
-    for (const r of [res1, res2]) {
-      if (r.status === 201 && r.body?.data?.transaction?.id) {
-        createdTxnIds.push(r.body.data.transaction.id);
-        for (const a of r.body.data.transaction.allocations || []) {
-          createdAllocIds.push(a.id);
+    const lockOrderLog: string[] = [];
+    let resolveLockAcquiredByA!: () => void;
+    const lockAcquiredByA = new Promise<void>((r) => { resolveLockAcquiredByA = r; });
+
+    let resolveEnteredTxB!: () => void;
+    const enteredTxB = new Promise<void>((r) => { resolveEnteredTxB = r; });
+
+    let resolveReleaseCommitA!: () => void;
+    const releaseCommitA = new Promise<void>((r) => { resolveReleaseCommitA = r; });
+
+    // Proxy around real PrismaClient for Request A: pauses inside $transaction immediately after SELECT ... FOR UPDATE
+    const barrierPrismaA = new Proxy(prisma, {
+      get(target, prop, receiver) {
+        if (prop === '$transaction') {
+          return async (cb: (tx: any) => Promise<any>, options?: any) => {
+            return target.$transaction(async (realTx) => {
+              const txProxy = new Proxy(realTx, {
+                get(txTarget, txProp) {
+                  if (txProp === '$queryRaw') {
+                    return async (...args: any[]) => {
+                      const res = await (txTarget.$queryRaw as any)(...args);
+                      lockOrderLog.push('A_LOCK_ACQUIRED');
+                      resolveLockAcquiredByA();
+                      await releaseCommitA;
+                      lockOrderLog.push('A_RELEASED_TO_COMMIT');
+                      return res;
+                    };
+                  }
+                  return Reflect.get(txTarget, txProp);
+                }
+              });
+              return cb(txProxy);
+            }, options);
+          };
         }
+        return Reflect.get(target, prop, receiver);
       }
+    });
+
+    // Proxy around real PrismaClient for Request B: signals right before blocking on SELECT ... FOR UPDATE
+    const barrierPrismaB = new Proxy(prisma, {
+      get(target, prop, receiver) {
+        if (prop === '$transaction') {
+          return async (cb: (tx: any) => Promise<any>, options?: any) => {
+            return target.$transaction(async (realTx) => {
+              const txProxy = new Proxy(realTx, {
+                get(txTarget, txProp) {
+                  if (txProp === '$queryRaw') {
+                    return async (...args: any[]) => {
+                      lockOrderLog.push('B_WAITING_FOR_LOCK');
+                      resolveEnteredTxB();
+                      const res = await (txTarget.$queryRaw as any)(...args);
+                      lockOrderLog.push('B_LOCK_ACQUIRED_AFTER_A_COMMIT');
+                      return res;
+                    };
+                  }
+                  return Reflect.get(txTarget, txProp);
+                }
+              });
+              return cb(txProxy);
+            }, options);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      }
+    });
+
+    const descA = 'LIVE-10 Barrier Request A (Committed)';
+    const descB = 'LIVE-10 Barrier Request B (Rejected)';
+
+    // Start Request A
+    const promiseA = recordRepayment(
+      testUserId,
+      {
+        from_account_id: testCashAccountId,
+        to_account_id: testCreditCardId,
+        amount: '800.00',
+        transaction_date: '2026-11-06',
+        description: descA
+      },
+      barrierPrismaA as any
+    );
+
+    // Wait until Request A holds the live PostgreSQL row lock
+    await lockAcquiredByA;
+
+    // Start Request B while Request A holds the lock
+    const promiseB = recordRepayment(
+      testUserId,
+      {
+        from_account_id: testCashAccountId,
+        to_account_id: testCreditCardId,
+        amount: '800.00',
+        transaction_date: '2026-11-06',
+        description: descB
+      },
+      barrierPrismaB as any
+    ).then(
+      (val) => ({ ok: true as const, val }),
+      (err) => ({ ok: false as const, err })
+    );
+
+    // Wait until Request B enters its transaction and reaches SELECT ... FOR UPDATE, then release Request A
+    await enteredTxB;
+    resolveReleaseCommitA();
+
+    const [resultA, outcomeB] = await Promise.all([promiseA, promiseB]);
+
+    createdTxnIds.push(resultA.transaction.id);
+    for (const a of resultA.transaction.allocations) {
+      createdAllocIds.push(a.id);
     }
 
-    const statuses = [res1.status, res2.status].sort();
-    expect(statuses).toEqual([201, 422]);
+    // 1. Verify deterministic lock acquisition order
+    expect(lockOrderLog).toEqual([
+      'A_LOCK_ACQUIRED',
+      'B_WAITING_FOR_LOCK',
+      'A_RELEASED_TO_COMMIT',
+      'B_LOCK_ACQUIRED_AFTER_A_COMMIT'
+    ]);
 
-    const successRes = res1.status === 201 ? res1 : res2;
-    const failedRes = res1.status === 422 ? res1 : res2;
+    // 2. Verify Request A committed and Request B was rejected with 422 MINIMUM_CASH_RESERVE_VIOLATION
+    expect(resultA.updated_cash_balance).toBe('800.00');
+    expect(resultA.updated_debt).toBe('2200.00');
+    expect(outcomeB.ok).toBe(false);
+    if (!outcomeB.ok) {
+      expect(outcomeB.err.statusCode).toBe(422);
+      expect(outcomeB.err.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+    }
 
-    expect(successRes.body.success).toBe(true);
-    expect(successRes.body.data.updated_cash_balance).toBe('800.00');
-    expect(successRes.body.data.updated_debt).toBe('2200.00');
-
-    expect(failedRes.body.success).toBe(false);
-    expect(failedRes.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+    // 3. Verify in PostgreSQL that the rejected request B created zero transactions and zero allocation lines
+    const rejectedTxnInDb = await prisma.transaction.findFirst({
+      where: { user_id: testUserId, description: descB }
+    });
+    expect(rejectedTxnInDb).toBeNull();
+    const rejectedAllocInDb = await prisma.allocationLine.findFirst({
+      where: { notes: descB }
+    });
+    expect(rejectedAllocInDb).toBeNull();
 
     const after = await readPersistedRepaymentState();
-    expect(after.txnCount).toBe(before.txnCount + 1);
-    expect(after.allocCount).toBe(before.allocCount + 1);
+    expect(after.txnCount).toBe(initialStateForA.txnCount + 1);
+    expect(after.allocCount).toBe(initialStateForA.allocCount + 1);
     expect(after.cashBalance.equals(new Prisma.Decimal('800.00'))).toBe(true);
     expect(after.debtBalance.equals(new Prisma.Decimal('2200.00'))).toBe(true);
   });

@@ -105,16 +105,19 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
   const availableAfterReserveCents = Math.max(0, bankBalanceCents - MIN_CASH_RESERVE_CENTS);
 
   const amountCents = toCents(amount);
+  const isZeroDebt = Boolean(selectedCC) && debtCents <= 0 && amountCents > 0;
   const isFullSettlement = debtCents > 0 && amountCents === debtCents;
-  const isExceedingDebt = amountCents > debtCents;
-  const isInsufficientFunds = amountCents > bankBalanceCents;
+  const isExceedingDebt = !isZeroDebt && amountCents > debtCents;
+  const isInsufficientFunds = !isZeroDebt && !isExceedingDebt && amountCents > bankBalanceCents;
   const isBelowMinRepayment =
     amountCents > 0 &&
+    !isZeroDebt &&
     !isExceedingDebt &&
     !isInsufficientFunds &&
     amountCents < minRepaymentCents;
   const isCashReserveViolation =
     amountCents > 0 &&
+    !isZeroDebt &&
     !isExceedingDebt &&
     !isInsufficientFunds &&
     !isBelowMinRepayment &&
@@ -125,10 +128,13 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
   const remainingDebtCents = Math.max(0, debtCents - amountCents);
 
   const isFormValid =
+    Boolean(selectedBank) &&
+    Boolean(selectedCC) &&
     fromAccountId.length > 0 &&
     toAccountId.length > 0 &&
     amountCents > 0 &&
     /^\d+(\.\d{1,2})?$/.test(amount.trim()) &&
+    !isZeroDebt &&
     !isExceedingDebt &&
     !isInsufficientFunds &&
     !isBelowMinRepayment &&
@@ -145,12 +151,12 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
     e.preventDefault();
     setErrorMessage(null);
 
-    if (!fromAccountId) {
-      setErrorMessage('Please select a source bank account.');
+    if (!fromAccountId || !selectedBank) {
+      setErrorMessage('Please select a valid source bank account.');
       return;
     }
-    if (!toAccountId) {
-      setErrorMessage('Please select a target credit card account.');
+    if (!toAccountId || !selectedCC) {
+      setErrorMessage('Please select a valid target credit card account.');
       return;
     }
 
@@ -162,6 +168,11 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
 
     if (amountCents <= 0) {
       setErrorMessage('Repayment amount must be strictly greater than 0.00 THB.');
+      return;
+    }
+
+    if (debtCents <= 0) {
+      setErrorMessage('No outstanding debt to repay.');
       return;
     }
 
@@ -362,7 +373,7 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                       : formatCurrency(availableAfterReserveCents / 100)}
                   </span>
                 </div>
-                {amountCents > 0 && !isExceedingDebt && !isInsufficientFunds && (
+                {amountCents > 0 && !isZeroDebt && !isExceedingDebt && !isInsufficientFunds && (
                   <div className="repayment-preview-item">
                     <span className="repayment-preview-label">
                       Remaining Cash After Entered Amount
@@ -381,12 +392,17 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
               <div className="repayment-form-group">
                 <label htmlFor="repaymentAmountInput" className="repayment-label">
                   <span>Repayment Amount (THB)</span>
+                  {isZeroDebt && (
+                    <span className="text-danger small fw-semibold">
+                      No outstanding debt to repay. (Exceeds debt: {formatCurrency(debtCents / 100)})
+                    </span>
+                  )}
                   {isExceedingDebt && (
                     <span className="text-danger small fw-semibold">
                       Exceeds debt ({formatCurrency(debtCents / 100)})
                     </span>
                   )}
-                  {isInsufficientFunds && !isExceedingDebt && (
+                  {isInsufficientFunds && (
                     <span className="text-danger small fw-semibold">
                       Exceeds bank balance ({formatCurrency(bankBalanceCents / 100)})
                     </span>
@@ -407,7 +423,7 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                   type="text"
                   inputMode="decimal"
                   className={`repayment-input amount-input ${
-                    isExceedingDebt || isInsufficientFunds || isBelowMinRepayment || isCashReserveViolation
+                    isZeroDebt || isExceedingDebt || isInsufficientFunds || isBelowMinRepayment || isCashReserveViolation
                       ? 'has-error'
                       : ''
                   }`}
@@ -452,7 +468,7 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
             </div>
 
             {/* Live Balance Impact Preview */}
-            {amountCents > 0 && !isExceedingDebt && !isInsufficientFunds && (
+            {amountCents > 0 && !isZeroDebt && !isExceedingDebt && !isInsufficientFunds && (
               <div className="repayment-preview-card">
                 <div className="repayment-preview-item">
                   <span className="repayment-preview-label">New Bank Balance</span>

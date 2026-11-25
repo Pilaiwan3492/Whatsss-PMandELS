@@ -916,12 +916,19 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       await expectRejectedRepaymentUnchanged(res, 422, 'MINIMUM_CASH_RESERVE_VIOLATION', txnBefore, allocBefore, 1599.99, 3000.00);
     });
 
-    it('serializes concurrent partial repayments when stale cash balance (1600.00 THB) no longer satisfies the 100.00 THB reserve after first repayment (800.00 THB) commits (422 MINIMUM_CASH_RESERVE_VIOLATION)', async () => {
+    it('serializes concurrent API repayment requests observing the same initial state (1600.00 THB cash, 3000.00 THB debt) when stale cash balance no longer satisfies the 100.00 THB reserve after first repayment (800.00 THB) commits (422 MINIMUM_CASH_RESERVE_VIOLATION)', async () => {
       seedDebtFixture('1600.00', '3000.00');
       const txnBefore = mockTransactions.length;
       const allocBefore = mockAllocationLines.length;
 
-      // Two simultaneous partial repayments of 800.00 THB against 1600.00 THB cash and 3000.00 THB debt
+      // Verify both concurrent API requests observe the identical initial state before execution
+      const initialSummaryA = await request(app).get('/api/reports/summary').set('Cookie', userACookie);
+      const initialSummaryB = await request(app).get('/api/reports/summary').set('Cookie', userACookie);
+      expect(Number(initialSummaryA.body.data.bank_balance)).toBe(1600.00);
+      expect(Number(initialSummaryA.body.data.credit_debt)).toBe(3000.00);
+      expect(initialSummaryB.body.data).toEqual(initialSummaryA.body.data);
+
+      // Two concurrent partial repayment API requests of 800.00 THB against 1600.00 THB cash and 3000.00 THB debt
       const [res1, res2] = await Promise.all([
         postRepayment(800.00),
         postRepayment(800.00)
@@ -936,7 +943,9 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       expect(successRes.body.data.updated_cash_balance).toBe('800.00');
       expect(successRes.body.data.updated_debt).toBe('2200.00');
       expect(failedRes.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+      expect(failedRes.body.data).toBeUndefined();
 
+      // Rejected request created zero Transaction and zero AllocationLine records
       expect(mockTransactions.length).toBe(txnBefore + 1);
       expect(mockAllocationLines.length).toBe(allocBefore + 1);
     });

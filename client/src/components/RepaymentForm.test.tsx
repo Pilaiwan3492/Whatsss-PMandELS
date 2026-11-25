@@ -891,4 +891,258 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
     expect(screen.queryByText(/Below minimum repayment/i)).not.toBeNull();
     expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
   });
+
+  it('TEST-UI-REPAY-21 (BR-07 v1.1 AC-07-9): prioritizes zero outstanding debt check before Exceeds debt, displays "No outstanding debt to repay.", and blocks submission', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    const zeroDebtAccounts: Account[] = [
+      {
+        ...mockAccounts[0],
+        current_balance: 50.0 // Even when cash is 50.00 and entered amount is 100.00, zero debt takes top precedence
+      },
+      {
+        ...mockAccounts[1],
+        current_balance: 0.0
+      }
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={zeroDebtAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput, { target: { value: '100.00' } });
+
+    expect(screen.queryByText(/No outstanding debt to repay\./i)).not.toBeNull();
+    expect(screen.queryByText(/Exceeds bank balance/i)).toBeNull();
+
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(true);
+
+    // Also verify direct form submit handler guard blocks submission and sets errorMessage
+    const form = submitBtn.closest('form')!;
+    fireEvent.submit(form);
+    expect(screen.queryByRole('alert')?.textContent).toContain('No outstanding debt to repay.');
+    expect(transactionApi.recordRepayment).not.toHaveBeenCalled();
+  });
+
+  it('TEST-UI-REPAY-22 (BR-07 v1.1 AC-07-9): displays backend HTTP 422 ZERO_OUTSTANDING_DEBT error message in alert banner without calling onSuccess or onClose', async () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    // User opens modal while debt appears to be 3000.00 THB, but debt was already settled in another session
+    vi.mocked(transactionApi.recordRepayment).mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          error: {
+            code: 'ZERO_OUTSTANDING_DEBT',
+            message: 'Outstanding repayment debt is 0.00; no repayment is required.'
+          }
+        }
+      }
+    });
+
+    render(
+      <RepaymentForm
+        accounts={mockAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput, { target: { value: '500.00' } });
+
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(false);
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(transactionApi.recordRepayment).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByText('Outstanding repayment debt is 0.00; no repayment is required.')
+      ).toBeDefined();
+    });
+
+    expect(mockOnSuccess).not.toHaveBeenCalled();
+    expect(mockOnClose).not.toHaveBeenCalled();
+  });
+
+  it('TEST-UI-REPAY-23: blocks submission when no source CASH account exists (and renders safely without crashing when accounts=[])', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    // Sub-check A: accounts=[] renders safely without crashing
+    const { unmount } = render(
+      <RepaymentForm
+        accounts={[]}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const emptySubmitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    expect(emptySubmitBtn.disabled).toBe(true);
+    unmount();
+
+    // Sub-check B: Only target LOAN_TAKEN account exists (no CASH account)
+    const noCashAccounts: Account[] = [mockAccounts[1]];
+
+    render(
+      <RepaymentForm
+        accounts={noCashAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput, { target: { value: '500.00' } });
+
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(true);
+
+    const form = submitBtn.closest('form')!;
+    fireEvent.submit(form);
+
+    expect(screen.queryByRole('alert')?.textContent).toMatch(/Please select a valid source bank account/i);
+    expect(transactionApi.recordRepayment).not.toHaveBeenCalled();
+  });
+
+  it('TEST-UI-REPAY-24: blocks submission when no target LOAN_TAKEN credit card account exists', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    // Only source CASH account exists (no LOAN_TAKEN account)
+    const noCreditCardAccounts: Account[] = [mockAccounts[0]];
+
+    render(
+      <RepaymentForm
+        accounts={noCreditCardAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    fireEvent.change(amountInput, { target: { value: '500.00' } });
+
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(true);
+
+    const form = submitBtn.closest('form')!;
+    fireEvent.submit(form);
+
+    expect(screen.queryByRole('alert')?.textContent).toMatch(/Please select a valid target credit card account/i);
+    expect(transactionApi.recordRepayment).not.toHaveBeenCalled();
+  });
+
+  it('TEST-UI-REPAY-25: dynamically recalculates available cash, remaining cash, and reserve validation when switching source cash account', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    const multiCashAccounts: Account[] = [
+      {
+        ...mockAccounts[0],
+        id: 'bank-rich-1',
+        name: 'Primary Checking Bank',
+        current_balance: 30000.0 // Available for partial: 29,900.00
+      },
+      {
+        ...mockAccounts[0],
+        id: 'bank-tight-2',
+        name: 'Secondary Savings Cash',
+        current_balance: 1550.0 // Available for partial: 1,450.00
+      },
+      mockAccounts[1] // Visa Credit Card, Debt = 3,000.00
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={multiCashAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    const fromSelect = screen.getByLabelText(/Pay From/i) as HTMLSelectElement;
+
+    // Enter 1,500.00 THB while on Primary Checking Bank (30,000.00 THB) -> valid (remaining 28,500.00 >= 100.00)
+    fireEvent.change(amountInput, { target: { value: '1500.00' } });
+    expect(submitBtn.disabled).toBe(false);
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
+
+    // Switch source account to Secondary Savings Cash (1,550.00 THB) -> 1,550 - 1,500 = 50.00 (< 100.00 reserve) -> immediately invalid!
+    fireEvent.change(fromSelect, { target: { value: 'bank-tight-2' } });
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).not.toBeNull();
+    expect(submitBtn.disabled).toBe(true);
+
+    // Switch back to Primary Checking Bank -> valid again
+    fireEvent.change(fromSelect, { target: { value: 'bank-rich-1' } });
+    expect(screen.queryByText(/Violates 100\.00 THB cash reserve/i)).toBeNull();
+    expect(submitBtn.disabled).toBe(false);
+  });
+
+  it('TEST-UI-REPAY-26: dynamically recalculates outstanding debt and minimum required repayment when switching target credit card account', () => {
+    const mockOnClose = vi.fn();
+    const mockOnSuccess = vi.fn();
+
+    const multiCreditCardAccounts: Account[] = [
+      mockAccounts[0], // Checking Bank = 30,000.00
+      {
+        ...mockAccounts[1],
+        id: 'cc-visa-1',
+        name: 'Visa Credit Card',
+        current_balance: 3000.0 // Min repayment = 500.00
+      },
+      {
+        ...mockAccounts[1],
+        id: 'cc-mastercard-2',
+        name: 'Mastercard Platinum',
+        current_balance: 8000.0 // Min repayment = 10% = 800.00
+      }
+    ];
+
+    render(
+      <RepaymentForm
+        accounts={multiCreditCardAccounts}
+        isOpen={true}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const amountInput = screen.getByLabelText(/Repayment Amount/i);
+    const submitBtn = screen.getByRole('button', { name: /Confirm Repayment/i }) as HTMLButtonElement;
+    const toSelect = screen.getByLabelText(/Settle Debt For/i) as HTMLSelectElement;
+
+    // Enter 600.00 THB while on Visa Credit Card (Debt 3,000.00 -> Min 500.00) -> valid!
+    fireEvent.change(amountInput, { target: { value: '600.00' } });
+    expect(submitBtn.disabled).toBe(false);
+    expect(screen.queryByText(/Below minimum repayment/i)).toBeNull();
+
+    // Switch target credit card to Mastercard Platinum (Debt 8,000.00 -> Min 800.00) -> 600.00 is now below minimum 800.00!
+    fireEvent.change(toSelect, { target: { value: 'cc-mastercard-2' } });
+    expect(screen.queryByText(/Below minimum repayment/i)).not.toBeNull();
+    expect(submitBtn.disabled).toBe(true);
+
+    // Increase amount to 800.00 -> valid again
+    fireEvent.change(amountInput, { target: { value: '800.00' } });
+    expect(screen.queryByText(/Below minimum repayment/i)).toBeNull();
+    expect(submitBtn.disabled).toBe(false);
+  });
 });
