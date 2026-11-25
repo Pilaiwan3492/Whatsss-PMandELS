@@ -815,11 +815,12 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
   }
 
   describe('TEST-REPAY-07: 10% Minimum & ROUND_HALF_UP Boundaries (AC-07-7, BR-07)', () => {
-    it('rejects 599.99 on 6000.00 debt with 422 MIN_REPAYMENT_NOT_MET', async () => {
+    it('rejects 599.99 on 6000.00 debt with 422 MIN_REPAYMENT_NOT_MET and leaves DB/balances unchanged', async () => {
       seedDebtFixture('10000.00', '6000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const res = await postRepayment(599.99);
-      expect(res.status).toBe(422);
-      expect(res.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+      await expectRejectedRepaymentUnchanged(res, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 6000.00);
     });
 
     it('accepts 600.00 on 6000.00 debt with 201 Created', async () => {
@@ -829,24 +830,24 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
       expect(res.body.data.updated_debt).toBe('5400.00');
     });
 
-    it('rejects 500.49 and accepts 500.50 on 5005.00 debt', async () => {
+    it('rejects 500.49 with unchanged state and accepts 500.50 on 5005.00 debt', async () => {
       seedDebtFixture('10000.00', '5005.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const failRes = await postRepayment(500.49);
-      expect(failRes.status).toBe(422);
-      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+      await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 5005.00);
 
       const okRes = await postRepayment(500.50);
       expect(okRes.status).toBe(201);
       expect(okRes.body.data.updated_debt).toBe('4504.50');
     });
 
-    it('rejects 555.55 and accepts 555.56 (ROUND_HALF_UP) on 5555.55 debt', async () => {
+    it('rejects 555.55 with unchanged state and accepts 555.56 (ROUND_HALF_UP) on 5555.55 debt', async () => {
       seedDebtFixture('10000.00', '5555.55');
       const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const failRes = await postRepayment(555.55);
-      expect(failRes.status).toBe(422);
-      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
-      expect(mockTransactions.length).toBe(txnBefore);
+      await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 5555.55);
 
       const okRes = await postRepayment(555.56);
       expect(okRes.status).toBe(201);
@@ -855,22 +856,24 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
   });
 
   describe('TEST-REPAY-08: Exact 500.00 & Below-500.00 Full-Settlement Boundaries (AC-07-7, BR-07)', () => {
-    it('rejects 499.99 and accepts 500.00 on exact 500.00 debt', async () => {
+    it('rejects 499.99 with unchanged state and accepts 500.00 on exact 500.00 debt', async () => {
       seedDebtFixture('10000.00', '500.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const failRes = await postRepayment(499.99);
-      expect(failRes.status).toBe(422);
-      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+      await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 500.00);
 
       const okRes = await postRepayment(500.00);
       expect(okRes.status).toBe(201);
       expect(okRes.body.data.updated_debt).toBe('0.00');
     });
 
-    it('rejects 499.98 and accepts 499.99 on 499.99 debt', async () => {
+    it('rejects 499.98 with unchanged state and accepts 499.99 on 499.99 debt', async () => {
       seedDebtFixture('10000.00', '499.99');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const failRes = await postRepayment(499.98);
-      expect(failRes.status).toBe(422);
-      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+      await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 499.99);
 
       const okRes = await postRepayment(499.99);
       expect(okRes.status).toBe(201);
@@ -1008,11 +1011,12 @@ describe('Integration Test: Credit Card Debt Settlement (Repayment) (WP-05, F-07
   });
 
   describe('TEST-REPAY-15: Fixed 500.00 THB Minimum Floor on 3000.00 Debt (AC-07-7, BR-07)', () => {
-    it('rejects 499.99 and accepts 500.00 on 3000.00 debt', async () => {
+    it('rejects 499.99 with unchanged state and accepts 500.00 on 3000.00 debt', async () => {
       seedDebtFixture('10000.00', '3000.00');
+      const txnBefore = mockTransactions.length;
+      const allocBefore = mockAllocationLines.length;
       const failRes = await postRepayment(499.99);
-      expect(failRes.status).toBe(422);
-      expect(failRes.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+      await expectRejectedRepaymentUnchanged(failRes, 422, 'MIN_REPAYMENT_NOT_MET', txnBefore, allocBefore, 10000.00, 3000.00);
 
       const okRes = await postRepayment(500.00);
       expect(okRes.status).toBe(201);
