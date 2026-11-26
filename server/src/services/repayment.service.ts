@@ -3,6 +3,28 @@ import { prisma as defaultPrisma } from '../prisma.js';
 import { lockAccounts, acquireAccountRowLocks } from './accountLock.service.js';
 
 export const MAX_REPAYMENT_AMOUNT = new Prisma.Decimal('9999999999.99');
+export const MIN_REPAYMENT_FLOOR = new Prisma.Decimal('500.00');
+export const MIN_CASH_RESERVE = new Prisma.Decimal('100.00');
+
+/**
+ * Computes the minimum required credit-card repayment under BR-07 v1.1:
+ * - For debt <= 0.00: returns 0.00.
+ * - For 0.00 < debt < 500.00: requires full settlement (returns debt).
+ * - For debt >= 500.00: max(500.00, roundHalfUp2(debt * 0.10)).
+ */
+export function calculateMinimumRepayment(currentDebt: Prisma.Decimal): Prisma.Decimal {
+  const zero = new Prisma.Decimal('0.00');
+  if (currentDebt.lessThanOrEqualTo(zero)) {
+    return zero;
+  }
+  if (currentDebt.lessThan(MIN_REPAYMENT_FLOOR)) {
+    return currentDebt;
+  }
+  const tenPercent = currentDebt
+    .mul(new Prisma.Decimal('0.10'))
+    .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+  return Prisma.Decimal.max(MIN_REPAYMENT_FLOOR, tenPercent);
+}
 
 export class RepaymentError extends Error {
   statusCode: number;
@@ -393,7 +415,24 @@ export async function recordRepayment(
 
     const currentDebt = toOpening.add(toCharges).sub(toRepayments);
 
-    // E. Fresh Boundary Checks against locked state (AC-07-4, AC-07-5)
+    // E. Fresh Boundary Checks against locked state (AC-07-4, AC-07-5, AC-07-7..9, BR-07 v1.1)
+    // Actual validation precedence:
+    //   1. Request parameter and amount validation (pre-transaction: 400 INVALID_AMOUNT, etc.)
+    //   2. Account ownership (404 NOT_FOUND) and account type validation (400 INVALID_ACCOUNT_TYPE)
+    //   3. ZERO_OUTSTANDING_DEBT (422) — exceptional guard before debt-dependent amount/cash checks
+    //   4. REPAYMENT_EXCEEDS_DEBT (422)
+    //   5. INSUFFICIENT_FUNDS (422)
+    //   6. MIN_REPAYMENT_NOT_MET (422)
+    //   7. MINIMUM_CASH_RESERVE_VIOLATION (422)
+    //   8. Database writes (lockAccounts, Transaction, AllocationLine)
+    if (currentDebt.lessThanOrEqualTo(zero)) {
+      throw new RepaymentError(
+        'Outstanding repayment debt is 0.00; no repayment is required.',
+        422,
+        'ZERO_OUTSTANDING_DEBT'
+      );
+    }
+
     if (amountDecimal.greaterThan(currentDebt)) {
       throw new RepaymentError(
         `Repayment amount of ${amountDecimal.toFixed(2)} exceeds outstanding debt of ${currentDebt.toFixed(2)}.`,
@@ -407,6 +446,24 @@ export async function recordRepayment(
         `Insufficient funds in source account. Available: ${currentCashBalance.toFixed(2)}, requested: ${amountDecimal.toFixed(2)}.`,
         422,
         'INSUFFICIENT_FUNDS'
+      );
+    }
+
+    const minRepayment = calculateMinimumRepayment(currentDebt);
+    if (amountDecimal.lessThan(minRepayment)) {
+      throw new RepaymentError(
+        `Repayment amount of ${amountDecimal.toFixed(2)} is below the minimum required repayment of ${minRepayment.toFixed(2)}.`,
+        422,
+        'MIN_REPAYMENT_NOT_MET'
+      );
+    }
+
+    const isFullSettlement = amountDecimal.equals(currentDebt);
+    if (!isFullSettlement && currentCashBalance.sub(amountDecimal).lessThan(MIN_CASH_RESERVE)) {
+      throw new RepaymentError(
+        `Partial repayment must leave at least ${MIN_CASH_RESERVE.toFixed(2)} in the source cash account.`,
+        422,
+        'MINIMUM_CASH_RESERVE_VIOLATION'
       );
     }
 

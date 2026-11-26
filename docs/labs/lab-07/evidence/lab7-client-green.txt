@@ -1,0 +1,64 @@
+================================================================================
+LAB 7 PART B (FRONTEND) — GREEN EVIDENCE LOG (UPDATED RepaymentForm.tsx)
+================================================================================
+Chronological Commit & Test History Separation (Strict Traceability):
+1. Phase 1 — Initial GREEN Implementation Commit (80795730f0c18c1d01613162a6d70a235a350f9a)
+   after Core RED Commit (493aa189566e313e112989fd23a054ef50b6ec7c):
+   - Core test suite (TEST-UI-REPAY-01..17): 17 passed | 0 failed (17 total).
+   - Full client suite at 8079573: 62 passed | 0 failed (7 test files).
+
+2. Phase 2 — Full 26-Test Suite (Core TEST-UI-REPAY-12..17 + Supplemental Review-Hardening
+   Regression Tests TEST-UI-REPAY-18..26 added in commits 83c9189, a2b4f14, de400ec, and latest):
+   - RepaymentForm.test.tsx (TEST-UI-REPAY-01..26): 26 passed | 0 failed (26 total) — Exit Code 0.
+   - Full client suite across 7 test files: 71 passed | 0 failed (71 total) — Exit Code 0.
+================================================================================
+
+ RUN  v1.6.1 C:/Users/User/Downloads/group_work_specs_v1/Whatsss-PMandELS/client
+
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-01: does not render modal when isOpen is false
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-02: renders modal with source cash account and target credit card when isOpen is true 380ms
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-03: submits valid full repayment (3,000.00 THB) and invokes recordRepayment API
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-04: submits partial repayment of 1500.00 THB
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-05: "Pay Full Debt" button populates the exact outstanding debt
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-06: blocks submission and displays warning when repayment exceeds debt
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-07: blocks submission when repayment exceeds available bank balance
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-08: blocks submission on non-positive or invalid amount format
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-09: displays error banner when backend returns rejection
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-10: closes modal when Cancel button is clicked
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-11 (AUDIT-04 Regression): blocks positive repayment when outstanding debt is zero (0.00 THB) and displays Exceeds debt warning
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-12 (BR-07 v1.1 AC-07-7): displays computed Minimum Required Repayment (500.00 THB floor for 3000.00 THB debt) and blocks partial repayment below 500.00 THB
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-13 (BR-07 v1.1 AC-07-7): computes 10% minimum repayment with ROUND_HALF_UP (debt 5555.55 THB -> min 555.56 THB; 555.55 blocked, 555.56 allowed)
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-14 (BR-07 v1.1 AC-07-7): requires full settlement when outstanding debt is below 500.00 THB (debt 499.99 THB -> 499.98 blocked, 499.99 allowed)
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-15 (BR-07 v1.1 AC-07-8): enforces 100.00 THB minimum cash reserve on partial repayments and displays both Available Cash for Partial Repayment and Remaining Cash After Entered Amount (cash 1599.99, debt 3000.00, amount 1500.00 blocked; cash 1600.00 allowed)
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-16 (BR-07 v1.1 AC-07-8): exempts full-settlement repayment from the 100.00 THB cash reserve when cash >= debt (3000.00 submits and calls recordRepayment), and blocks full settlement when cash < debt (2999.99)
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-17: displays MIN_REPAYMENT_NOT_MET from backend and clears error banner when user edits amount
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-18: displays MINIMUM_CASH_RESERVE_VIOLATION from backend and clears error banner when user switches source cash or target credit card account
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-19: Backend rejects repayment when the latest cash balance no longer satisfies the 100.00 THB reserve rule (stale modal balance race condition)
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-20: enforces client validation precedence matching Backend when multiple rules are violated simultaneously
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-21 (BR-07 v1.1 AC-07-9): prioritizes zero outstanding debt check before Exceeds debt, displays "No outstanding debt to repay.", and blocks submission
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-22 (BR-07 v1.1 AC-07-9): displays backend HTTP 422 ZERO_OUTSTANDING_DEBT error message in alert banner without calling onSuccess or onClose
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-23: blocks submission when no source CASH account exists (and renders safely without crashing when accounts=[])
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-24: blocks submission when no target LOAN_TAKEN credit card account exists
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-25: dynamically recalculates available cash, remaining cash, and reserve validation when switching source cash account
+ ✓ src/components/RepaymentForm.test.tsx > Frontend Component: RepaymentForm (WP-05, F-07) > TEST-UI-REPAY-26: dynamically recalculates outstanding debt and minimum required repayment when switching target credit card account
+
+ Test Files  1 passed (1)
+      Tests  26 passed (26)
+   Start at  13:10:32
+   Duration  5.58s (transform 172ms, setup 0ms, collect 1.09s, tests 1.86s, environment 2.10s, prepare 217ms)
+
+
+ RUN  v1.6.1 C:/Users/User/Downloads/group_work_specs_v1/Whatsss-PMandELS/client
+
+ ✓ src/components/IncomeForm.test.tsx  (8 tests) 617ms
+ ✓ src/pages/TransactionHistoryPage.test.tsx  (5 tests) 472ms
+ ✓ src/components/ProtectedRoute.test.tsx  (4 tests) 292ms
+ ✓ src/pages/DashboardPage.test.tsx  (7 tests) 586ms
+ ✓ src/components/ExpenseForm.test.tsx  (13 tests) 1377ms
+ ✓ src/components/RepaymentForm.test.tsx  (26 tests) 1611ms
+ ✓ src/pages/AccountListPage.test.tsx  (8 tests) 813ms
+
+ Test Files  7 passed (7)
+      Tests  71 passed (71)
+   Start at  13:10:40
+   Duration  6.82s (transform 1.18s, setup 2ms, collect 10.61s, tests 5.77s, environment 23.69s, prepare 2.19s)
