@@ -453,7 +453,7 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
 
 ### 11.1 Consolidated Prisma Schema Evolution (`server/prisma/schema.prisma`)
 
-1. **`AccountSubtype` Discriminator Enum (Resolving the Lab 7 `BR-07 v1.1` Prerequisite):**
+1. **`AccountSubtype` Discriminator Enum & Normalized Case-Insensitive Account Name Uniqueness (`F-10`, `F-13`, `BR-07 v1.1` Prerequisite):**
    ```prisma
    enum AccountSubtype {
      DEFAULT
@@ -461,8 +461,15 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
      GENERAL_LOAN
    }
    ```
-   * Added to `Account`: `subtype AccountSubtype @default(DEFAULT)` and `is_archived Boolean @default(false)`.
-   * **Domain Separation Rule:**
+   * Added to `Account`:
+     * `subtype AccountSubtype @default(DEFAULT)`
+     * `normalized_name String @db.VarChar(100)` *(populated by `normalizeAccountName(name) = name.trim().replace(/\s+/g, ' ').toLowerCase()` across all layers)*
+     * `is_archived Boolean @default(false)`
+     * `@@unique([user_id, normalized_name])` *(plus PostgreSQL functional unique expression index `CREATE UNIQUE INDEX accounts_user_id_normalized_name_idx ON accounts (user_id, LOWER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g')));` in the `WP-08` migration)*
+   * **Account Name Normalization & Uniqueness Policy (`F-10`):**
+     * Before persisting on `POST /api/accounts` or `PATCH /api/accounts/:id`, the display `name` is normalized by trimming leading/trailing whitespace and collapsing internal whitespace runs (`displayName = rawName.trim().replace(/\s+/g, ' ')`), and `normalized_name = displayName.toLowerCase()` is stored in `accounts.normalized_name`.
+     * Both application-level pre-checks and database-level unique constraints (`@@unique([user_id, normalized_name])` / Prisma `P2002` unique constraint violation inside `prisma.$transaction`) map deterministically to **`HTTP 409 Conflict` (`DUPLICATE_ACCOUNT_NAME`)**. Concurrent requests attempting to create `"Checking Bank"`, `"checking bank"`, or `"  Checking   Bank  "` for the same user are serialized by the database unique index so at most **1** account record is created.
+   * **Domain Separation Rule (`F-07` vs. `F-13`):**
      * Seeded `Visa Credit Card` and user-created credit card accounts have `type = LOAN_TAKEN` and `subtype = CREDIT_CARD`.
      * User-created general borrowing accounts (`F-13`, `FR-15`) have `type = LOAN_TAKEN` and `subtype = GENERAL_LOAN`.
      * `POST /api/transactions/repayment` (`F-07`) requires `toAccount.type === 'LOAN_TAKEN' && toAccount.subtype === 'CREDIT_CARD'` (enforcing `BR-07 v1.1` minimum repayment floor `max(500.00, 10%)` and `100.00 THB` partial cash reserve exclusively on credit cards).
@@ -474,25 +481,51 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
      * `updated_at DateTime @default(now()) @updatedAt` (`FR-19`)
      * `audit_logs TransactionAuditLog[]` (`FR-21`)
 
-3. **`TransactionAuditLog` Model (`F-16`, `F-18`, `FR-21`):**
+3. **`TransactionAuditLog` Model, Immutability & Retention Policy (`F-16`, `F-18`, `FR-21`):**
    ```prisma
    model TransactionAuditLog {
      id                String      @id @default(uuid())
      transaction_id    String
-     transaction       Transaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+     transaction       Transaction @relation(fields: [transaction_id], references: [id], onDelete: Restrict)
      user_id           String
      action            String      @default("CORRECTED") @db.VarChar(50)
      previous_snapshot Json
      new_snapshot      Json
      created_at        DateTime    @default(now())
 
-     @@index([transaction_id, created_at])
+     @@index([transaction_id, created_at(sort: Desc), id(sort: Desc)])
      @@index([user_id])
      @@map("transaction_audit_logs")
    }
    ```
+   * **Cascade Deletion Prevention (`onDelete: Restrict`):** The foreign key from `transaction_audit_logs(transaction_id)` to `transactions(id)` uses **`onDelete: Restrict`** (never `onDelete: Cascade`). Any attempt to hard-delete a `Transaction` that has audit history is blocked at the database relational constraint level (`P2003` / `409 AUDIT_HISTORY_PROTECTED`) and at the application service layer.
+   * **Audit Log Retention & Append-Only Immutability Policy:**
+     * `TransactionAuditLog` is strictly **append-only**: records are inserted exclusively inside the atomic `prisma.$transaction` of `PUT /api/transactions/:id` (`F-16`) and are retained permanently for the lifetime of the tenant ledger.
+     * **No Update or Delete Surface:** The application API exposes **no** update (`PUT`/`PATCH`) or delete (`DELETE`) endpoints on `/api/transactions/:id/audit-history` or `/api/transactions/:id` (returning `405 Method Not Allowed` / `404` on unsupported methods), and the service layer prohibits calling `transactionAuditLog.update`, `updateMany`, `delete`, or `deleteMany`.
 
-### 11.2 Extended Ledger Accounting Matrix (`F-11`, `F-12`, `F-13`)
+### 11.2 System-Wide Concurrency, Row-Locking & Archived Account Guard Policy
+
+1. **Standardized Pessimistic Row-Locking & Separation of Responsibilities (`acquireAccountRowLocks` vs. `lockAccounts`):**
+   * **`acquireAccountRowLocks(tx, accountIds, userId)` (Concurrency Serialization):**
+     * Deduplicates and sorts `accountIds` in **lexicographical ascending UUID order (`[...new Set(accountIds)].sort()`)** and executes `SELECT id FROM accounts WHERE id IN (...) AND user_id = $userId FOR UPDATE` inside `prisma.$transaction`.
+     * **Purpose:** Acquires PostgreSQL row-level write locks in a canonical deterministic order across all concurrent transactions (`F-04` income, `F-05` expense, `F-07` credit card repayment, `F-11` transfer, `F-12` loan given/recovery, `F-13` general borrowing/repayment, `F-14` duplicate, `F-16` correction, and `F-18` account archive), **preventing deadlocks and race conditions** before any account balance, debt, receivable, or `is_archived` check is evaluated.
+   * **`lockAccounts(tx, accountIds, userId)` (Opening Balance Lifecycle `F-03`):**
+     * Executes `UPDATE accounts SET is_opening_locked = true WHERE id IN (...) AND user_id = $userId AND is_opening_locked = false` inside the same `prisma.$transaction` after domain validations pass.
+     * **Purpose:** Permanently locks the initial `opening_balance` (`AC-03-3`) upon the first committed transaction referencing the account. It does **not** replace `acquireAccountRowLocks`.
+
+2. **System-Level Archived Account Guard (`is_archived` Enforcement Across All Workflows):**
+   * Inside the same `prisma.$transaction` and **after** `acquireAccountRowLocks` has locked all referenced accounts (primary account and every allocation target account), every transaction creation, duplication, or correction workflow (`F-04`, `F-05`, `F-07`, `F-11`, `F-12`, `F-13`, `F-14`, `F-16`) inspects `account.is_archived`:
+     * For new or duplicated transactions (`F-04`, `F-05`, `F-07`, `F-11`, `F-12`, `F-13`, `F-14`): if the `primary_account` or **any** `AllocationLine.target_account` has `is_archived === true`, the transaction aborts immediately with **`HTTP 422 Unprocessable Entity` (`ACCOUNT_ARCHIVED`)** and performs zero database writes.
+     * For transaction corrections (`F-16`): if the correction introduces or references an archived `primary_account` or `target_account`, it is rejected with **`HTTP 422 Unprocessable Entity` (`ACCOUNT_ARCHIVED`)** and rolled back.
+     * Because both `PATCH /api/accounts/:id/archive` (`F-18`) and all transaction creation endpoints acquire `SELECT ... FOR UPDATE` on the account row via `acquireAccountRowLocks`, a concurrent archive request and a concurrent transaction creation request on the same account are strictly serialized in PostgreSQL.
+
+3. **Fail-Closed Active User Verification (`F-19`, `is_active` Enforcement):**
+   * `authGuard.ts` verifies the signed JWT cookie **and** performs an authoritative database lookup (`prisma.user.findUnique({ where: { id: decoded.id }, select: { id: true, username: true, role: true, is_active: true } })`) on every protected request:
+     * If the user record does not exist $\rightarrow$ `401 UNAUTHORIZED`.
+     * If `user.is_active === false` $\rightarrow$ **`403 Forbidden` (`ACCOUNT_DISABLED`)** (immediately revoking access even if the user holds a previously issued, unexpired JWT cookie).
+     * **Fail-Closed Database Error Policy:** If the database lookup throws or fails to verify `is_active`, `authGuard` **fails closed** (denies access with `503 SERVICE_UNAVAILABLE` / `AUTH_STATE_UNVERIFIABLE` and never falls back to trusting the stateless JWT payload).
+
+### 11.3 Extended Ledger Accounting Matrix (`F-11`, `F-12`, `F-13`)
 
 | Workflow & Feature | Endpoint | `Transaction.form` | `primary_account` | `AllocationLine.target_account` | Balance & Summary Invariant (`BR-02`, `BR-08`) |
 |---|---|---|---|---|---|
@@ -502,7 +535,7 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
 | **General Loan Borrowing (`F-13`, `FR-15`)** | `POST /api/transactions/loan-borrowing` | `RECEIVE_MONEY` | Destination `CASH` ($+\text{amount}$) | `LOAN_TAKEN` (`GENERAL_LOAN`, $+\text{amount}$ debt) | `CASH` increases; General `LOAN_TAKEN` debt increases; **`total_income` unchanged (`BR-08`)**. |
 | **General Loan Repayment (`F-13`, `FR-15`)** | `POST /api/transactions/loan-repayment` | `PAYMENT_CHARGE` | Source `CASH` ($-\text{amount}$) | `LOAN_TAKEN` (`GENERAL_LOAN`, $-\text{amount}$ debt) | `CASH` decreases; General `LOAN_TAKEN` debt decreases; **`total_expense` unchanged (`BR-08`)**. |
 
-### 11.3 Extended Deterministic Balance Equations (`balance.service.ts`)
+### 11.4 Extended Deterministic Balance Equations (`balance.service.ts`)
 
 1. **Cash Account Balance (`type === 'CASH'`):**
    $$\text{Cash Balance}(A) = A.\text{opening\_balance} + \sum_{\substack{T.\text{primary} = A \\ T.\text{form} = \text{RECEIVE\_MONEY}}} T.\text{total\_amount} + \sum_{\substack{L.\text{target} = A \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} L.\text{amount} - \sum_{\substack{T.\text{primary} = A \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} T.\text{total\_amount}$$
@@ -514,7 +547,7 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
    * `total_income`: sum of `AllocationLine.amount` where `target_account.type === 'INCOME'`.
    * `total_expense`: sum of `AllocationLine.amount` where `target_account.type === 'EXPENSE'`.
 
-### 11.4 Updated Role & Privacy Matrix (`F-19`, `BR-10`)
+### 11.5 Updated Role & Privacy Matrix (`F-19`, `BR-10`)
 
 | Endpoint Group | `USER` (`is_active = true`) | `ADMIN` (`is_active = true`) | Disabled User (`is_active = false`) | Unauthenticated |
 |---|:---:|:---:|:---:|:---:|
