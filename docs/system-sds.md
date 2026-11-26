@@ -499,9 +499,10 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
    }
    ```
    * **Cascade Deletion Prevention (`onDelete: Restrict`):** The foreign key from `transaction_audit_logs(transaction_id)` to `transactions(id)` uses **`onDelete: Restrict`** (never `onDelete: Cascade`). Any attempt to hard-delete a `Transaction` that has audit history is blocked at the database relational constraint level (`P2003` / `409 AUDIT_HISTORY_PROTECTED`) and at the application service layer.
-   * **Audit Log Retention & Append-Only Immutability Policy:**
+   * **Audit Log Retention, Application API & Database-Level Immutability Policy (`WP-08` Migration & `WP-12` Verification):**
      * `TransactionAuditLog` is strictly **append-only**: records are inserted exclusively inside the atomic `prisma.$transaction` of `PUT /api/transactions/:id` (`F-16`) and are retained permanently for the lifetime of the tenant ledger.
-     * **No Update or Delete Surface:** The application API exposes **no** update (`PUT`/`PATCH`) or delete (`DELETE`) endpoints on `/api/transactions/:id/audit-history` or `/api/transactions/:id` (returning `405 Method Not Allowed` / `404` on unsupported methods), and the service layer prohibits calling `transactionAuditLog.update`, `updateMany`, `delete`, or `deleteMany`.
+     * **No Application API Update or Delete Surface:** The application API exposes **no** update (`PUT`/`PATCH`) or delete (`DELETE`) endpoints on `/api/transactions/:id/audit-history` or `/api/transactions/:id` (returning `405 Method Not Allowed` / `404` on unsupported methods), and the service layer prohibits calling `transactionAuditLog.update`, `updateMany`, `delete`, or `deleteMany`.
+     * **Database-Level Trigger Protection Against Direct Update or Delete:** In addition to `onDelete: Restrict`, the `WP-08` SQL migration installs a PostgreSQL `BEFORE UPDATE OR DELETE ON transaction_audit_logs` trigger (`prevent_audit_log_mutation()`) that raises a database exception (`ERRCODE = '55000'`, message `'TransactionAuditLog records are immutable and cannot be updated or deleted'`). Thus, even a direct SQL `UPDATE` or `DELETE` or raw Prisma `transactionAuditLog.update`/`delete` call is rejected directly by PostgreSQL (`TEST-AUDIT-05` in `WP-12`).
 
 ### 11.2 System-Wide Concurrency, Row-Locking & Archived Account Guard Policy
 
