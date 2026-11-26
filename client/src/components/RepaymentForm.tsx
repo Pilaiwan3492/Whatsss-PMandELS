@@ -290,7 +290,10 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                   id="fromAccountSelect"
                   className={`repayment-select ${isInsufficientFunds ? 'has-error' : ''}`}
                   value={fromAccountId}
-                  onChange={(e) => setFromAccountId(e.target.value)}
+                  onChange={(e) => {
+                    setFromAccountId(e.target.value);
+                    setErrorMessage(null);
+                  }}
                   disabled={isSubmitting}
                   required
                 >
@@ -318,7 +321,10 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                   id="toAccountSelect"
                   className={`repayment-select ${isExceedingDebt ? 'has-error' : ''}`}
                   value={toAccountId}
-                  onChange={(e) => setToAccountId(e.target.value)}
+                  onChange={(e) => {
+                    setToAccountId(e.target.value);
+                    setErrorMessage(null);
+                  }}
                   disabled={isSubmitting}
                   required
                 >
@@ -368,9 +374,11 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                     Available Cash for Partial Repayment (After 100.00 THB Reserve)
                   </span>
                   <span className="repayment-preview-value">
-                    {isFullSettlement
+                    {isFullSettlement && !isInsufficientFunds
                       ? `${formatCurrency(bankBalanceCents / 100)} (Full Settlement Reserve Exempt)`
-                      : formatCurrency(availableAfterReserveCents / 100)}
+                      : isFullSettlement && isInsufficientFunds
+                        ? `${formatCurrency(bankBalanceCents / 100)} (Insufficient Funds for Full Settlement)`
+                        : formatCurrency(availableAfterReserveCents / 100)}
                   </span>
                 </div>
                 {amountCents > 0 && !isZeroDebt && !isExceedingDebt && !isInsufficientFunds && (
@@ -429,7 +437,10 @@ export const RepaymentForm: React.FC<RepaymentFormProps> = ({
                   }`}
                   placeholder="0.00"
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  onChange={(e) => {
+                    setAmount(e.target.value);
+                    setErrorMessage(null);
+                  }}
                   disabled={isSubmitting}
                   required
                 />

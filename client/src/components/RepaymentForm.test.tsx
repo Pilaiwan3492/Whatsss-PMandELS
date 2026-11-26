@@ -678,13 +678,15 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
     fireEvent.change(amountInput2, { target: { value: '3000.00' } });
 
     expect(screen.queryByText(/Exceeds bank balance/i)).not.toBeNull();
+    expect(screen.queryByText(/Full Settlement Reserve Exempt/i)).toBeNull();
+    expect(screen.queryByText(/Insufficient Funds for Full Settlement/i)).not.toBeNull();
     expect(submitBtn2.disabled).toBe(true);
 
     fireEvent.click(submitBtn2);
     expect(transactionApi.recordRepayment).not.toHaveBeenCalled();
   });
 
-  it('TEST-UI-REPAY-17: displays MIN_REPAYMENT_NOT_MET from backend', async () => {
+  it('TEST-UI-REPAY-17: displays MIN_REPAYMENT_NOT_MET from backend and clears error banner when user edits amount', async () => {
     const mockOnClose = vi.fn();
     const mockOnSuccess = vi.fn();
 
@@ -723,11 +725,34 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
 
     expect(mockOnSuccess).not.toHaveBeenCalled();
     expect(mockOnClose).not.toHaveBeenCalled();
+
+    // Editing the amount input clears the stale backend error banner so it does not mask new validation state
+    fireEvent.change(amountInput, { target: { value: '600.00' } });
+    expect(
+      screen.queryByText('Repayment amount of 500.00 is below the minimum required repayment of 600.00.')
+    ).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('TEST-UI-REPAY-18: displays MINIMUM_CASH_RESERVE_VIOLATION from backend', async () => {
+  it('TEST-UI-REPAY-18: displays MINIMUM_CASH_RESERVE_VIOLATION from backend and clears error banner when user switches source cash or target credit card account', async () => {
     const mockOnClose = vi.fn();
     const mockOnSuccess = vi.fn();
+
+    const multiAccounts: Account[] = [
+      ...mockAccounts,
+      {
+        ...mockAccounts[0],
+        id: 'bank-checking-2',
+        name: 'Secondary Checking Bank',
+        current_balance: 50000.0
+      },
+      {
+        ...mockAccounts[1],
+        id: 'cc-mastercard-2',
+        name: 'Mastercard Credit Card',
+        current_balance: 2000.0
+      }
+    ];
 
     vi.mocked(transactionApi.recordRepayment).mockRejectedValueOnce({
       response: {
@@ -743,7 +768,7 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
 
     render(
       <RepaymentForm
-        accounts={mockAccounts}
+        accounts={multiAccounts}
         isOpen={true}
         onClose={mockOnClose}
         onSuccess={mockOnSuccess}
@@ -764,6 +789,40 @@ describe('Frontend Component: RepaymentForm (WP-05, F-07)', () => {
 
     expect(mockOnSuccess).not.toHaveBeenCalled();
     expect(mockOnClose).not.toHaveBeenCalled();
+
+    // 1. Switching source CASH account clears the stale error banner
+    const fromSelect = screen.getByLabelText(/Pay From/i) as HTMLSelectElement;
+    fireEvent.change(fromSelect, { target: { value: 'bank-checking-2' } });
+    expect(
+      screen.queryByText('Partial repayment must leave at least 100.00 THB in the source cash account.')
+    ).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    // 2. Trigger error again, then verify switching target LOAN_TAKEN credit card account also clears the error banner
+    vi.mocked(transactionApi.recordRepayment).mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          error: {
+            code: 'MINIMUM_CASH_RESERVE_VIOLATION',
+            message: 'Partial repayment must leave at least 100.00 THB in the source cash account.'
+          }
+        }
+      }
+    });
+    fireEvent.click(submitBtn);
+    await waitFor(() => {
+      expect(
+        screen.getByText('Partial repayment must leave at least 100.00 THB in the source cash account.')
+      ).toBeDefined();
+    });
+
+    const toSelect = screen.getByLabelText(/Settle Debt For/i) as HTMLSelectElement;
+    fireEvent.change(toSelect, { target: { value: 'cc-mastercard-2' } });
+    expect(
+      screen.queryByText('Partial repayment must leave at least 100.00 THB in the source cash account.')
+    ).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('TEST-UI-REPAY-19: Backend rejects repayment when the latest cash balance no longer satisfies the 100.00 THB reserve rule (stale modal balance race condition)', async () => {
