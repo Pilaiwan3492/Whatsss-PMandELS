@@ -6,7 +6,7 @@
 > **Accepted Sprint 1 Baseline:** `v0.1.0-sprint1` (`f84e7b1680b5c5096ec045b8f9e8d47f5c5a9d1d`, Merge PR #14 from `sprint-1`)  
 > **Pre-Change Implementation Commit (`origin/main`):** `098c28f7beefd34c5c0cf70a0f04630f865b282c` (`098c28f`, Merge PR #44 from `staging-lab5`, Lab 6 Release)  
 > **Base Branch Sync (`staging-lab5`):** Synchronized with `62f36411dcb4d7a40f832e8e51d1512494550e9e` / `0f5bfdec8c5bceebbce001d60caed63029b4aa76` (PR #45, Lab 6 SingSlot retest sign-off, docs/evidence only)  
-> **Contract Revision Status:** **APPROVED & MERGED (PR #51 / Issue #47)** — Substantive teammate review and approval completed by `@Apichaya251400` on `2026-11-25T16:09:45Z` (Review ID `PRR_kwDOVlVi_s8AAAABaULYGA` on commit `7f068f453990b25a73dbbc8bded32dcfd5964cd9`), merged into `staging-lab5` at `2026-11-25T16:23:57Z` (`c35863052765bb1c09982f4884dcfe22bb117e43`) prior to backend (`PR #52`, `2026-11-25T16:29:33Z`) and frontend (`PR #53`) implementation commits. Sprint 1 CR Instructor/TA pre-approval is waived per official Lab 7 Spec Sheet Change announcement.
+> **Contract Revision Status:** **APPROVED & MERGED (PR #51 / Issue #47)** — Substantive teammate review and approval completed by `@Apichaya251400` on `2026-11-25T16:09:45Z` (Review ID `PRR_kwDOVlVi_s8AAAABaULYGA` on commit `7f068f453990b25a73dbbc8bded32dcfd5964cd9`), merged into `staging-lab5` at `2026-11-25T16:23:57Z` (`c35863052765bb1c09982f4884dcfe22bb117e43`) prior to backend (`PR #52`, `2026-11-25T16:29:33Z`, Approved & Merged `7700cba`) and frontend (`PR #53`, Implemented & CI-Verified on PR Branch — Pending Peer Review & Merge) implementation commits. Sprint 1 CR Instructor/TA pre-approval is waived per official Lab 7 Spec Sheet Change announcement.
 
 ---
 
@@ -16,7 +16,7 @@
 * **Requirement / Feature:** `FR-09` (Credit Card Debt Settlement), `BR-07` (Debt Settlement Invariant), `F-07` (Credit Card Repayment Engine).
 * **Old Rule:** Any strictly positive repayment amount (`0.00 < amount <= currentDebt` and `amount <= currentCashBalance`, max 2 decimal places) is accepted. There is no minimum partial repayment floor, no small-debt full-settlement rule, and a repayment may drain the source `CASH` account down to `0.00 THB`.
 
-### 1.2 Proposed New Rule (Bounded Complex Change)
+### 1.2 Approved New Rule (Bounded Complex Change)
 Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full Settlement + Minimum Cash Reserve Protection**:
 
 1. **Minimum Repayment Floor (`MIN_REPAYMENT_NOT_MET`, HTTP `422`):**

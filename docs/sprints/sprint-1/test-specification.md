@@ -4,15 +4,15 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part E: Software Test Specification)  
-> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 Maintenance Amendment (`v1.1-full`, PR #51 Approved & Merged `c358630`, PR #52 Approved & Merged `7700cba`, PR #53 Frontend & Live PostgreSQL 16 Concurrency Verified in CI)
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 Maintenance Amendment (`v1.1-full`, PR #51 Approved & Merged `c358630`, PR #52 Approved & Merged `7700cba`, PR #53 Implemented & CI-Verified on PR Branch — Pending Peer Review & Merge)
 
 ### Document Revision History
 | Version | Status | Date | Scope / Reference | Summary |
 |---|---|---|---|---|
 | `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original 33 Sprint 1 baseline tests (subsequently expanded to 35 with Lab 5/6 security and concurrency tests). |
-| `v1.1-draft` | **Approved & Merged (Lab 7 Part A Contract)** | 2026-11-25 | Lab 7 / [PR #51](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/51) / [Issue #47](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/47) | Added 10 proposed `F-07` / `BR-07 v1.1` test cases (`TEST-REPAY-07`..`16`). Approved by `@Apichaya251400` on `2026-11-25T16:09:45Z` (Review ID `PRR_kwDOVlVi_s8AAAABaULYGA`) and merged into `staging-lab5` (`c358630`) prior to implementation. |
+| `v1.1-contract` | **Approved & Merged (Lab 7 Part A Contract)** | 2026-11-25 | Lab 7 / [PR #51](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/51) / [Issue #47](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/47) | Added 10 `F-07` / `BR-07 v1.1` test cases (`TEST-REPAY-07`..`16`). Approved by `@Apichaya251400` on `2026-11-25T16:09:45Z` (Review ID `PRR_kwDOVlVi_s8AAAABaULYGA`) and merged into `staging-lab5` (`c358630`) prior to implementation. |
 | `v1.1-impl` | **Approved & Merged (Lab 7 Part B Backend)** | 2026-11-25 | Lab 7 / [PR #52](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/52) / [Issue #48](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/48) | Verified `TEST-REPAY-01`..`16` (`46/46` in `repayment.test.ts` Mock Prisma) and `LIVE-01`..`09` + `LIVE-CLEANUP-01` (`19/19` in `db-repayment.test.ts` on PostgreSQL 16 `whatsss_test`) via GitHub Actions CI Run #89–#92. Approved by `@Apichaya251400` (`2026-11-25T19:51:58Z`) and merged (`7700cba`). |
-| `v1.1-full` | **Implemented & CI-Verified (Lab 7 Part B Frontend + Live DB Lock Proof)** | 2026-11-26 | Lab 7 / [PR #53](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/53) / [Issue #49](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/49) | Added Mock Prisma concurrent reserve test `TEST-REPAY-09-CONCURRENT` (`47/47` in `repayment.test.ts`), Live PostgreSQL `pg_stat_activity` (`wait_event_type = 'Lock'`) row-lock test `LIVE-10` + `LIVE-CLEANUP-01` (`20/20` in `db-repayment.test.ts`), and Frontend Component tests `TEST-UI-REPAY-01`..`26` (`26/26` in `RepaymentForm.test.tsx`, `71/71` across all 7 frontend test files). |
+| `v1.1-full` | **Implemented & CI-Verified on PR Branch (Pending Peer Review & Merge)** | 2026-11-26 | Lab 7 / [PR #53](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/53) / [Issue #49](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/49) | Added Mock Prisma concurrent reserve test `TEST-REPAY-09-CONCURRENT` (`47/47` in `repayment.test.ts`), Live PostgreSQL `pg_stat_activity` (`wait_event_type = 'Lock'`) row-lock test `LIVE-10` + `LIVE-CLEANUP-01` (`20/20` in `db-repayment.test.ts`), and Frontend Component tests `TEST-UI-REPAY-01`..`26` (`26/26` in `RepaymentForm.test.tsx`, `71/71` across all 7 frontend test files). |
 
 ---
 
@@ -173,9 +173,9 @@ All 26 component tests execute in `client/src/components/RepaymentForm.test.tsx`
 ## 5. Lab 7 Maintenance Amendment and Revision History
 
 - **v1.0 — Accepted Sprint 1 baseline (`v0.1.0-sprint1`):** Original test specification accepted for Deliverable 1 (`f84e7b16`); preserve this baseline and its historical acceptance evidence.
-- **v1.1-draft — Lab 7 Part A contract (`2026-11-25`, PR #51 / Issue #47, `@Pilaiwan3492`, Approved by `@Apichaya251400`):** Added `TEST-REPAY-07`..`16` specifications prior to implementation (`c358630`).
+- **v1.1-contract — Lab 7 Part A contract (`2026-11-25`, PR #51 / Issue #47, `@Pilaiwan3492`, Approved by `@Apichaya251400`):** Added `TEST-REPAY-07`..`16` specifications prior to implementation (`c358630`).
 - **v1.1-impl — Lab 7 Part B backend implementation (`2026-11-25`, PR #52 / Issue #48, `@Pilaiwan3492`, Approved by `@Apichaya251400`):** Verified `TEST-REPAY-01`..`16` (`46/46`) and `LIVE-01`..`09` + `LIVE-CLEANUP-01` (`19/19` on PostgreSQL 16 `whatsss_test`) (`7700cba`).
-- **v1.1-full — Lab 7 Part B frontend & live PostgreSQL row-lock verification (`2026-11-26`, PR #53 / Issue #49, `@Apichaya251400`):**
+- **v1.1-full — Lab 7 Part B frontend & live PostgreSQL row-lock verification (`2026-11-26`, PR #53 / Issue #49, `@Apichaya251400`, Implemented & CI-Verified on PR Branch — Pending Peer Review & Merge):**
   - Added Section 3 documenting all 26 Frontend Component Tests (`TEST-UI-REPAY-01`..`26` in `client/src/components/RepaymentForm.test.tsx`), explicitly distinguishing the 6 Core Test-First cases (`TEST-UI-REPAY-12`..`17` committed in RED commit `493aa18` before GREEN implementation commit `8079573`) from the 9 Supplemental Regression cases (`TEST-UI-REPAY-18`..`26` added during review refinement).
   - Added `TEST-REPAY-09-CONCURRENT` in Section 1 (`47/47` in `repayment.test.ts`), and `LIVE-10` (proving PostgreSQL `SELECT ... FOR UPDATE` row locking via `pg_stat_activity` `wait_event_type = 'Lock'`) + `LIVE-CLEANUP-01` in Section 2 (`20/20` in `db-repayment.test.ts`).
   - **Complete Test Inventory Reconciliation:**
