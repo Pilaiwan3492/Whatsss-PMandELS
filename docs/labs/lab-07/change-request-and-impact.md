@@ -6,7 +6,7 @@
 > **Accepted Sprint 1 Baseline:** `v0.1.0-sprint1` (`f84e7b1680b5c5096ec045b8f9e8d47f5c5a9d1d`, Merge PR #14 from `sprint-1`)  
 > **Pre-Change Implementation Commit (`origin/main`):** `098c28f7beefd34c5c0cf70a0f04630f865b282c` (`098c28f`, Merge PR #44 from `staging-lab5`, Lab 6 Release)  
 > **Base Branch Sync (`staging-lab5`):** Synchronized with `62f36411dcb4d7a40f832e8e51d1512494550e9e` / `0f5bfdec8c5bceebbce001d60caed63029b4aa76` (PR #45, Lab 6 SingSlot retest sign-off, docs/evidence only)  
-> **Contract Revision Status:** **PENDING SUBSTANTIVE TEAMMATE REVIEW** — `@Apichaya251400` review and RED/GREEN + regression evidence are required before merging/releasing; Sprint 1 CR Instructor/TA pre-approval is waived per official Lab 7 Spec Sheet Change announcement. No teammate review approval is claimed or implied.
+> **Contract Revision Status:** **APPROVED & MERGED (PR #51 / Issue #47)** — Substantive teammate review and approval completed by `@Apichaya251400` on `2026-11-25T16:09:45Z` (Review ID `PRR_kwDOVlVi_s8AAAABaULYGA` on commit `7f068f453990b25a73dbbc8bded32dcfd5964cd9`), merged into `staging-lab5` at `2026-11-25T16:23:57Z` (`c35863052765bb1c09982f4884dcfe22bb117e43`) prior to backend (`PR #52`, `2026-11-25T16:29:33Z`, Approved & Merged `7700cba`) and frontend (`PR #53`, Implemented & CI-Verified on PR Branch — Pending Peer Review & Merge) implementation commits. Sprint 1 CR Instructor/TA pre-approval is waived per official Lab 7 Spec Sheet Change announcement.
 
 ---
 
@@ -16,7 +16,7 @@
 * **Requirement / Feature:** `FR-09` (Credit Card Debt Settlement), `BR-07` (Debt Settlement Invariant), `F-07` (Credit Card Repayment Engine).
 * **Old Rule:** Any strictly positive repayment amount (`0.00 < amount <= currentDebt` and `amount <= currentCashBalance`, max 2 decimal places) is accepted. There is no minimum partial repayment floor, no small-debt full-settlement rule, and a repayment may drain the source `CASH` account down to `0.00 THB`.
 
-### 1.2 Proposed New Rule (Bounded Complex Change)
+### 1.2 Approved New Rule (Bounded Complex Change)
 Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full Settlement + Minimum Cash Reserve Protection**:
 
 1. **Minimum Repayment Floor (`MIN_REPAYMENT_NOT_MET`, HTTP `422`):**
@@ -79,11 +79,11 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
 ### 2.1 Acceptance Criteria Traceability & Impact Matrix
 | AC ID | Requirement / Rule | Status | Impacted Docs & Modules | Impact Assessment | Linked STS Test IDs |
 |---|---|---|---|---|---|
-| `AC-07-1`..`AC-07-6` | Preserved Sprint 1 baseline (`FR-09`, `BR-07`, `BR-08`) | Preserved | `srs.md`, `feature-contracts.md`, `repayment.service.ts` | Unchanged behavior; protected by regression suite | `TEST-REPAY-01`..`06`, `TEST-REPAY-CONCURRENT-*` |
-| `AC-07-7` | Minimum Repayment Floor (`500 THB` / `10%` `ROUND_HALF_UP` / `<500` full) | Proposed | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `RepaymentForm.tsx`, `repayment.test.ts`, `RepaymentForm.test.tsx` | Adds decimal-safe floor check inside locked DB transaction + UI hint | `TEST-REPAY-07`, `TEST-REPAY-08`, `TEST-REPAY-15`, `TEST-REPAY-16` |
-| `AC-07-8` | `100.00 THB` Cash Reserve & Full-Settlement Exemption | Proposed | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `RepaymentForm.tsx`, `repayment.test.ts`, `RepaymentForm.test.tsx` | Adds partial-repayment reserve check inside locked DB transaction + UI hint | `TEST-REPAY-09`, `TEST-REPAY-10`, `TEST-REPAY-12`, `TEST-REPAY-16` |
-| `AC-07-9` | Zero-Debt Rejection (`422 ZERO_OUTSTANDING_DEBT`) | Proposed | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `RepaymentForm.tsx`, `repayment.test.ts` | Rejects `latestOutstandingDebt == 0.00` before floor/reserve checks; zero writes | `TEST-REPAY-11`, `TEST-REPAY-16` |
-| `AC-07-10` | Target Account Scope & Non-`LOAN_TAKEN` Rejection (`400 INVALID_ACCOUNT_TYPE`) | Proposed | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `repayment.test.ts` | Enforces `CASH` $\rightarrow$ `LOAN_TAKEN` in Sprint 1; documents Sprint 2 `FR-15` subtype/discriminator prerequisite | `TEST-REPAY-14` |
+| `AC-07-1`..`AC-07-6` | Preserved Sprint 1 baseline (`FR-09`, `BR-07`, `BR-08`) | Preserved | `srs.md`, `feature-contracts.md`, `repayment.service.ts` | Unchanged behavior; protected by regression suite | `TEST-REPAY-01`..`06`, `TEST-REPAY-CONCURRENT-*`, `TEST-UI-REPAY-01`..`11` |
+| `AC-07-7` | Minimum Repayment Floor (`500 THB` / `10%` `ROUND_HALF_UP` / `<500` full) | Approved & Implemented (`v1.1`) | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `RepaymentForm.tsx`, `repayment.test.ts`, `db-repayment.test.ts`, `RepaymentForm.test.tsx` | Adds decimal-safe floor check inside locked DB transaction + UI hint | `TEST-REPAY-07`, `TEST-REPAY-08`, `TEST-REPAY-15`, `TEST-REPAY-16`, `LIVE-01`, `LIVE-02`, `LIVE-08`, `LIVE-09`, `TEST-UI-REPAY-12`..`14`, `17`, `20`, `26` |
+| `AC-07-8` | `100.00 THB` Cash Reserve & Full-Settlement Exemption | Approved & Implemented (`v1.1`) | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `RepaymentForm.tsx`, `repayment.test.ts`, `db-repayment.test.ts`, `RepaymentForm.test.tsx` | Adds partial-repayment reserve check inside locked DB transaction + UI hint | `TEST-REPAY-09`, `TEST-REPAY-09-CONCURRENT`, `TEST-REPAY-10`, `TEST-REPAY-12`, `TEST-REPAY-16`, `LIVE-03`, `LIVE-04`, `LIVE-06`, `LIVE-07`, `LIVE-10`, `TEST-UI-REPAY-15`, `16`, `18`..`20`, `25` |
+| `AC-07-9` | Zero-Debt Rejection (`422 ZERO_OUTSTANDING_DEBT`) | Approved & Implemented (`v1.1`) | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `RepaymentForm.tsx`, `repayment.test.ts`, `db-repayment.test.ts`, `RepaymentForm.test.tsx` | Rejects `latestOutstandingDebt == 0.00` before floor/reserve checks; zero writes | `TEST-REPAY-11`, `TEST-REPAY-16`, `LIVE-05`, `TEST-UI-REPAY-21`, `TEST-UI-REPAY-22` |
+| `AC-07-10` | Target Account Scope & Non-`LOAN_TAKEN` Rejection (`400 INVALID_ACCOUNT_TYPE`) | Approved & Implemented (`v1.1`) | `srs.md`, `feature-contracts.md`, `repayment.service.ts`, `repayment.test.ts`, `RepaymentForm.test.tsx` | Enforces `CASH` $\rightarrow$ `LOAN_TAKEN` in Sprint 1; documents Sprint 2 `FR-15` subtype/discriminator prerequisite | `TEST-REPAY-14`, `TEST-UI-REPAY-23`, `TEST-UI-REPAY-24` |
 
 ### 2.2 Applicability Assessment for System Layers
 * **System-Level SDS (`docs/system-sds.md`) & Prisma Schema (`server/prisma/schema.prisma`):** Under the current no-schema-change scope, `docs/system-sds.md` architecture, middleware sequence, and transaction boundaries remain valid; **however**, because `docs/system-sds.md` and `schema.prisma` lack a credit-card discriminator (§1.3), resolving `AC-07-10` with a schema-level discriminator would directly impact `schema.prisma`, Prisma migrations, existing seed/account data compatibility, and `docs/system-sds.md`.
@@ -109,10 +109,11 @@ Update `F-07` / `BR-07` to enforce **Minimum Repayment Floor + Small-Debt Full S
 * **Latest Base Sync (`staging-lab5`):** Commits `0f5bfdec8c5bceebbce001d60caed63029b4aa76` and `62f36411dcb4d7a40f832e8e51d1512494550e9e` (PR #45, SingSlot retest sign-off docs/evidence only) were merged cleanly into this branch with zero conflicts.
 * **Amended Requirements:** Strictly `BR-07` (`BR-07 v1.1`), `Feature F-07` (`AC-07-7`..`AC-07-10`), and STS (`TEST-REPAY-07`..`16`). Original Sprint 1 baseline (`v0.1.0-sprint1`) is preserved intact.
 
-### 3.2 Approval Gate (Implementation Blocked Until Recorded)
-* **Substantive Teammate Review (`@Apichaya251400` on PR #51):** **REQUIRED / PENDING** — Must review repayment business rules, Sprint 1 `LOAN_TAKEN` scoping decision (§1.3), impact analysis, and test coverage before merging PR #51 or starting implementation. A requested review is not evidence of completed review.
-  * **Reviewer:** *(Pending — `@Apichaya251400`)*
-  * **Review Date / Decision:** *(Pending)*
+### 3.2 Approval Gate (Verified & Recorded Prior to Implementation)
+* **Substantive Teammate Review (`@Apichaya251400` on [PR #51](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/51)):** **APPROVED & MERGED** — Reviewed repayment business rules, Sprint 1 `LOAN_TAKEN` scoping decision (§1.3), impact analysis, and test coverage before merging PR #51 and before any implementation commits in PR #52 / PR #53.
+  * **Reviewer:** Aphichaya Klinhual (`@Apichaya251400`)
+  * **Review Date / Decision:** `2026-11-25T16:09:45Z` — **`APPROVED`** (Review ID `PRR_kwDOVlVi_s8AAAABaULYGA` on commit `7f068f453990b25a73dbbc8bded32dcfd5964cd9`; merged into `staging-lab5` at `2026-11-25T16:23:57Z`, commit `c35863052765bb1c09982f4884dcfe22bb117e43`)
+* **Backend Implementation Peer Review (`@Apichaya251400` on [PR #52](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/52)):** **APPROVED & MERGED** — `2026-11-25T19:51:58Z` (Review ID `PRR_kwDOVlVi_s8AAAABaXGj8g` on commit `5bc3183166f8ff17ca1574c98d44265b1082e9b8`; merged into `staging-lab5` at `2026-11-25T19:52:42Z`, commit `7700cba5d2ba75b6a99ba0edb279ce22a969d38d`).
 * **Instructor / TA Change Request Approval:** **WAIVED (Verified Official Course Announcement)** — Per the official Lab 7 Spec Sheet Change announcement (*"Announcement. Lab 7 Spec Sheet Change. You need not get Instructor or TA Approval for your change request to Sprint 1. Think of a good change to Sprint 1 among yourselves, but do try to make it a complex enough added feature and not just a trivial change."*), Instructor/TA pre-approval of the Sprint 1 Change Request is not required. Note: substantive teammate review, RED/GREEN test-first evidence, and regression safety remain mandatory.
 
 ---
