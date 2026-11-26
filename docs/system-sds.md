@@ -3,8 +3,14 @@
 
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
-> **Deliverable:** Project Deliverable 1 (Part C: System-Level SDS)  
-> **Status:** Authoritative Baseline (Frozen)  
+> **Deliverable:** Project Deliverable 1 (Part C: System-Level SDS) & Deliverable 2 (Part D: Sprint 2/3 Schema & Architecture Evolution)  
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 `BR-07 v1.1` Amendment + Sprint 2 & Sprint 3 Contracted Evolution (`v2.0-contract`, `WP-07` / [Issue #55](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/55))
+
+### Document Revision History
+| Version | Status | Date | Scope / Reference | Summary |
+|---|---|---|---|---|
+| `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original Sprint 1 System-Level SDS (`F-01`..`F-09`). |
+| `v2.0-contract` | **Sprint 2 & 3 Contracted Architecture Evolution** | 2026-11-26 | `WP-07` / [Issue #55](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/55) | Adds Section 11 specifying consolidated Sprint 2/3 Prisma schema evolution (`AccountSubtype` discriminator for Credit Card vs. General Loan Taken resolving the Lab 7 `BR-07 v1.1` prerequisite, `Account.is_archived`, `Transaction.is_favorite`, and `TransactionAuditLog`), extended balance equations (`F-11`..`F-13`), and Admin governance routes (`F-19`). |  
 
 ---
 
@@ -437,4 +443,81 @@ All runtime configuration is managed through externalized environment variables 
 ## 10. Deployment Approach
 
 * **Sprint 1 Development:** Runs locally with PostgreSQL 16 hosted via Docker Compose (`docker compose up -d`) and the Express application executed locally via Node.js.
-* **Lab 5 Preparation:** The architecture is stateless, container-ready, and requires only external environment configuration for future GCP Cloud Run and Cloud SQL deployment.
+* **Lab 5–7 & Deliverable 2 Cloud Deployment:** The application is packaged via a multi-stage `Dockerfile` and deployed automatically to **Google Cloud Run** (`asia-southeast1`) connected to **Cloud SQL for PostgreSQL 16** via `.github/workflows/deploy.yml` using Workload Identity Federation (WIF) and Secret Manager.
+
+---
+
+## 11. Sprint 2 & Sprint 3 Schema, Ledger & Architecture Evolution (`v2.0-contract`, `WP-07` / Issue #55)
+
+To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) features while preserving 100% backward compatibility with the Sprint 1 Golden Domain Journey (`F-01`..`F-09`) and the Lab 7 `BR-07 v1.1` repayment rules, the relational data model and domain services are extended as follows (implemented in `WP-08` / [Issue #56](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/56)):
+
+### 11.1 Consolidated Prisma Schema Evolution (`server/prisma/schema.prisma`)
+
+1. **`AccountSubtype` Discriminator Enum (Resolving the Lab 7 `BR-07 v1.1` Prerequisite):**
+   ```prisma
+   enum AccountSubtype {
+     DEFAULT
+     CREDIT_CARD
+     GENERAL_LOAN
+   }
+   ```
+   * Added to `Account`: `subtype AccountSubtype @default(DEFAULT)` and `is_archived Boolean @default(false)`.
+   * **Domain Separation Rule:**
+     * Seeded `Visa Credit Card` and user-created credit card accounts have `type = LOAN_TAKEN` and `subtype = CREDIT_CARD`.
+     * User-created general borrowing accounts (`F-13`, `FR-15`) have `type = LOAN_TAKEN` and `subtype = GENERAL_LOAN`.
+     * `POST /api/transactions/repayment` (`F-07`) requires `toAccount.type === 'LOAN_TAKEN' && toAccount.subtype === 'CREDIT_CARD'` (enforcing `BR-07 v1.1` minimum repayment floor `max(500.00, 10%)` and `100.00 THB` partial cash reserve exclusively on credit cards).
+     * `POST /api/transactions/loan-borrowing` and `POST /api/transactions/loan-repayment` (`F-13`) require `type === 'LOAN_TAKEN' && subtype === 'GENERAL_LOAN'`.
+
+2. **`Transaction` Favorite & Update Tracking (`F-14`, `F-16`):**
+   * Added to `Transaction`:
+     * `is_favorite Boolean @default(false)` (`FR-16`)
+     * `updated_at DateTime @default(now()) @updatedAt` (`FR-19`)
+     * `audit_logs TransactionAuditLog[]` (`FR-21`)
+
+3. **`TransactionAuditLog` Model (`F-16`, `F-18`, `FR-21`):**
+   ```prisma
+   model TransactionAuditLog {
+     id                String      @id @default(uuid())
+     transaction_id    String
+     transaction       Transaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+     user_id           String
+     action            String      @default("CORRECTED") @db.VarChar(50)
+     previous_snapshot Json
+     new_snapshot      Json
+     created_at        DateTime    @default(now())
+
+     @@index([transaction_id, created_at])
+     @@index([user_id])
+     @@map("transaction_audit_logs")
+   }
+   ```
+
+### 11.2 Extended Ledger Accounting Matrix (`F-11`, `F-12`, `F-13`)
+
+| Workflow & Feature | Endpoint | `Transaction.form` | `primary_account` | `AllocationLine.target_account` | Balance & Summary Invariant (`BR-02`, `BR-08`) |
+|---|---|---|---|---|---|
+| **Internal Cash Transfer (`F-11`, `FR-13`)** | `POST /api/transactions/transfer` | `PAYMENT_CHARGE` | Source `CASH` ($-\text{amount}$) | Destination `CASH` ($+\text{amount}$) | Source `CASH` decreases; Destination `CASH` increases; **`total_income` & `total_expense` unchanged (`BR-02`)**. |
+| **Loan Given Disbursement (`F-12`, `FR-14`)** | `POST /api/transactions/loan-given` | `PAYMENT_CHARGE` | Source `CASH` ($-\text{amount}$) | `LOAN_GIVEN` ($+\text{amount}$ receivable) | `CASH` decreases; `LOAN_GIVEN` receivable increases; **`total_expense` unchanged (`BR-08`)**. |
+| **Loan Given Recovery (`F-12`, `FR-14`)** | `POST /api/transactions/loan-recovery` | `RECEIVE_MONEY` | Destination `CASH` ($+\text{amount}$) | `LOAN_GIVEN` ($-\text{amount}$ receivable) | `CASH` increases; `LOAN_GIVEN` receivable decreases; **`total_income` unchanged (`BR-08`)**. |
+| **General Loan Borrowing (`F-13`, `FR-15`)** | `POST /api/transactions/loan-borrowing` | `RECEIVE_MONEY` | Destination `CASH` ($+\text{amount}$) | `LOAN_TAKEN` (`GENERAL_LOAN`, $+\text{amount}$ debt) | `CASH` increases; General `LOAN_TAKEN` debt increases; **`total_income` unchanged (`BR-08`)**. |
+| **General Loan Repayment (`F-13`, `FR-15`)** | `POST /api/transactions/loan-repayment` | `PAYMENT_CHARGE` | Source `CASH` ($-\text{amount}$) | `LOAN_TAKEN` (`GENERAL_LOAN`, $-\text{amount}$ debt) | `CASH` decreases; General `LOAN_TAKEN` debt decreases; **`total_expense` unchanged (`BR-08`)**. |
+
+### 11.3 Extended Deterministic Balance Equations (`balance.service.ts`)
+
+1. **Cash Account Balance (`type === 'CASH'`):**
+   $$\text{Cash Balance}(A) = A.\text{opening\_balance} + \sum_{\substack{T.\text{primary} = A \\ T.\text{form} = \text{RECEIVE\_MONEY}}} T.\text{total\_amount} + \sum_{\substack{L.\text{target} = A \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} L.\text{amount} - \sum_{\substack{T.\text{primary} = A \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} T.\text{total\_amount}$$
+2. **Loan Taken Liability Balance (`type === 'LOAN_TAKEN'`, both `CREDIT_CARD` and `GENERAL_LOAN`):**
+   $$\text{Debt Balance}(L_T) = L_T.\text{opening\_balance} + \sum_{\substack{T.\text{primary} = L_T \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} T.\text{total\_amount} + \sum_{\substack{L.\text{target} = L_T \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{RECEIVE\_MONEY}}} L.\text{amount} - \sum_{\substack{L.\text{target} = L_T \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} L.\text{amount}$$
+3. **Loan Given Receivable Balance (`type === 'LOAN_GIVEN'`):**
+   $$\text{Receivable Balance}(L_G) = L_G.\text{opening\_balance} + \sum_{\substack{L.\text{target} = L_G \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} L.\text{amount} - \sum_{\substack{L.\text{target} = L_G \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{RECEIVE\_MONEY}}} L.\text{amount}$$
+4. **Total Income & Total Expense Summaries (`BR-02`, `BR-08`):**
+   * `total_income`: sum of `AllocationLine.amount` where `target_account.type === 'INCOME'`.
+   * `total_expense`: sum of `AllocationLine.amount` where `target_account.type === 'EXPENSE'`.
+
+### 11.4 Updated Role & Privacy Matrix (`F-19`, `BR-10`)
+
+| Endpoint Group | `USER` (`is_active = true`) | `ADMIN` (`is_active = true`) | Disabled User (`is_active = false`) | Unauthenticated |
+|---|:---:|:---:|:---:|:---:|
+| `GET /api/admin/users` (`FR-03`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (Non-financial user metadata only) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
+| `PATCH /api/admin/users/:id/status` (`FR-04`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (`422 CANNOT_DEACTIVATE_SELF` on self) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
+| `/api/accounts/*`, `/api/transactions/*`, `/api/reports/*` | **Allowed** (Own tenant records only, `BR-01`) | **`403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN` (`BR-10`)** | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
