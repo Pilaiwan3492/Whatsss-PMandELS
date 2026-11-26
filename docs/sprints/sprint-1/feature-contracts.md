@@ -4,13 +4,15 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part E: Sprint 1 Feature Engineering Contracts)  
-> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Proposed Lab 7 Maintenance Amendment (`F-07` / `BR-07 v1.1`, PR #51 — **Pending Substantive Teammate Review**; Instructor/TA Sprint 1 CR pre-approval waived per official Lab 7 Spec Sheet Change announcement)
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 Maintenance Amendment (`F-07` / `BR-07 v1.1`, [PR #51](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/51) / [Issue #47](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/47) **Approved & Merged** `c358630`; Backend [PR #52](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/52) / [Issue #48](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/48) **Approved & Merged** `7700cba`; Frontend & Live DB Concurrency [PR #53](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/53) / [Issue #49](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/49) **Implemented & CI-Verified**; Instructor/TA Sprint 1 CR pre-approval waived per official Lab 7 Spec Sheet Change announcement)
 
 ### Document Revision History
 | Version | Status | Date | Scope / Reference | Summary |
 |---|---|---|---|---|
 | `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original Sprint 1 feature contracts (`F-01`..`F-09`). |
-| `v1.1-draft` | **Proposed (Pending Substantive Teammate Review)** | 2026-11-25 | Lab 7 / PR #51 / Issue #47 | Proposes `BR-07 v1.1` updates to `Feature F-07` (`AC-07-7`..`AC-07-10`); baseline contracts remain unchanged until teammate review and RED/GREEN evidence are completed. |
+| `v1.1-draft` | **Approved & Merged (Lab 7 Part A Contract)** | 2026-11-25 | Lab 7 / [PR #51](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/51) / [Issue #47](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/47) | Defined `BR-07 v1.1` updates to `Feature F-07` (`AC-07-7`..`AC-07-10`). Approved by `@Apichaya251400` on `2026-11-25T16:09:45Z` (Review ID `PRR_kwDOVlVi_s8AAAABaULYGA` on commit `7f068f453990b25a73dbbc8bded32dcfd5964cd9`) and merged into `staging-lab5` (`c35863052765bb1c09982f4884dcfe22bb117e43`) prior to implementation. |
+| `v1.1-impl` | **Approved & Merged (Lab 7 Part B Backend)** | 2026-11-25 | Lab 7 / [PR #52](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/52) / [Issue #48](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/48) | Implemented `F-07` / `BR-07 v1.1` backend service and automated test suites. Approved by `@Apichaya251400` on `2026-11-25T19:51:58Z` (Review ID `PRR_kwDOVlVi_s8AAAABaXGj8g`) and merged into `staging-lab5` (`7700cba5d2ba75b6a99ba0edb279ce22a969d38d`). |
+| `v1.1-full` | **Implemented & CI-Verified (Lab 7 Part B Frontend & Live DB Lock Proof)** | 2026-11-26 | Lab 7 / [PR #53](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/53) / [Issue #49](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/49) | Implemented `F-07` / `BR-07 v1.1` frontend UI, boundary validation, and component tests (`RepaymentForm.tsx`, `RepaymentForm.test.tsx`: `26/26`), plus direct Request B `pg_backend_pid()` row-lock verification in `LIVE-10` (`db-repayment.test.ts`: `20/20`). |
 
 ---
 

@@ -1101,45 +1101,46 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
   });
 
   it(
-    'LIVE-10: deterministically proves PostgreSQL SELECT ... FOR UPDATE row locking via pg_stat_activity (wait_event_type = Lock) and stale-initial-balance rejection (422 MINIMUM_CASH_RESERVE_VIOLATION)',
+    'LIVE-10: deterministically proves PostgreSQL SELECT ... FOR UPDATE row locking via pg_stat_activity on Request B PID (wait_event_type = Lock) and fresh-locked-balance rejection (422 MINIMUM_CASH_RESERVE_VIOLATION)',
     async (ctx) => {
       if (!isDbConnected) {
         ctx.skip();
         return;
       }
 
-      // This test verifies concurrent API/service invocations that both observe the same initial PostgreSQL state
-      // (Cash = 1,600.00 THB, Debt = 3,000.00 THB) — not real browser tabs — and proves directly from PostgreSQL's
-      // pg_stat_activity catalog that Request B's backend session is actively blocked at the database level
-      // (wait_event_type = 'Lock') before Request A is released to commit:
-      // 1. Both Request A and Request B read the identical initial state (Cash = 1,600.00 THB, Debt = 3,000.00 THB).
+      // This test verifies concurrent API/service invocations against a fixture seeded at
+      // Cash = 1,600.00 THB and Debt = 3,000.00 THB — and proves directly from PostgreSQL's
+      // pg_stat_activity catalog that Request B's exact backend connection PID (requestBBackendPid)
+      // is actively blocked on a PostgreSQL lock (wait_event_type = 'Lock') while executing
+      // SELECT ... FOR UPDATE before Request A is released to commit:
+      // 1. Verify the persisted fixture baseline in PostgreSQL (Cash = 1,600.00 THB, Debt = 3,000.00 THB).
+      //    (Note: recordRepayment acquires SELECT ... FOR UPDATE at the start of prisma.$transaction
+      //    before reading account balances, so Request B does not read balances until after it unblocks.)
       // 2. Request A enters prisma.$transaction and executes SELECT ... FOR UPDATE (acquireAccountRowLocks) on the live
       //    PostgreSQL accounts, then signals `lockAcquiredByA` and pauses at `releaseCommitA` while holding the row lock.
-      // 3. Request B starts ONLY after `lockAcquiredByA` fires and issues its own SELECT ... FOR UPDATE query to PostgreSQL.
-      // 4. While Request B's SELECT ... FOR UPDATE query is in flight, a bounded polling loop queries `pg_stat_activity`
-      //    directly in PostgreSQL until it observes Request B's backend PID with `state = 'active'`, `wait_event_type = 'Lock'`,
-      //    and `query ILIKE '%FOR UPDATE%'`.
-      // 5.A `try / finally` block guarantees `resolveReleaseCommitA()` is ALWAYS called even if any assertion or timeout fails,
+      // 3. Request B starts ONLY after `lockAcquiredByA` fires. Inside Request B's interactive $transaction connection
+      //    (the exact same PostgreSQL connection that executes Request B's SELECT ... FOR UPDATE), Request B first queries
+      //    `SELECT pg_backend_pid()::int AS pid` to capture `requestBBackendPid`, and then dispatches its
+      //    SELECT ... FOR UPDATE query to PostgreSQL.
+      // 4. While Request B's SELECT ... FOR UPDATE query is in flight on `requestBBackendPid`, a bounded polling loop
+      //    (5,000ms deadline) queries `pg_stat_activity` filtered explicitly by `WHERE pid = ${requestBBackendPid}`
+      //    until it observes that exact PID with `state = 'active'`, `wait_event_type = 'Lock'`, and `query ILIKE '%FOR UPDATE%'`.
+      // 5. A `try / finally` block guarantees `resolveReleaseCommitA()` is ALWAYS called even if any assertion or timeout fails,
       //    preventing any dangling PostgreSQL lock or open transaction.
-      // 6. After Request A commits (Cash becomes 800.00 THB, Debt becomes 2,200.00 THB), Request B unblocks from PostgreSQL,
-      //    reads the fresh locked Cash = 800.00 THB and Debt = 2,200.00 THB, and rejects with 422 MINIMUM_CASH_RESERVE_VIOLATION
-      //    with zero Transaction or AllocationLine rows created for Request B.
+      // 6. After Request A commits (Cash becomes 800.00 THB, Debt becomes 2,200.00 THB), Request B's SELECT ... FOR UPDATE
+      //    unblocks from PostgreSQL, reads the fresh locked Cash = 800.00 THB and Debt = 2,200.00 THB, and rejects with
+      //    422 MINIMUM_CASH_RESERVE_VIOLATION (800.00 - 800.00 = 0.00 < 100.00) with zero Transaction or AllocationLine rows created.
       let resolveReleaseCommitA: (() => void) | undefined;
       let promiseA: Promise<any> | undefined;
       let promiseB: Promise<any> | undefined;
 
       try {
         await createRepaymentScenario('1600.00', '3000.00');
-        const initialStateForA = await readPersistedRepaymentState();
-        const initialStateForB = await readPersistedRepaymentState();
+        const baselineState = await readPersistedRepaymentState();
 
-        // Confirm both concurrent callers observe the exact same initial persisted state
-        expect(initialStateForA.cashBalance.toFixed(2)).toBe('1600.00');
-        expect(initialStateForA.debtBalance.toFixed(2)).toBe('3000.00');
-        expect(initialStateForB.cashBalance.toFixed(2)).toBe('1600.00');
-        expect(initialStateForB.debtBalance.toFixed(2)).toBe('3000.00');
-        expect(initialStateForA.txnCount).toBe(initialStateForB.txnCount);
-        expect(initialStateForA.allocCount).toBe(initialStateForB.allocCount);
+        // Confirm the fixture baseline state in PostgreSQL before launching concurrent requests
+        expect(baselineState.cashBalance.toFixed(2)).toBe('1600.00');
+        expect(baselineState.debtBalance.toFixed(2)).toBe('3000.00');
 
         let resolveLockAcquiredByA!: () => void;
         const lockAcquiredByA = new Promise<void>((r) => {
@@ -1155,6 +1156,7 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
           resolveReleaseCommitA = r;
         });
 
+        let requestBBackendPid: number | null = null;
         let cashObservedByBAfterUnblock: string | null = null;
         let debtObservedByBAfterUnblock: string | null = null;
 
@@ -1185,7 +1187,8 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
           }
         });
 
-        // Proxy around real PrismaClient for Request B: dispatches SELECT ... FOR UPDATE to PostgreSQL and records fresh locked balances after unblocking
+        // Proxy around real PrismaClient for Request B: captures pg_backend_pid() on Request B's dedicated transaction
+        // connection right before dispatching SELECT ... FOR UPDATE, and records fresh locked balances after unblocking
         const barrierPrismaB = new Proxy(prisma, {
           get(target, prop, receiver) {
             if (prop === '$transaction') {
@@ -1195,10 +1198,18 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
                     get(txTarget, txProp) {
                       if (txProp === '$queryRaw') {
                         return async (...args: any[]) => {
+                          // 1. Capture the exact PostgreSQL backend PID of Request B's transaction connection
+                          const pidRows = await txTarget.$queryRaw<Array<{ pid: number }>>`
+                            SELECT pg_backend_pid()::int AS pid
+                          `;
+                          requestBBackendPid = Number(pidRows[0]?.pid);
+
+                          // 2. Dispatch Request B's SELECT ... FOR UPDATE on this exact same transaction connection
                           const queryPromise = (txTarget.$queryRaw as any)(...args);
                           resolveDispatchedQueryByB();
                           const res = await queryPromise;
-                          // Immediately inspect the fresh balances visible inside Request B's transaction after unblocking from the lock
+
+                          // 3. Immediately inspect the fresh balances visible inside Request B's transaction after unblocking from the lock
                           const cashAcc = await txTarget.account.findUniqueOrThrow({ where: { id: testCashAccountId } });
                           const ccAcc = await txTarget.account.findUniqueOrThrow({ where: { id: testCreditCardId } });
                           const payAgg = await txTarget.transaction.aggregate({
@@ -1283,10 +1294,13 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
           (err) => ({ ok: false as const, err })
         );
 
-        // 4. Wait until Request B has dispatched its SELECT ... FOR UPDATE statement to PostgreSQL
+        // 4. Wait until Request B has captured its pg_backend_pid() and dispatched its SELECT ... FOR UPDATE statement
         await dispatchedQueryByB;
+        expect(typeof requestBBackendPid).toBe('number');
+        expect(requestBBackendPid).toBeGreaterThan(0);
 
-        // 5. Poll PostgreSQL pg_stat_activity (bounded timeout: 5,000ms) to prove Request B's backend session is genuinely waiting on a Lock
+        // 5. Poll PostgreSQL pg_stat_activity filtered explicitly by Request B's captured PID (bounded timeout: 5,000ms)
+        //    to prove Request B's exact backend session is genuinely waiting on a Lock
         let lockedSessionRows: Array<{ pid: number; wait_event_type: string | null; wait_event: string | null; state: string | null; query: string | null }> = [];
         const pollDeadline = Date.now() + 5000;
         while (Date.now() < pollDeadline) {
@@ -1296,7 +1310,7 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
             SELECT pid, wait_event_type, wait_event, state, query
             FROM pg_stat_activity
             WHERE datname = current_database()
-              AND pid <> pg_backend_pid()
+              AND pid = ${requestBBackendPid}
               AND state = 'active'
               AND wait_event_type = 'Lock'
               AND query ILIKE '%FOR UPDATE%'
@@ -1307,8 +1321,9 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
           await new Promise((r) => setTimeout(r, 25));
         }
 
-        // Assert that PostgreSQL pg_stat_activity confirmed Request B waiting on wait_event_type = 'Lock' BEFORE releasing Request A
-        expect(lockedSessionRows.length).toBeGreaterThanOrEqual(1);
+        // Assert that PostgreSQL pg_stat_activity confirmed Request B's exact PID waiting on wait_event_type = 'Lock' BEFORE releasing Request A
+        expect(lockedSessionRows).toHaveLength(1);
+        expect(Number(lockedSessionRows[0].pid)).toBe(requestBBackendPid);
         expect(lockedSessionRows[0].wait_event_type).toBe('Lock');
         expect(lockedSessionRows[0].state).toBe('active');
         expect(lockedSessionRows[0].query?.toUpperCase()).toContain('FOR UPDATE');
@@ -1343,8 +1358,8 @@ describe('Integration Test: PostgreSQL Live DB BR-07 v1.1 Repayment Rules (LIVE-
         expect(rejectedAllocInDb).toBeNull();
 
         const after = await readPersistedRepaymentState();
-        expect(after.txnCount).toBe(initialStateForA.txnCount + 1);
-        expect(after.allocCount).toBe(initialStateForA.allocCount + 1);
+        expect(after.txnCount).toBe(baselineState.txnCount + 1);
+        expect(after.allocCount).toBe(baselineState.allocCount + 1);
         expect(after.cashBalance.equals(new Prisma.Decimal('800.00'))).toBe(true);
         expect(after.debtBalance.equals(new Prisma.Decimal('2200.00'))).toBe(true);
       } finally {
