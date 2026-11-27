@@ -647,14 +647,35 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
       }
     });
 
+    const waitForForUpdateLockWaiter = async (timeoutMs = 3000): Promise<boolean> => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const rows = await prisma.$queryRaw<Array<{ cnt: number }>>`
+          SELECT COUNT(*)::int AS cnt
+          FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND pid <> pg_backend_pid()
+            AND wait_event_type = 'Lock'
+            AND state = 'active'
+            AND query ILIKE '%transactions%FOR UPDATE%'
+        `;
+        if ((rows[0]?.cnt ?? 0) > 0) {
+          return true;
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return false;
+    };
+
+    const events: string[] = [];
     let signalLockAcquired!: () => void;
     const lockAcquiredBarrier = new Promise<void>((resolve) => {
       signalLockAcquired = resolve;
     });
 
     // Transaction A: Simulates F-16 Correction acquiring SELECT ... FOR UPDATE on source transaction,
-    // holding the lock briefly while Transaction B (F-14 Duplicate) attempts to read/lock the same row,
-    // then committing the corrected amount (4500.00 = 2500.00 Dining + 2000.00 Grocery).
+    // waiting until pg_stat_activity observes Transaction B (F-14 Duplicate) blocked on the PostgreSQL
+    // row lock, then committing the corrected amount (4500.00 = 2500.00 Dining + 2000.00 Grocery).
     const correctionPromise = prisma.$transaction(async (tx) => {
       await tx.$queryRaw`
         SELECT id FROM "transactions"
@@ -662,12 +683,15 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
           AND user_id = ${tenant.userId}
         FOR UPDATE
       `;
+      events.push('correction_locked');
 
       // Notify duplicateTransaction to start concurrently while row lock is held
       signalLockAcquired();
 
-      // Hold lock briefly so PostgreSQL genuinely blocks Transaction B on the row lock
-      await new Promise((r) => setTimeout(r, 150));
+      // Deterministically wait until PostgreSQL reports Duplicate is blocked on the Lock wait event
+      const sawLockWaiter = await waitForForUpdateLockWaiter();
+      expect(sawLockWaiter).toBe(true);
+      events.push('duplicate_blocked_on_pg_lock');
 
       await tx.transaction.update({
         where: { id: sourceTxn.id },
@@ -694,6 +718,7 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
           }
         ]
       });
+      events.push('correction_committing');
     });
 
     // Wait until Correction holds the row lock, then launch Duplicate concurrently
@@ -703,9 +728,20 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
       sourceTxn.id,
       { transaction_date: '2026-11-16' },
       prisma
-    );
+    ).then((res) => {
+      events.push('duplicate_resolved');
+      return res;
+    });
 
     const [, dupResult] = await Promise.all([correctionPromise, duplicatePromise]);
+
+    // Deterministic proof that Duplicate blocked on PostgreSQL row lock and resolved only after commit
+    expect(events).toEqual([
+      'correction_locked',
+      'duplicate_blocked_on_pg_lock',
+      'correction_committing',
+      'duplicate_resolved'
+    ]);
 
     // Duplicate MUST have waited for Correction to commit and cloned the post-correction 4500.00 state
     expect(dupResult.transaction.total_amount).toBe('4500.00');
@@ -725,6 +761,7 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
 
     // Case B: If concurrent Correction fails and ROLLS BACK, HTTP POST /api/transactions/:id/duplicate
     // unblocks and duplicates the intact committed state (4500.00), never seeing uncommitted rolled-back data (9999.00)
+    const rbEvents: string[] = [];
     let signalRbLock!: () => void;
     const rbLockBarrier = new Promise<void>((resolve) => {
       signalRbLock = resolve;
@@ -738,12 +775,16 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
             AND user_id = ${tenant.userId}
           FOR UPDATE
         `;
+        rbEvents.push('rb_correction_locked');
         signalRbLock();
-        await new Promise((r) => setTimeout(r, 120));
+        const sawRbWaiter = await waitForForUpdateLockWaiter();
+        expect(sawRbWaiter).toBe(true);
+        rbEvents.push('rb_duplicate_blocked_on_pg_lock');
         await tx.transaction.update({
           where: { id: sourceTxn.id },
           data: { total_amount: new Prisma.Decimal('9999.00'), description: 'Rolled Back Draft' }
         });
+        rbEvents.push('rb_correction_rolling_back');
         throw new Error('INTENTIONAL_CORRECTION_ROLLBACK');
       })
       .catch(() => 'ROLLED_BACK');
@@ -755,9 +796,16 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
       .set('Content-Type', 'application/json')
       .set('Cookie', tenant.cookie)
       .send({ transaction_date: '2026-11-17' });
+    rbEvents.push('rb_duplicate_resolved');
 
     const rbOutcome = await rollingBackCorrection;
     expect(rbOutcome).toBe('ROLLED_BACK');
+    expect(rbEvents).toEqual([
+      'rb_correction_locked',
+      'rb_duplicate_blocked_on_pg_lock',
+      'rb_correction_rolling_back',
+      'rb_duplicate_resolved'
+    ]);
     expect(dupHttpRes.status).toBe(201);
     expect(dupHttpRes.body.data.transaction.total_amount).toBe('4500.00');
     expect(dupHttpRes.body.data.transaction.description).toBe('Post-Correction Purchase');
