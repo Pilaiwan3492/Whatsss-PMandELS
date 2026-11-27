@@ -1166,42 +1166,13 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
         return;
       }
 
-      // Ensure the PostgreSQL function reflects the latest 5-case definition from migration.sql
-      await prisma.$executeRawUnsafe(`
-        CREATE OR REPLACE FUNCTION backfill_loan_taken_subtypes()
-        RETURNS VOID AS $$
-        BEGIN
-          UPDATE "accounts" a
-          SET "subtype" = 'GENERAL_LOAN'
-          WHERE a."type" = 'LOAN_TAKEN'
-            AND a."subtype" = 'DEFAULT'
-            AND EXISTS (
-              SELECT 1
-              FROM "allocation_lines" al
-              JOIN "transactions" t ON t."id" = al."transaction_id"
-              JOIN "accounts" p ON p."id" = t."primary_account_id"
-              WHERE al."target_account_id" = a."id"
-                AND t."form" = 'RECEIVE_MONEY'
-                AND p."type" = 'CASH'
-            )
-            AND NOT EXISTS (
-              SELECT 1
-              FROM "transactions" t2
-              WHERE t2."primary_account_id" = a."id"
-                AND t2."form" = 'PAYMENT_CHARGE'
-            );
-
-          UPDATE "accounts" a
-          SET "subtype" = 'CREDIT_CARD'
-          WHERE a."type" = 'LOAN_TAKEN'
-            AND a."subtype" = 'DEFAULT';
-
-          UPDATE "accounts"
-          SET "subtype" = 'DEFAULT'
-          WHERE "type" <> 'LOAN_TAKEN' AND "subtype" <> 'DEFAULT';
-        END;
-        $$ LANGUAGE plpgsql;
-      `);
+      // Verify that backfill_loan_taken_subtypes() is already installed by the Prisma migration (never created or replaced by the test)
+      const installedFns = await prisma.$queryRaw<Array<{ proname: string }>>`
+        SELECT proname
+        FROM pg_proc
+        WHERE proname = 'backfill_loan_taken_subtypes'
+      `;
+      expect(installedFns).toHaveLength(1);
 
       let verifiedAllFiveCases = false;
       try {
