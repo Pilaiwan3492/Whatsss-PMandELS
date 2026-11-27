@@ -36,7 +36,7 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
     }
   });
 
-  async function createIsolatedTenant(prefix: string) {
+  async function createIsolatedTenant(prefix: string, opts?: { preserveAuditLoggedRows?: boolean }) {
     const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const bcrypt = await import('bcrypt');
     const passwordHash = await bcrypt.hash('Password123!', 4);
@@ -55,7 +55,16 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
     const byName = (n: string) => accountsList.find((a) => a.name === n)!;
 
     cleanupCallbacks.push(async () => {
-      await prisma.transactionAuditLog.deleteMany({ where: { user_id: user.id } }).catch(() => {});
+      if (opts?.preserveAuditLoggedRows) {
+        // Respect PostgreSQL BEFORE DELETE trigger & ON DELETE RESTRICT on transaction_audit_logs
+        await prisma.allocationLine.deleteMany({
+          where: { transaction: { user_id: user.id, audit_logs: { none: {} } } }
+        });
+        await prisma.transaction.deleteMany({
+          where: { user_id: user.id, audit_logs: { none: {} } }
+        });
+        return;
+      }
       await prisma.allocationLine.deleteMany({ where: { transaction: { user_id: user.id } } });
       await prisma.transaction.deleteMany({ where: { user_id: user.id } });
       await prisma.account.deleteMany({ where: { user_id: user.id } });
@@ -224,7 +233,7 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
       ctx.skip();
       return;
     }
-    const tenant = await createIsolatedTenant('audit_hist');
+    const tenant = await createIsolatedTenant('audit_hist', { preserveAuditLoggedRows: true });
 
     const incRes = await request(app)
       .post('/api/transactions/income')
