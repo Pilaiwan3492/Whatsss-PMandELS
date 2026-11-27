@@ -652,6 +652,182 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
     expect(persistedDisb!.total_amount.toFixed(2)).toBe('1500.00');
   });
 
+  it('TEST-CORR-LIVE-05: verifies CC repayment correction in Live PG16 (increase, decrease, below min, exceed debt, below cash reserve, Card A -> Card B target swap) across balances, summaries, allocations & audit snapshots', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    const tenant = await createIsolatedUserTenant('cc_repay_corr', { preserveAuditLoggedRows: true });
+    // Set Checking Bank opening balance to 1500.00
+    await prisma.account.update({
+      where: { id: tenant.accounts.checking.id },
+      data: { opening_balance: new Prisma.Decimal('1500.00') }
+    });
+    const cardB = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Mastercard B',
+        normalized_name: 'mastercard b',
+        type: 'LOAN_TAKEN',
+        subtype: 'CREDIT_CARD',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false,
+        is_archived: false
+      }
+    });
+
+    // Card A charge 3000, Card B charge 2000, initial Card A repayment 800
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.user.id,
+        primary_account_id: tenant.accounts.cc.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('3000.00'),
+        transaction_date: new Date('2026-11-01T00:00:00.000Z'),
+        description: 'Card A Charge',
+        allocation_lines: { create: [{ target_account_id: tenant.accounts.dining.id, amount: new Prisma.Decimal('3000.00') }] }
+      }
+    });
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.user.id,
+        primary_account_id: cardB.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('2000.00'),
+        transaction_date: new Date('2026-11-01T00:00:00.000Z'),
+        description: 'Card B Charge',
+        allocation_lines: { create: [{ target_account_id: tenant.accounts.grocery.id, amount: new Prisma.Decimal('2000.00') }] }
+      }
+    });
+    const repayTxn = await prisma.transaction.create({
+      data: {
+        user_id: tenant.user.id,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('800.00'),
+        transaction_date: new Date('2026-11-02T00:00:00.000Z'),
+        description: 'Repay Card A',
+        allocation_lines: { create: [{ target_account_id: tenant.accounts.cc.id, amount: new Prisma.Decimal('800.00'), notes: 'Initial' }] }
+      }
+    });
+
+    // 1. Increase repayment 800 -> 1200 (Cash 300 >= 100, Card A debt 1800)
+    const incRes = await request(app)
+      .put(`/api/transactions/${repayTxn.id}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '1200.00',
+        transaction_date: '2026-11-02',
+        description: 'Repay Card A Increased',
+        allocations: [{ target_account_id: tenant.accounts.cc.id, amount: '1200.00', notes: 'Increased' }]
+      });
+    expect(incRes.status).toBe(200);
+
+    // 2a. Decrease repayment 1200 -> 600 (>= 500 min floor)
+    const decRes = await request(app)
+      .put(`/api/transactions/${repayTxn.id}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '600.00',
+        transaction_date: '2026-11-02',
+        description: 'Repay Card A Decreased',
+        allocations: [{ target_account_id: tenant.accounts.cc.id, amount: '600.00', notes: 'Decreased' }]
+      });
+    expect(decRes.status).toBe(200);
+
+    // 2b. Decrease below minimum (600 -> 400) -> 422 MIN_REPAYMENT_NOT_MET
+    const minFail = await request(app)
+      .put(`/api/transactions/${repayTxn.id}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '400.00',
+        transaction_date: '2026-11-02',
+        allocations: [{ target_account_id: tenant.accounts.cc.id, amount: '400.00' }]
+      });
+    expect(minFail.status).toBe(422);
+    expect(minFail.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+
+    // 3. Exceed outstanding debt (3100 > 3000) -> 422 REPAYMENT_EXCEEDS_DEBT
+    const exceedFail = await request(app)
+      .put(`/api/transactions/${repayTxn.id}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '3100.00',
+        transaction_date: '2026-11-02',
+        allocations: [{ target_account_id: tenant.accounts.cc.id, amount: '3100.00' }]
+      });
+    expect(exceedFail.status).toBe(422);
+    expect(exceedFail.body.error.code).toBe('REPAYMENT_EXCEEDS_DEBT');
+
+    // 4. Below cash reserve (1450 leaves 50 < 100 reserve) -> 422 MINIMUM_CASH_RESERVE_VIOLATION
+    const reserveFail = await request(app)
+      .put(`/api/transactions/${repayTxn.id}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '1450.00',
+        transaction_date: '2026-11-02',
+        allocations: [{ target_account_id: tenant.accounts.cc.id, amount: '1450.00' }]
+      });
+    expect(reserveFail.status).toBe(422);
+    expect(reserveFail.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+
+    // 5. Change target from Card A -> Card B (amount 1000) -> 200 OK
+    const swapRes = await request(app)
+      .put(`/api/transactions/${repayTxn.id}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '1000.00',
+        transaction_date: '2026-11-02',
+        description: 'Repay Card B Instead',
+        allocations: [{ target_account_id: cardB.id, amount: '1000.00', notes: 'Swapped to Card B' }]
+      });
+    expect(swapRes.status).toBe(200);
+
+    // Verify account balances, summary, persisted allocations, and 3-event audit chain
+    const accRes = await request(app).get('/api/accounts').set('Cookie', tenant.cookie);
+    expect(accRes.status).toBe(200);
+    const accs = accRes.body.data.accounts;
+    expect(Number(accs.find((a: any) => a.id === tenant.accounts.checking.id).current_balance)).toBe(500);
+    expect(Number(accs.find((a: any) => a.id === tenant.accounts.cc.id).current_balance)).toBe(3000);
+    expect(Number(accs.find((a: any) => a.id === cardB.id).current_balance)).toBe(1000);
+
+    const sumRes = await request(app).get('/api/reports/summary').set('Cookie', tenant.cookie);
+    expect(sumRes.status).toBe(200);
+    expect(sumRes.body.data.bank_balance).toBe(500);
+    expect(sumRes.body.data.credit_debt).toBe(4000);
+
+    const persistedTxn = await prisma.transaction.findUnique({
+      where: { id: repayTxn.id },
+      include: { allocation_lines: true }
+    });
+    expect(persistedTxn!.total_amount.toFixed(2)).toBe('1000.00');
+    expect(persistedTxn!.allocation_lines).toHaveLength(1);
+    expect(persistedTxn!.allocation_lines[0].target_account_id).toBe(cardB.id);
+
+    const logs = await prisma.transactionAuditLog.findMany({
+      where: { transaction_id: repayTxn.id },
+      orderBy: { sequence_number: 'asc' }
+    });
+    expect(logs).toHaveLength(3);
+    expect((logs[0].previous_snapshot as any).total_amount).toBe('800.00');
+    expect(logs[1].previous_snapshot).toEqual(logs[0].new_snapshot);
+    expect(logs[2].previous_snapshot).toEqual(logs[1].new_snapshot);
+    expect((logs[2].new_snapshot as any).allocations[0].target_account_id).toBe(cardB.id);
+  });
+
   // ============================================================================
   // F-19 LIVE POSTGRESQL TESTS
   // ============================================================================

@@ -1317,6 +1317,163 @@ describe('WP-11 Integration Suite: F-16 Transaction Corrections + F-19 Admin Gov
     expect(mockTransactions.find((t) => t.id === 'txn-bal-lg-disb')!.total_amount.toFixed(2)).toBe('1500.00');
   });
 
+  it('TEST-CORR-CC-REPAY-01: verifies CC repayment correction (increase, decrease, below min, exceed debt, below cash reserve, Card A -> Card B target change) with summary & audit consistency', async () => {
+    const bank = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+    bank.opening_balance = new Prisma.Decimal('1500.00');
+
+    mockAccounts.push({
+      id: 'acc-demo-cc-b',
+      user_id: 'user-a-uuid',
+      name: 'Mastercard B',
+      type: 'LOAN_TAKEN',
+      subtype: 'CREDIT_CARD',
+      opening_balance: new Prisma.Decimal('0.00'),
+      is_opening_locked: true,
+      created_at: new Date('2026-11-01T00:00:00.000Z')
+    });
+
+    // Card A charge 3000, Card B charge 2000, initial repayment on Card A = 800
+    // After initial state: Cash = 1500 - 800 = 700, Card A debt = 2200, Card B debt = 2000
+    mockTransactions.push(
+      {
+        id: 'txn-cc-a-chg',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-cc',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('3000.00'),
+        transaction_date: new Date('2026-11-01T00:00:00.000Z'),
+        description: 'Card A Charge',
+        created_at: new Date('2026-11-01T08:00:00.000Z')
+      },
+      {
+        id: 'txn-cc-b-chg',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-cc-b',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('2000.00'),
+        transaction_date: new Date('2026-11-01T00:00:00.000Z'),
+        description: 'Card B Charge',
+        created_at: new Date('2026-11-01T09:00:00.000Z')
+      },
+      {
+        id: 'txn-cc-repay-5',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('800.00'),
+        transaction_date: new Date('2026-11-02T00:00:00.000Z'),
+        description: 'Repay Card A',
+        created_at: new Date('2026-11-02T08:00:00.000Z')
+      }
+    );
+    mockAllocationLines.push(
+      { id: 'al-ca', transaction_id: 'txn-cc-a-chg', target_account_id: 'acc-demo-dining', amount: new Prisma.Decimal('3000.00'), notes: null },
+      { id: 'al-cb', transaction_id: 'txn-cc-b-chg', target_account_id: 'acc-demo-grocery', amount: new Prisma.Decimal('2000.00'), notes: null },
+      { id: 'al-cr', transaction_id: 'txn-cc-repay-5', target_account_id: 'acc-demo-cc', amount: new Prisma.Decimal('800.00'), notes: 'Initial Card A' }
+    );
+
+    // 1. Increase repayment 800 -> 1200 (preRepaymentDebt=3000, Cash left=300 >= 100) -> 200 OK
+    const incRes = await request(app)
+      .put('/api/transactions/txn-cc-repay-5')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '1200.00',
+        transaction_date: '2026-11-02',
+        description: 'Repay Card A Increased',
+        allocations: [{ target_account_id: 'acc-demo-cc', amount: '1200.00', notes: 'Increased' }]
+      });
+    expect(incRes.status).toBe(200);
+    expect(incRes.body.data.transaction.total_amount).toBe('1200.00');
+    expect(incRes.body.data.transaction.allocations).toEqual([
+      expect.objectContaining({ target_account_id: 'acc-demo-cc', amount: '1200.00' })
+    ]);
+    expect(mockAuditLogs[0].previous_snapshot.total_amount).toBe('800.00');
+    expect(mockAuditLogs[0].new_snapshot.total_amount).toBe('1200.00');
+
+    // 2a. Decrease repayment 1200 -> 600 (>= 500 min floor, Cash left=900) -> 200 OK
+    const decOkRes = await request(app)
+      .put('/api/transactions/txn-cc-repay-5')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '600.00',
+        transaction_date: '2026-11-02',
+        description: 'Repay Card A Decreased',
+        allocations: [{ target_account_id: 'acc-demo-cc', amount: '600.00', notes: 'Decreased' }]
+      });
+    expect(decOkRes.status).toBe(200);
+    expect(mockAuditLogs[1].previous_snapshot.total_amount).toBe('1200.00');
+    expect(mockAuditLogs[1].new_snapshot.total_amount).toBe('600.00');
+
+    // 2b. Decrease repayment below minimum floor (600 -> 400 < 500) -> 422 MIN_REPAYMENT_NOT_MET + rollback
+    const decMinFail = await request(app)
+      .put('/api/transactions/txn-cc-repay-5')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '400.00',
+        transaction_date: '2026-11-02',
+        allocations: [{ target_account_id: 'acc-demo-cc', amount: '400.00' }]
+      });
+    expect(decMinFail.status).toBe(422);
+    expect(decMinFail.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+    expect(mockAuditLogs).toHaveLength(2);
+
+    // 3. Repayment exceeding outstanding debt (3100 > 3000 preRepaymentDebt, no double-count!) -> 422 REPAYMENT_EXCEEDS_DEBT
+    const exceedRes = await request(app)
+      .put('/api/transactions/txn-cc-repay-5')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '3100.00',
+        transaction_date: '2026-11-02',
+        allocations: [{ target_account_id: 'acc-demo-cc', amount: '3100.00' }]
+      });
+    expect(exceedRes.status).toBe(422);
+    expect(exceedRes.body.error.code).toBe('REPAYMENT_EXCEEDS_DEBT');
+    expect(mockAuditLogs).toHaveLength(2);
+
+    // 4. Cash balance falling below minimum reserve (1450 leaves 50 < 100 reserve on 3000 debt) -> 422 MINIMUM_CASH_RESERVE_VIOLATION
+    const reserveFail = await request(app)
+      .put('/api/transactions/txn-cc-repay-5')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '1450.00',
+        transaction_date: '2026-11-02',
+        allocations: [{ target_account_id: 'acc-demo-cc', amount: '1450.00' }]
+      });
+    expect(reserveFail.status).toBe(422);
+    expect(reserveFail.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+    expect(mockAuditLogs).toHaveLength(2);
+
+    // 5. Change repayment target from Credit Card A -> Credit Card B (amount 1000) -> 200 OK
+    const swapRes = await request(app)
+      .put('/api/transactions/txn-cc-repay-5')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '1000.00',
+        transaction_date: '2026-11-02',
+        description: 'Repay Card B Instead',
+        allocations: [{ target_account_id: 'acc-demo-cc-b', amount: '1000.00', notes: 'Swapped to Card B' }]
+      });
+    expect(swapRes.status).toBe(200);
+    expect(swapRes.body.data.transaction.allocations).toEqual([
+      expect.objectContaining({ target_account_id: 'acc-demo-cc-b', amount: '1000.00' })
+    ]);
+    expect(mockAuditLogs).toHaveLength(3);
+    expect(mockAuditLogs[2].previous_snapshot.allocations[0].target_account_id).toBe('acc-demo-cc');
+    expect(mockAuditLogs[2].new_snapshot.allocations[0].target_account_id).toBe('acc-demo-cc-b');
+
+    // Verify account summary: Cash = 500, Card A debt = 3000 (restored), Card B debt = 1000 (reduced), total credit_debt = 4000
+    const summaryRes = await request(app).get('/api/reports/summary').set('Cookie', [`token=${userDemoToken}`]);
+    expect(summaryRes.status).toBe(200);
+    expect(summaryRes.body.data.bank_balance).toBe(500);
+    expect(summaryRes.body.data.credit_debt).toBe(4000);
+  });
+
   it('TEST-ADMIN-LAST-01: prevents deactivating the last active ADMIN while allowing deactivation when another active ADMIN exists (Task 8)', async () => {
     // Add a second active admin
     mockUsers.push({
