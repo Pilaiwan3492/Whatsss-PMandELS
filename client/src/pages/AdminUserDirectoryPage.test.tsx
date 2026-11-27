@@ -68,12 +68,17 @@ describe('Frontend Admin User Directory & Governance Suite (WP-11, Feature F-19)
     expect(selfBtn.disabled).toBe(true);
   });
 
-  it('TEST-UI-ADMIN-02: toggles user is_active status via PATCH /api/admin/users/:id/status and updates status badge (AC-19-2)', async () => {
+  it('TEST-UI-ADMIN-02: toggles user is_active status via PATCH /api/admin/users/:id/status and updates status badge while preserving created_at (AC-19-2)', async () => {
     vi.spyOn(adminApi, 'getAdminUsers').mockResolvedValue(mockUsers);
-    const statusSpy = vi.spyOn(adminApi, 'updateAdminUserStatus').mockResolvedValue({
-      ...mockUsers[0],
-      is_active: false
-    });
+    const patchResponse: adminApi.PlatformUserStatusUpdate = {
+      id: 'user-a-uuid',
+      username: 'user_demo',
+      email: 'user_demo@whatsss.local',
+      role: 'USER',
+      is_active: false,
+      updated_at: '2026-11-27T12:00:00.000Z'
+    };
+    const statusSpy = vi.spyOn(adminApi, 'updateAdminUserStatus').mockResolvedValue(patchResponse);
 
     renderPage();
 
@@ -86,7 +91,58 @@ describe('Frontend Admin User Directory & Governance Suite (WP-11, Feature F-19)
     await waitFor(() => {
       expect(statusSpy).toHaveBeenCalledWith('user-a-uuid', false);
       expect(screen.getByTestId('status-badge-user-a-uuid').textContent).toBe('Disabled');
+      expect(screen.getByTestId('admin-user-row-user-a-uuid').textContent).toContain('2026-11-01');
       expect(screen.getByTestId('admin-feedback').textContent).toContain('user_demo');
     });
+  });
+
+  it('TEST-UI-ADMIN-03: enforces distinct 6-field GET directory and PATCH status response contracts with zero password_hash or financial fields', async () => {
+    vi.spyOn(axiosClient, 'get').mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: { users: mockUsers }
+      }
+    } as any);
+    vi.spyOn(axiosClient, 'patch').mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          user: {
+            id: 'user-a-uuid',
+            username: 'user_demo',
+            email: 'user_demo@whatsss.local',
+            role: 'USER',
+            is_active: false,
+            updated_at: '2026-11-27T12:00:00.000Z'
+          }
+        }
+      }
+    } as any);
+
+    const directory = await adminApi.getAdminUsers();
+    expect(Object.keys(directory[0]).sort()).toEqual([
+      'created_at',
+      'email',
+      'id',
+      'is_active',
+      'role',
+      'username'
+    ]);
+    expect((directory[0] as any).updated_at).toBeUndefined();
+    expect((directory[0] as any).password_hash).toBeUndefined();
+    expect((directory[0] as any).accounts).toBeUndefined();
+
+    const updated = await adminApi.updateAdminUserStatus('user-a-uuid', false);
+    expect(Object.keys(updated).sort()).toEqual([
+      'email',
+      'id',
+      'is_active',
+      'role',
+      'updated_at',
+      'username'
+    ]);
+    expect((updated as any).created_at).toBeUndefined();
+    expect((updated as any).password_hash).toBeUndefined();
+    expect((updated as any).accounts).toBeUndefined();
   });
 });

@@ -19,12 +19,32 @@ export class AdminError extends Error {
   }
 }
 
+export interface PlatformUserDirectoryEntry {
+  id: string;
+  username: string;
+  email: string;
+  role: 'USER' | 'ADMIN';
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface PlatformUserStatusUpdateResult {
+  id: string;
+  username: string;
+  email: string;
+  role: 'USER' | 'ADMIN';
+  is_active: boolean;
+  updated_at: string;
+}
+
 /**
  * Lists all platform users with strictly contract-approved non-financial governance metadata
  * (F-19, FR-03, BR-10, NFR-SEC-01): id, username, email, role, is_active, created_at.
  * Never selects or returns password_hash, accounts, transactions, or financial summaries.
  */
-export async function listPlatformUsers(prismaClient = defaultPrisma) {
+export async function listPlatformUsers(
+  prismaClient = defaultPrisma
+): Promise<PlatformUserDirectoryEntry[]> {
   const users = await prismaClient.user.findMany({
     select: {
       id: true,
@@ -59,7 +79,7 @@ export async function updateUserAccessStatus(
   targetUserId: string,
   input: { is_active?: unknown },
   prismaClient = defaultPrisma
-) {
+): Promise<PlatformUserStatusUpdateResult> {
   if (!input || typeof input !== 'object' || typeof input.is_active !== 'boolean') {
     throw new AdminError(
       'Field is_active must be a boolean (true or false).',
@@ -76,17 +96,27 @@ export async function updateUserAccessStatus(
     );
   }
 
-  const executeUpdate = async (tx: any) => {
+  const isDefaultRealClient = prismaClient === defaultPrisma;
+
+  const executeUpdate = async (tx: any): Promise<PlatformUserStatusUpdateResult> => {
     // When deactivating, lock all active ADMIN rows in canonical ID order to prevent
     // concurrent admin deactivations from leaving the platform with zero active admins.
-    if (input.is_active === false && typeof tx.$queryRaw === 'function') {
-      await tx.$queryRaw`
-        SELECT id FROM "users"
-        WHERE role = 'ADMIN'
-          AND is_active = true
-        ORDER BY id ASC
-        FOR UPDATE
-      `;
+    if (input.is_active === false) {
+      if (typeof tx.$queryRaw === 'function') {
+        await tx.$queryRaw`
+          SELECT id FROM "users"
+          WHERE role = 'ADMIN'
+            AND is_active = true
+          ORDER BY id ASC
+          FOR UPDATE
+        `;
+      } else if (isDefaultRealClient) {
+        throw new AdminError(
+          'Database row locking is unavailable for admin deactivation.',
+          503,
+          'ADMIN_LOCK_UNAVAILABLE'
+        );
+      }
     }
 
     const existing = await tx.user.findUnique({
@@ -147,6 +177,13 @@ export async function updateUserAccessStatus(
 
   if (typeof (prismaClient as any).$transaction === 'function') {
     return await (prismaClient as any).$transaction(executeUpdate);
+  }
+  if (isDefaultRealClient) {
+    throw new AdminError(
+      'Database transaction support is unavailable for admin access governance.',
+      503,
+      'ADMIN_TRANSACTION_UNAVAILABLE'
+    );
   }
   return await executeUpdate(prismaClient);
 }

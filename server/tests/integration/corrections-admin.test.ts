@@ -800,6 +800,17 @@ describe('WP-11 Integration Suite: F-16 Transaction Corrections + F-19 Admin Gov
 
     expect(disableRes.status).toBe(200);
     expect(disableRes.body.data.user.is_active).toBe(false);
+    expect(Object.keys(disableRes.body.data.user).sort()).toEqual([
+      'email',
+      'id',
+      'is_active',
+      'role',
+      'updated_at',
+      'username'
+    ]);
+    expect(disableRes.body.data.user.created_at).toBeUndefined();
+    expect(disableRes.body.data.user.password_hash).toBeUndefined();
+    expect(disableRes.body.data.user.accounts).toBeUndefined();
 
     const enableRes = await request(app)
       .patch('/api/admin/users/user-b-uuid/status')
@@ -809,6 +820,14 @@ describe('WP-11 Integration Suite: F-16 Transaction Corrections + F-19 Admin Gov
 
     expect(enableRes.status).toBe(200);
     expect(enableRes.body.data.user.is_active).toBe(true);
+    expect(Object.keys(enableRes.body.data.user).sort()).toEqual([
+      'email',
+      'id',
+      'is_active',
+      'role',
+      'updated_at',
+      'username'
+    ]);
   });
 
   it('TEST-ADMIN-03: disabled user is rejected with 403 ACCOUNT_DISABLED on existing JWT cookie AND fresh login; re-enabling restores access', async () => {
