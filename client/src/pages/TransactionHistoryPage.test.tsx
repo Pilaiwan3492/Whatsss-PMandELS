@@ -34,7 +34,12 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
           id: 'line-repay',
           transaction_id: 'tx-repay',
           target_account_id: 'acc-cc',
-          target_account: { id: 'acc-cc', name: 'Visa Credit Card', type: 'LOAN_TAKEN' },
+          target_account: {
+            id: 'acc-cc',
+            name: 'Visa Credit Card',
+            type: 'LOAN_TAKEN',
+            subtype: 'CREDIT_CARD'
+          },
           amount: 3000.00,
           notes: 'Full debt settlement'
         }
@@ -585,5 +590,63 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
     expect(screen.getByTestId('txn-row-tx-cls-loan-recovery')).toBeDefined();
     expect(screen.getByTestId('txn-row-tx-cls-general-loan-borrow')).toBeDefined();
     expect(screen.queryByTestId('txn-row-tx-cls-income')).toBeNull();
+
+    // Ambiguous/unknown LOAN_TAKEN subtypes (DEFAULT, undefined, UNKNOWN) must NOT silently classify as REPAYMENT
+    for (const ambiguousSubtype of ['DEFAULT', undefined, 'UNKNOWN'] as any[]) {
+      const ambiguousTx: transactionApi.HistoryTransaction = {
+        ...allFiveTransactions[2],
+        id: `tx-amb-${String(ambiguousSubtype)}`,
+        allocation_lines: [
+          {
+            ...allFiveTransactions[2].allocation_lines[0],
+            target_account: {
+              id: 'acc-amb',
+              name: 'Ambiguous Loan Account',
+              type: 'LOAN_TAKEN',
+              subtype: ambiguousSubtype
+            }
+          }
+        ]
+      };
+      expect(getTransactionKind(ambiguousTx)).not.toBe('REPAYMENT');
+    }
+  });
+
+  it('TEST-UI-HIST-06: displays filtered empty state with Clear Filters button when transactions exist but filters match none, and restores list on clear', async () => {
+    const getSpy = vi
+      .spyOn(transactionApi, 'getTransactions')
+      .mockResolvedValueOnce(mockGoldenTransactions)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(mockGoldenTransactions);
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('transactions-table')).toBeDefined();
+    });
+
+    // Apply server-side keyword filter that returns 0 results
+    fireEvent.change(screen.getByTestId('search-keyword-input'), { target: { value: 'NoMatchXYZ' } });
+    fireEvent.change(screen.getByTestId('filter-type-select'), { target: { value: 'EXPENSE' } });
+    fireEvent.click(screen.getByTestId('btn-apply-filters'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('empty-history-state').textContent).toContain(
+        'No transactions match your filters'
+      );
+      expect(screen.queryByText('No transactions recorded yet')).toBeNull();
+      expect(screen.getByTestId('btn-empty-clear-filters')).toBeDefined();
+    });
+
+    // Clicking Clear Filters inside empty state resets all filters and restores transactions
+    fireEvent.click(screen.getByTestId('btn-empty-clear-filters'));
+
+    await waitFor(() => {
+      expect(getSpy).toHaveBeenLastCalledWith();
+      expect((screen.getByTestId('search-keyword-input') as HTMLInputElement).value).toBe('');
+      expect((screen.getByTestId('filter-type-select') as HTMLSelectElement).value).toBe('');
+      expect(screen.getByTestId('transactions-table')).toBeDefined();
+      expect(screen.getByTestId('txn-row-tx-salary')).toBeDefined();
+    });
   });
 });

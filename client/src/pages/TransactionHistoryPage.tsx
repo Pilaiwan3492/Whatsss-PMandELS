@@ -52,7 +52,7 @@ export function getTransactionKind(tx: HistoryTransaction): SemanticKind {
     lines.some(
       (l) =>
         l.target_account?.type === 'LOAN_TAKEN' &&
-        (l.target_account?.subtype === 'CREDIT_CARD' || l.target_account?.subtype === undefined)
+        l.target_account?.subtype === 'CREDIT_CARD'
     )
   ) {
     return 'REPAYMENT';
@@ -98,6 +98,8 @@ export const TransactionHistoryPage: React.FC = () => {
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [selectedType, setSelectedType] = useState<'' | SemanticKind>('');
+  const [hasAppliedServerFilters, setHasAppliedServerFilters] = useState<boolean>(false);
+  const [hasRecordedTransactions, setHasRecordedTransactions] = useState<boolean>(false);
 
   // Duplicate Modal state (F-14)
   const [duplicateTarget, setDuplicateTarget] = useState<HistoryTransaction | null>(null);
@@ -123,8 +125,14 @@ export const TransactionHistoryPage: React.FC = () => {
     setErrorMessage(null);
     try {
       const params = overrideParams === null ? undefined : overrideParams ?? buildFilterParams();
+      setHasAppliedServerFilters(Boolean(params && Object.keys(params).length > 0));
       const data = params ? await getTransactions(params) : await getTransactions();
       setTransactions(data);
+      if (!params && data.length > 0) {
+        setHasRecordedTransactions(true);
+      } else if (!params && data.length === 0) {
+        setHasRecordedTransactions(false);
+      }
     } catch (err: any) {
       setErrorMessage(
         err?.response?.data?.error?.message || err?.message || 'Failed to load transaction history. Please try again.'
@@ -480,18 +488,40 @@ export const TransactionHistoryPage: React.FC = () => {
         </div>
       ) : !errorMessage && filteredTransactions.length === 0 ? (
         /* Empty State */
-        <div className="card shadow-sm border p-5 text-center my-4" data-testid="empty-history-state">
-          <div className="mb-3 fs-1 text-muted">📋</div>
-          <h4 className="fw-bold mb-2">No transactions recorded yet</h4>
-          <p className="text-muted mb-4 small">
-            Start by setting an opening balance or recording your first income inflow from the dashboard.
-          </p>
-          <div className="d-flex justify-content-center gap-2">
-            <Link to="/dashboard" className="btn btn-primary btn-sm">
-              Return to Dashboard
-            </Link>
-          </div>
-        </div>
+        (() => {
+          const isFilteredEmpty =
+            hasRecordedTransactions &&
+            (hasAppliedServerFilters || selectedFilter !== 'ALL' || favoritesOnly);
+          return (
+            <div className="card shadow-sm border p-5 text-center my-4" data-testid="empty-history-state">
+              <div className="mb-3 fs-1 text-muted">📋</div>
+              <h4 className="fw-bold mb-2">
+                {isFilteredEmpty ? 'No transactions match your filters' : 'No transactions recorded yet'}
+              </h4>
+              <p className="text-muted mb-4 small">
+                {isFilteredEmpty
+                  ? 'Try adjusting or clearing your search and filter criteria to view recorded transactions.'
+                  : 'Start by setting an opening balance or recording your first income inflow from the dashboard.'}
+              </p>
+              <div className="d-flex justify-content-center gap-2">
+                {isFilteredEmpty ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={handleClearFilters}
+                    data-testid="btn-empty-clear-filters"
+                  >
+                    Clear Filters
+                  </button>
+                ) : (
+                  <Link to="/dashboard" className="btn btn-primary btn-sm">
+                    Return to Dashboard
+                  </Link>
+                )}
+              </div>
+            </div>
+          );
+        })()
       ) : !errorMessage ? (
         /* Responsive Transaction Table */
         <div className="card shadow-sm border" data-testid="transactions-table-card">

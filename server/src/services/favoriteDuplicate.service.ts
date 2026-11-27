@@ -402,85 +402,212 @@ export async function duplicateTransaction(
     // 4. Live domain re-validation against current locked database state
     const zero = new Prisma.Decimal('0.00');
 
-    if (source.form === 'PAYMENT_CHARGE' && primaryAccount.type === 'CASH') {
-      const currentCashBalance = await computeLockedCashAccountBalance(
-        tx,
-        primaryAccount.id,
-        primaryAccount.opening_balance,
-        userId
+    // Helper: validate explicit LOAN_TAKEN subtype (never silently treat DEFAULT/undefined/unknown as CREDIT_CARD)
+    const assertExplicitLoanTakenSubtype = (acc: any): 'CREDIT_CARD' | 'GENERAL_LOAN' => {
+      const subtype = acc?.subtype;
+      if (subtype === 'CREDIT_CARD' || subtype === 'GENERAL_LOAN') {
+        return subtype;
+      }
+      throw new FavoriteDuplicateError(
+        `Unsupported or ambiguous LOAN_TAKEN subtype "${String(subtype)}" on account [${acc?.name || acc?.id}]. Expected CREDIT_CARD or GENERAL_LOAN.`,
+        400,
+        'INVALID_ACCOUNT_SUBTYPE'
       );
+    };
 
-      // Check if single-line Credit Card Repayment (F-07) or General Loan Repayment (F-13)
-      const firstTarget = accountMap.get(sourceLines[0].target_account_id)!;
-      if (sourceLines.length === 1 && firstTarget.type === 'LOAN_TAKEN') {
-        const currentDebt = await computeLockedLoanTakenDebt(
+    // Group allocation amounts by target account (order-independent)
+    const groupedAmountsByTarget = new Map<string, Prisma.Decimal>();
+    for (const line of sourceLines) {
+      const lineAmt = new Prisma.Decimal(line.amount.toString());
+      const prev = groupedAmountsByTarget.get(line.target_account_id) ?? zero;
+      groupedAmountsByTarget.set(line.target_account_id, prev.add(lineAmt));
+    }
+
+    const distinctTargetTypes = new Set(
+      sourceLines.map((l: any) => accountMap.get(l.target_account_id)!.type)
+    );
+
+    if (source.form === 'PAYMENT_CHARGE') {
+      if (primaryAccount.type === 'CASH') {
+        const currentCashBalance = await computeLockedCashAccountBalance(
           tx,
-          firstTarget.id,
-          firstTarget.opening_balance,
+          primaryAccount.id,
+          primaryAccount.opening_balance,
           userId
         );
 
-        if (currentDebt.lessThanOrEqualTo(zero)) {
+        // Reject unsupported mixed target types (e.g., mixing EXPENSE with LOAN_TAKEN) or INCOME under PAYMENT_CHARGE
+        if (distinctTargetTypes.size !== 1 || distinctTargetTypes.has('INCOME')) {
           throw new FavoriteDuplicateError(
-            'Outstanding repayment debt is 0.00; no repayment is required.',
-            422,
-            'ZERO_OUTSTANDING_DEBT'
+            'Unsupported target account combination for PAYMENT_CHARGE from CASH account.',
+            400,
+            'INVALID_ACCOUNT_TYPE'
           );
         }
 
-        if (totalDecimal.greaterThan(currentDebt)) {
-          throw new FavoriteDuplicateError(
-            `Repayment amount of ${totalDecimal.toFixed(2)} exceeds outstanding debt of ${currentDebt.toFixed(2)}.`,
-            422,
-            'REPAYMENT_EXCEEDS_DEBT'
-          );
-        }
+        const [onlyTargetType] = Array.from(distinctTargetTypes);
 
-        if (totalDecimal.greaterThan(currentCashBalance)) {
-          throw new FavoriteDuplicateError(
-            `Insufficient funds in source cash account. Available: ${currentCashBalance.toFixed(2)}, requested: ${totalDecimal.toFixed(2)}.`,
-            422,
-            'INSUFFICIENT_FUNDS'
+        if (onlyTargetType === 'LOAN_TAKEN') {
+          // Validate explicit LOAN_TAKEN subtypes first and reject mixed CREDIT_CARD + GENERAL_LOAN allocations
+          const loanSubtypes = new Set(
+            Array.from(groupedAmountsByTarget.keys()).map((accId) =>
+              assertExplicitLoanTakenSubtype(accountMap.get(accId)!)
+            )
           );
-        }
-
-        // Enforce BR-07 v1.1 strictly for Credit Card repayments (not GENERAL_LOAN)
-        const targetSubtype = (firstTarget as any).subtype;
-        if (targetSubtype !== 'GENERAL_LOAN') {
-          const minRepayment = calculateMinimumRepayment(currentDebt);
-          if (totalDecimal.lessThan(minRepayment)) {
+          if (loanSubtypes.size !== 1) {
             throw new FavoriteDuplicateError(
-              `Repayment amount of ${totalDecimal.toFixed(2)} is below the minimum required repayment of ${minRepayment.toFixed(2)}.`,
-              422,
-              'MIN_REPAYMENT_NOT_MET'
+              'Cannot mix CREDIT_CARD and GENERAL_LOAN repayment allocations in a single transaction.',
+              400,
+              'INVALID_ACCOUNT_TYPE'
             );
           }
 
-          const isFullSettlement = totalDecimal.equals(currentDebt);
-          if (!isFullSettlement && currentCashBalance.sub(totalDecimal).lessThan(MIN_CASH_RESERVE)) {
+          const [repaymentSubtype] = Array.from(loanSubtypes);
+
+          // First pass: validate each target LOAN_TAKEN account debt & grouped repayment amount
+          const debtByTarget = new Map<string, Prisma.Decimal>();
+          for (const [targetAccId, groupedAmt] of groupedAmountsByTarget.entries()) {
+            const targetAcc = accountMap.get(targetAccId)!;
+            const currentDebt = await computeLockedLoanTakenDebt(
+              tx,
+              targetAcc.id,
+              targetAcc.opening_balance,
+              userId
+            );
+
+            if (currentDebt.lessThanOrEqualTo(zero)) {
+              throw new FavoriteDuplicateError(
+                'Outstanding repayment debt is 0.00; no repayment is required.',
+                422,
+                'ZERO_OUTSTANDING_DEBT'
+              );
+            }
+
+            if (groupedAmt.greaterThan(currentDebt)) {
+              throw new FavoriteDuplicateError(
+                `Repayment amount of ${groupedAmt.toFixed(2)} exceeds outstanding debt of ${currentDebt.toFixed(2)}.`,
+                422,
+                'REPAYMENT_EXCEEDS_DEBT'
+              );
+            }
+
+            debtByTarget.set(targetAccId, currentDebt);
+          }
+
+          // Check cash balance sufficiency across the total repayment
+          if (totalDecimal.greaterThan(currentCashBalance)) {
             throw new FavoriteDuplicateError(
-              `Partial repayment must leave at least ${MIN_CASH_RESERVE.toFixed(2)} in the source cash account.`,
+              `Insufficient funds in source cash account. Available: ${currentCashBalance.toFixed(2)}, requested: ${totalDecimal.toFixed(2)}.`,
               422,
-              'MINIMUM_CASH_RESERVE_VIOLATION'
+              'INSUFFICIENT_FUNDS'
             );
           }
+
+          // Enforce BR-07 v1.1 strictly for CREDIT_CARD repayments (explicitly not GENERAL_LOAN)
+          if (repaymentSubtype === 'CREDIT_CARD') {
+            for (const [targetAccId, groupedAmt] of groupedAmountsByTarget.entries()) {
+              const currentDebt = debtByTarget.get(targetAccId)!;
+              const minRepayment = calculateMinimumRepayment(currentDebt);
+              if (groupedAmt.lessThan(minRepayment)) {
+                throw new FavoriteDuplicateError(
+                  `Repayment amount of ${groupedAmt.toFixed(2)} is below the minimum required repayment of ${minRepayment.toFixed(2)}.`,
+                  422,
+                  'MIN_REPAYMENT_NOT_MET'
+                );
+              }
+
+              const isFullSettlement = groupedAmt.equals(currentDebt);
+              if (!isFullSettlement && currentCashBalance.sub(totalDecimal).lessThan(MIN_CASH_RESERVE)) {
+                throw new FavoriteDuplicateError(
+                  `Partial repayment must leave at least ${MIN_CASH_RESERVE.toFixed(2)} in the source cash account.`,
+                  422,
+                  'MINIMUM_CASH_RESERVE_VIOLATION'
+                );
+              }
+            }
+          }
+        } else {
+          // EXPENSE, CASH (transfer), or LOAN_GIVEN (disbursement)
+          if (onlyTargetType === 'CASH') {
+            for (const targetAccId of groupedAmountsByTarget.keys()) {
+              if (targetAccId === primaryAccount.id) {
+                throw new FavoriteDuplicateError(
+                  'Cannot duplicate a transfer to the same source cash account.',
+                  400,
+                  'SAME_ACCOUNT_TRANSFER'
+                );
+              }
+            }
+          }
+          if (totalDecimal.greaterThan(currentCashBalance)) {
+            throw new FavoriteDuplicateError(
+              `Insufficient funds in source cash account. Available: ${currentCashBalance.toFixed(2)}, requested: ${totalDecimal.toFixed(2)}.`,
+              422,
+              'INSUFFICIENT_FUNDS'
+            );
+          }
+        }
+      } else if (primaryAccount.type === 'LOAN_TAKEN') {
+        const primarySubtype = assertExplicitLoanTakenSubtype(primaryAccount);
+        if (primarySubtype !== 'CREDIT_CARD') {
+          throw new FavoriteDuplicateError(
+            'Only CREDIT_CARD LOAN_TAKEN accounts can be used as the primary account for PAYMENT_CHARGE expenses.',
+            400,
+            'INVALID_ACCOUNT_SUBTYPE'
+          );
+        }
+        if (distinctTargetTypes.size !== 1 || !distinctTargetTypes.has('EXPENSE')) {
+          throw new FavoriteDuplicateError(
+            'Credit card PAYMENT_CHARGE transactions may only allocate to EXPENSE accounts.',
+            400,
+            'INVALID_ACCOUNT_TYPE'
+          );
         }
       } else {
-        // Cash transfer (F-11), Loan Given disbursement (F-12), or cash expense
-        if (totalDecimal.greaterThan(currentCashBalance)) {
-          throw new FavoriteDuplicateError(
-            `Insufficient funds in source cash account. Available: ${currentCashBalance.toFixed(2)}, requested: ${totalDecimal.toFixed(2)}.`,
-            422,
-            'INSUFFICIENT_FUNDS'
-          );
-        }
+        throw new FavoriteDuplicateError(
+          `Unsupported primary account type [${primaryAccount.type}] for PAYMENT_CHARGE.`,
+          400,
+          'INVALID_ACCOUNT_TYPE'
+        );
       }
-    } else if (source.form === 'RECEIVE_MONEY' && primaryAccount.type === 'CASH') {
-      // Check Loan Given recovery (F-12)
-      for (const line of sourceLines) {
-        const targetAccount = accountMap.get(line.target_account_id)!;
-        if (targetAccount.type === 'LOAN_GIVEN') {
-          const lineAmt = new Prisma.Decimal(line.amount.toString());
+    } else if (source.form === 'RECEIVE_MONEY') {
+      if (primaryAccount.type !== 'CASH') {
+        throw new FavoriteDuplicateError(
+          `Unsupported primary account type [${primaryAccount.type}] for RECEIVE_MONEY.`,
+          400,
+          'INVALID_ACCOUNT_TYPE'
+        );
+      }
+
+      if (
+        distinctTargetTypes.size !== 1 ||
+        distinctTargetTypes.has('EXPENSE') ||
+        distinctTargetTypes.has('CASH')
+      ) {
+        throw new FavoriteDuplicateError(
+          'Unsupported target account combination for RECEIVE_MONEY.',
+          400,
+          'INVALID_ACCOUNT_TYPE'
+        );
+      }
+
+      const [onlyTargetType] = Array.from(distinctTargetTypes);
+
+      if (onlyTargetType === 'LOAN_TAKEN') {
+        for (const targetAccId of groupedAmountsByTarget.keys()) {
+          const subtype = assertExplicitLoanTakenSubtype(accountMap.get(targetAccId)!);
+          if (subtype !== 'GENERAL_LOAN') {
+            throw new FavoriteDuplicateError(
+              'RECEIVE_MONEY from LOAN_TAKEN is only supported for GENERAL_LOAN borrowing.',
+              400,
+              'INVALID_ACCOUNT_SUBTYPE'
+            );
+          }
+        }
+      } else if (onlyTargetType === 'LOAN_GIVEN') {
+        // Group recovery amounts by target LOAN_GIVEN account (order-independent)
+        for (const [targetAccId, groupedAmt] of groupedAmountsByTarget.entries()) {
+          const targetAccount = accountMap.get(targetAccId)!;
           const currentReceivable = await computeLockedLoanGivenReceivable(
             tx,
             targetAccount.id,
@@ -494,15 +621,21 @@ export async function duplicateTransaction(
               'ZERO_OUTSTANDING_RECEIVABLE'
             );
           }
-          if (lineAmt.greaterThan(currentReceivable)) {
+          if (groupedAmt.greaterThan(currentReceivable)) {
             throw new FavoriteDuplicateError(
-              `Recovery amount of ${lineAmt.toFixed(2)} exceeds outstanding receivable of ${currentReceivable.toFixed(2)}.`,
+              `Recovery amount of ${groupedAmt.toFixed(2)} exceeds outstanding receivable of ${currentReceivable.toFixed(2)}.`,
               422,
               'RECOVERY_EXCEEDS_RECEIVABLE'
             );
           }
         }
       }
+    } else {
+      throw new FavoriteDuplicateError(
+        `Unsupported transaction form [${String(source.form)}].`,
+        400,
+        'INVALID_TRANSACTION_FORM'
+      );
     }
 
     // 5. Lock opening balances on all referenced accounts

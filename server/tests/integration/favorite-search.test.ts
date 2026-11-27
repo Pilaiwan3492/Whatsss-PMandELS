@@ -1015,4 +1015,292 @@ describe('WP-10 Integration Suite: F-14 Favorite & Duplicate + F-15 Search & Fil
     expect(badFav.status).toBe(400);
     expect(badFav.body.error.code).toBe('INVALID_FILTER_PARAM');
   });
+
+  it('TEST-FAV-05: handles LOAN_TAKEN subtypes explicitly, groups multi-allocation targets regardless of order, and rejects unsupported combinations', async () => {
+    // 1. Seed GENERAL_LOAN borrowing (2000.00) and CC debt (3000.00) + Checking cash (10000.00)
+    mockTransactions.push(
+      {
+        id: 'txn-gl-borrow-seed',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('2000.00'),
+        transaction_date: new Date('2026-11-01T00:00:00.000Z'),
+        description: 'Borrow GL',
+        is_favorite: false,
+        created_at: new Date('2026-11-01T08:00:00.000Z'),
+        updated_at: new Date('2026-11-01T08:00:00.000Z')
+      },
+      // GENERAL_LOAN repayment of 200.00 (below 500 CC floor — MUST succeed because GENERAL_LOAN is exempt from BR-07)
+      {
+        id: 'txn-gl-repay-valid',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('200.00'),
+        transaction_date: new Date('2026-11-02T00:00:00.000Z'),
+        description: 'GL Repay 200',
+        is_favorite: false,
+        created_at: new Date('2026-11-02T08:00:00.000Z'),
+        updated_at: new Date('2026-11-02T08:00:00.000Z')
+      }
+    );
+    mockAllocationLines.push(
+      {
+        id: 'alloc-gl-borrow-seed',
+        transaction_id: 'txn-gl-borrow-seed',
+        target_account_id: 'acc-demo-general-loan',
+        amount: new Prisma.Decimal('2000.00'),
+        notes: null
+      },
+      {
+        id: 'alloc-gl-repay-valid',
+        transaction_id: 'txn-gl-repay-valid',
+        target_account_id: 'acc-demo-general-loan',
+        amount: new Prisma.Decimal('200.00'),
+        notes: null
+      }
+    );
+
+    const glDupRes = await request(app)
+      .post('/api/transactions/txn-gl-repay-valid/duplicate')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({ transaction_date: '2026-11-03' });
+    expect(glDupRes.status).toBe(201);
+
+    // 2. Ambiguous/unsupported LOAN_TAKEN subtypes (DEFAULT, undefined, UNKNOWN) MUST be rejected with 400 INVALID_ACCOUNT_SUBTYPE
+    for (const badSubtype of ['DEFAULT', undefined, 'UNKNOWN']) {
+      const badLoanAccId = `acc-bad-sub-${String(badSubtype)}`;
+      mockAccounts.push({
+        id: badLoanAccId,
+        user_id: 'user-a-uuid',
+        name: `Bad Sub ${String(badSubtype)}`,
+        normalized_name: `bad sub ${String(badSubtype)}`,
+        type: 'LOAN_TAKEN',
+        subtype: badSubtype as any,
+        opening_balance: new Prisma.Decimal('2000.00'),
+        is_opening_locked: false,
+        is_archived: false
+      });
+      const badTxnId = `txn-bad-sub-${String(badSubtype)}`;
+      mockTransactions.push({
+        id: badTxnId,
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('500.00'),
+        transaction_date: new Date('2026-11-04T00:00:00.000Z'),
+        description: 'Bad subtype repay',
+        is_favorite: false,
+        created_at: new Date('2026-11-04T08:00:00.000Z'),
+        updated_at: new Date('2026-11-04T08:00:00.000Z')
+      });
+      mockAllocationLines.push({
+        id: `alloc-bad-sub-${String(badSubtype)}`,
+        transaction_id: badTxnId,
+        target_account_id: badLoanAccId,
+        amount: new Prisma.Decimal('500.00'),
+        notes: null
+      });
+
+      const badSubRes = await request(app)
+        .post(`/api/transactions/${badTxnId}/duplicate`)
+        .set('Origin', config.clientUrl)
+        .set('Cookie', [`token=${userDemoToken}`])
+        .send({});
+      expect(badSubRes.status).toBe(400);
+      expect(badSubRes.body.error.code).toBe('INVALID_ACCOUNT_SUBTYPE');
+    }
+
+    // 3. Multi-allocation targeting the SAME LOAN_TAKEN account: seed 6000 CC debt, existing 4000 (2000+2000) repay leaves 2000 debt -> duplicating 4000 > 2000 -> 422 REPAYMENT_EXCEEDS_DEBT
+    mockTransactions.push(
+      {
+        id: 'txn-cc-debt-seed-5',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-cc',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('6000.00'),
+        transaction_date: new Date('2026-11-04T00:00:00.000Z'),
+        description: 'CC Debt Seed 6000',
+        is_favorite: false,
+        created_at: new Date('2026-11-04T09:00:00.000Z'),
+        updated_at: new Date('2026-11-04T09:00:00.000Z')
+      },
+      {
+        id: 'txn-multi-repay-exceed',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('4000.00'),
+        transaction_date: new Date('2026-11-05T00:00:00.000Z'),
+        description: 'Multi line repay exceed',
+        is_favorite: false,
+        created_at: new Date('2026-11-05T08:00:00.000Z'),
+        updated_at: new Date('2026-11-05T08:00:00.000Z')
+      }
+    );
+    mockAllocationLines.push(
+      {
+        id: 'alloc-cc-debt-seed-5',
+        transaction_id: 'txn-cc-debt-seed-5',
+        target_account_id: 'acc-demo-dining',
+        amount: new Prisma.Decimal('6000.00'),
+        notes: null
+      },
+      {
+        id: 'alloc-mr-1',
+        transaction_id: 'txn-multi-repay-exceed',
+        target_account_id: 'acc-demo-cc',
+        amount: new Prisma.Decimal('2000.00'),
+        notes: 'Part 1'
+      },
+      {
+        id: 'alloc-mr-2',
+        transaction_id: 'txn-multi-repay-exceed',
+        target_account_id: 'acc-demo-cc',
+        amount: new Prisma.Decimal('2000.00'),
+        notes: 'Part 2'
+      }
+    );
+    const multiRepayRes = await request(app)
+      .post('/api/transactions/txn-multi-repay-exceed/duplicate')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({});
+    expect(multiRepayRes.status).toBe(422);
+    expect(multiRepayRes.body.error.code).toBe('REPAYMENT_EXCEEDS_DEBT');
+
+    // 4. Multi-allocation LOAN_GIVEN recovery (disburse 1500 -> recovery lines 600 + 600 = 1200 leaves 300 -> duplicating 1200 > 300) -> 422 RECOVERY_EXCEEDS_RECEIVABLE
+    mockTransactions.push(
+      {
+        id: 'txn-lg-disb-multi',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1500.00'),
+        transaction_date: new Date('2026-11-05T00:00:00.000Z'),
+        description: 'Disburse 1500',
+        is_favorite: false,
+        created_at: new Date('2026-11-05T08:00:00.000Z'),
+        updated_at: new Date('2026-11-05T08:00:00.000Z')
+      },
+      {
+        id: 'txn-lg-rec-multi',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('1200.00'),
+        transaction_date: new Date('2026-11-06T00:00:00.000Z'),
+        description: 'Grouped recovery > receivable',
+        is_favorite: false,
+        created_at: new Date('2026-11-06T08:00:00.000Z'),
+        updated_at: new Date('2026-11-06T08:00:00.000Z')
+      }
+    );
+    mockAllocationLines.push(
+      {
+        id: 'alloc-lg-disb-multi',
+        transaction_id: 'txn-lg-disb-multi',
+        target_account_id: 'acc-demo-loan-given',
+        amount: new Prisma.Decimal('1500.00'),
+        notes: null
+      },
+      {
+        id: 'alloc-lg-rec-1',
+        transaction_id: 'txn-lg-rec-multi',
+        target_account_id: 'acc-demo-loan-given',
+        amount: new Prisma.Decimal('600.00'),
+        notes: 'R1'
+      },
+      {
+        id: 'alloc-lg-rec-2',
+        transaction_id: 'txn-lg-rec-multi',
+        target_account_id: 'acc-demo-loan-given',
+        amount: new Prisma.Decimal('600.00'),
+        notes: 'R2'
+      }
+    );
+    const multiRecRes = await request(app)
+      .post('/api/transactions/txn-lg-rec-multi/duplicate')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({});
+    expect(multiRecRes.status).toBe(422);
+    expect(multiRecRes.body.error.code).toBe('RECOVERY_EXCEEDS_RECEIVABLE');
+
+    // 5. Unsupported mixed transaction combination (PAYMENT_CHARGE mixing EXPENSE + LOAN_TAKEN) -> 400 INVALID_ACCOUNT_TYPE
+    mockTransactions.push({
+      id: 'txn-mixed-unsupported',
+      user_id: 'user-a-uuid',
+      primary_account_id: 'acc-demo-checking',
+      form: 'PAYMENT_CHARGE',
+      total_amount: new Prisma.Decimal('1000.00'),
+      transaction_date: new Date('2026-11-07T00:00:00.000Z'),
+      description: 'Unsupported mix',
+      is_favorite: false,
+      created_at: new Date('2026-11-07T08:00:00.000Z'),
+      updated_at: new Date('2026-11-07T08:00:00.000Z')
+    });
+    mockAllocationLines.push(
+      {
+        id: 'alloc-mix-1',
+        transaction_id: 'txn-mixed-unsupported',
+        target_account_id: 'acc-demo-dining',
+        amount: new Prisma.Decimal('400.00'),
+        notes: null
+      },
+      {
+        id: 'alloc-mix-2',
+        transaction_id: 'txn-mixed-unsupported',
+        target_account_id: 'acc-demo-cc',
+        amount: new Prisma.Decimal('600.00'),
+        notes: null
+      }
+    );
+    const mixedRes = await request(app)
+      .post('/api/transactions/txn-mixed-unsupported/duplicate')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({});
+    expect(mixedRes.status).toBe(400);
+    expect(mixedRes.body.error.code).toBe('INVALID_ACCOUNT_TYPE');
+
+    // 6. Allocation line ordering independence: reverse-ordered split expense duplicates cleanly
+    mockTransactions.push({
+      id: 'txn-split-order',
+      user_id: 'user-a-uuid',
+      primary_account_id: 'acc-demo-cc',
+      form: 'PAYMENT_CHARGE',
+      total_amount: new Prisma.Decimal('1500.00'),
+      transaction_date: new Date('2026-11-08T00:00:00.000Z'),
+      description: 'Reversed split',
+      is_favorite: false,
+      created_at: new Date('2026-11-08T08:00:00.000Z'),
+      updated_at: new Date('2026-11-08T08:00:00.000Z')
+    });
+    mockAllocationLines.push(
+      {
+        id: 'alloc-ord-z',
+        transaction_id: 'txn-split-order',
+        target_account_id: 'acc-demo-grocery',
+        amount: new Prisma.Decimal('1000.00'),
+        notes: 'Grocery first'
+      },
+      {
+        id: 'alloc-ord-a',
+        transaction_id: 'txn-split-order',
+        target_account_id: 'acc-demo-dining',
+        amount: new Prisma.Decimal('500.00'),
+        notes: 'Dining second'
+      }
+    );
+    const orderDupRes = await request(app)
+      .post('/api/transactions/txn-split-order/duplicate')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({ transaction_date: '2026-11-09' });
+    expect(orderDupRes.status).toBe(201);
+    expect(orderDupRes.body.data.transaction.allocations).toHaveLength(2);
+  });
 });
