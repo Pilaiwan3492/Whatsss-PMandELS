@@ -574,4 +574,71 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
       expect(Number(accAfter.body.data.account.current_balance)).toBe(1000);
     }
   });
+
+  it('TEST-FAV-CORR-CONC-01 (Live PG16): serializes real concurrent Duplicate (F-14) vs Correction (F-16) HTTP services without torn reads', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+    const tenant = await createIsolatedTenant('real_dup_corr', { preserveAuditLoggedRows: true });
+
+    const expRes = await request(app)
+      .post('/api/transactions/expense')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        primary_account_id: tenant.accounts.cc.id,
+        total_amount: '3000.00',
+        transaction_date: '2026-11-05',
+        description: 'Initial Split Expense',
+        allocations: [
+          { target_account_id: tenant.accounts.dining.id, amount: '1000.00' },
+          { target_account_id: tenant.accounts.grocery.id, amount: '2000.00' }
+        ]
+      });
+    expect(expRes.status).toBe(201);
+    const sourceTxnId = expRes.body.data.transaction.id;
+
+    // Launch real PUT /api/transactions/:id (F-16 correction.service.ts) and POST /api/transactions/:id/duplicate (F-14 favoriteDuplicate.service.ts) concurrently
+    const [corrRes, dupRes] = await Promise.all([
+      request(app)
+        .put(`/api/transactions/${sourceTxnId}`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', tenant.cookie)
+        .send({
+          total_amount: '4500.00',
+          transaction_date: '2026-11-05',
+          description: 'Corrected Split Expense',
+          allocations: [
+            { target_account_id: tenant.accounts.dining.id, amount: '1500.00' },
+            { target_account_id: tenant.accounts.grocery.id, amount: '3000.00' }
+          ]
+        }),
+      request(app)
+        .post(`/api/transactions/${sourceTxnId}/duplicate`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', tenant.cookie)
+        .send({})
+    ]);
+
+    expect(corrRes.status).toBe(200);
+    expect(dupRes.status).toBe(201);
+
+    const dupTxnId = dupRes.body.data.transaction.id;
+    const dupPersisted = await prisma.transaction.findUnique({
+      where: { id: dupTxnId },
+      include: { allocation_lines: true }
+    });
+    expect(dupPersisted).not.toBeNull();
+    expect(await prisma.transactionAuditLog.count({ where: { transaction_id: dupTxnId } })).toBe(0);
+
+    // Must match EITHER exact pre-correction (3000.00 = 1000+2000) OR exact post-correction (4500.00 = 1500+3000), never torn
+    const dupTotal = dupPersisted!.total_amount.toFixed(2);
+    expect(['3000.00', '4500.00']).toContain(dupTotal);
+    const lineSum = dupPersisted!.allocation_lines.reduce(
+      (acc, l) => acc.add(l.amount),
+      new Prisma.Decimal('0.00')
+    );
+    expect(lineSum.toFixed(2)).toBe(dupTotal);
+  });
 });
