@@ -241,7 +241,18 @@ export async function toggleTransactionFavorite(
 /**
  * Duplicates an existing user-owned transaction with full live domain re-validation (F-14, FR-17, AC-14-2, AC-14-3).
  * - Freshly generates Transaction.id, AllocationLine.ids, created_at, updated_at, is_favorite=false, 0 audit logs.
- * - Acquires sorted pessimistic row locks on all referenced accounts and enforces Archived Account Guard + live rules.
+ *
+ * CONCURRENCY & LOCKING ORDER CONTRACT (F-14 Duplicate <-> F-16 Transaction Correction):
+ * Both F-14 (duplicateTransaction) and F-16 (correctTransaction) MUST acquire locks in the
+ * exact same canonical order inside prisma.$transaction to prevent deadlocks and stale-read races:
+ *   1. Acquire a row-level lock on the source Transaction row first:
+ *      SELECT id FROM "transactions" WHERE id = $transactionId AND user_id = $userId FOR UPDATE
+ *   2. Read/re-read the source Transaction and its AllocationLines AFTER the lock is held.
+ *   3. Acquire pessimistic row locks on all referenced Account rows in canonical ascending UUID
+ *      order via acquireAccountRowLocks(tx, allAccountIds, userId).
+ * Because F-16 acquires the same Transaction FOR UPDATE lock before updating Transaction/AllocationLines
+ * and locking Account rows, a concurrent F-14 duplicate blocks until F-16 commits (or rolls back)
+ * and always reads the latest committed source data (zero stale-read duplication).
  */
 export async function duplicateTransaction(
   userId: string,
@@ -288,7 +299,24 @@ export async function duplicateTransaction(
   }
 
   return await prismaClient.$transaction(async (tx) => {
-    // 1. Load source transaction owned by userId (BR-01)
+    // 1. Acquire pessimistic row-level lock on the source Transaction row FIRST (prevents stale-read race with F-16)
+    if (typeof (tx as any).$queryRaw === 'function') {
+      const lockedTxRows: any[] = await (tx as any).$queryRaw`
+        SELECT id FROM "transactions"
+        WHERE id = ${transactionId}
+          AND user_id = ${userId}
+        FOR UPDATE
+      `;
+      if (Array.isArray(lockedTxRows) && lockedTxRows.length === 0) {
+        throw new FavoriteDuplicateError(
+          `Transaction [${transactionId}] was not found or does not belong to the current user.`,
+          404,
+          'NOT_FOUND'
+        );
+      }
+    }
+
+    // 2. Read/re-read source transaction and its allocation lines AFTER acquiring the row lock (BR-01)
     const source: any = await tx.transaction.findFirst({
       where: { id: transactionId, user_id: userId },
       include: {
@@ -328,7 +356,7 @@ export async function duplicateTransaction(
       );
     }
 
-    // 2. Collect and acquire canonical sorted row locks on all referenced accounts
+    // 3. Collect and acquire canonical sorted row locks on all referenced accounts
     const allAccountIds = Array.from(
       new Set<string>([
         source.primary_account_id,

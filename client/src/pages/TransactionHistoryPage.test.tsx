@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext.js';
-import { TransactionHistoryPage } from './TransactionHistoryPage.js';
+import { TransactionHistoryPage, getTransactionKind } from './TransactionHistoryPage.js';
 import { axiosClient } from '../api/axiosClient.js';
 import * as transactionApi from '../api/transactionApi.js';
 
@@ -318,5 +318,212 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
       expect((screen.getByTestId('search-keyword-input') as HTMLInputElement).value).toBe('');
       expect((screen.getByTestId('filter-type-select') as HTMLSelectElement).value).toBe('');
     });
+  });
+
+  it('TEST-UI-CLASS-01: accurately classifies all 5 transaction types and prevents CASH expenses from being misclassified as REPAYMENT', async () => {
+    const allFiveTransactions: transactionApi.HistoryTransaction[] = [
+      // 1. INCOME: RECEIVE_MONEY with INCOME allocation
+      {
+        id: 'tx-cls-income',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'RECEIVE_MONEY',
+        total_amount: 20000,
+        transaction_date: '2026-11-01',
+        description: 'Salary',
+        created_at: '2026-11-01T08:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-inc',
+            transaction_id: 'tx-cls-income',
+            target_account_id: 'acc-salary',
+            target_account: { id: 'acc-salary', name: 'Salary', type: 'INCOME', subtype: 'DEFAULT' },
+            amount: 20000,
+            notes: null
+          }
+        ]
+      },
+      // 2a. EXPENSE (CASH primary — MUST NOT be misclassified as REPAYMENT!)
+      {
+        id: 'tx-cls-cash-expense',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 450,
+        transaction_date: '2026-11-02',
+        description: 'Cash Lunch & Coffee',
+        created_at: '2026-11-02T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-ce-1',
+            transaction_id: 'tx-cls-cash-expense',
+            target_account_id: 'acc-dining',
+            target_account: { id: 'acc-dining', name: 'Dining', type: 'EXPENSE', subtype: 'DEFAULT' },
+            amount: 300,
+            notes: 'Lunch'
+          },
+          {
+            id: 'l-ce-2',
+            transaction_id: 'tx-cls-cash-expense',
+            target_account_id: 'acc-grocery',
+            target_account: { id: 'acc-grocery', name: 'Grocery', type: 'EXPENSE', subtype: 'DEFAULT' },
+            amount: 150,
+            notes: 'Coffee'
+          }
+        ]
+      },
+      // 3. REPAYMENT: PAYMENT_CHARGE from CASH to LOAN_TAKEN (CREDIT_CARD)
+      {
+        id: 'tx-cls-repayment',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 1500,
+        transaction_date: '2026-11-03',
+        description: 'Visa Payment',
+        created_at: '2026-11-03T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-rep',
+            transaction_id: 'tx-cls-repayment',
+            target_account_id: 'acc-cc',
+            target_account: { id: 'acc-cc', name: 'Visa Credit Card', type: 'LOAN_TAKEN', subtype: 'CREDIT_CARD' },
+            amount: 1500,
+            notes: null
+          }
+        ]
+      },
+      // 4. TRANSFER: PAYMENT_CHARGE from CASH to CASH
+      {
+        id: 'tx-cls-transfer',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 2000,
+        transaction_date: '2026-11-04',
+        description: 'Move to Wallet',
+        created_at: '2026-11-04T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-xfer',
+            transaction_id: 'tx-cls-transfer',
+            target_account_id: 'acc-wallet',
+            target_account: { id: 'acc-wallet', name: 'Cash Wallet', type: 'CASH', subtype: 'DEFAULT' },
+            amount: 2000,
+            notes: null
+          }
+        ]
+      },
+      // 5a. LOAN (LOAN_GIVEN disbursement)
+      {
+        id: 'tx-cls-loan-given',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 1000,
+        transaction_date: '2026-11-05',
+        description: 'Lent to Friend',
+        created_at: '2026-11-05T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-lg',
+            transaction_id: 'tx-cls-loan-given',
+            target_account_id: 'acc-friend',
+            target_account: { id: 'acc-friend', name: 'Friend Loan', type: 'LOAN_GIVEN', subtype: 'DEFAULT' },
+            amount: 1000,
+            notes: null
+          }
+        ]
+      },
+      // 5b. LOAN (GENERAL_LOAN repayment — must be LOAN, NOT REPAYMENT)
+      {
+        id: 'tx-cls-general-loan-repay',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 500,
+        transaction_date: '2026-11-06',
+        description: 'Car Loan Installment',
+        created_at: '2026-11-06T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-gl',
+            transaction_id: 'tx-cls-general-loan-repay',
+            target_account_id: 'acc-car-loan',
+            target_account: { id: 'acc-car-loan', name: 'Car Loan', type: 'LOAN_TAKEN', subtype: 'GENERAL_LOAN' },
+            amount: 500,
+            notes: null
+          }
+        ]
+      },
+      // 5c. LOAN (LOAN_GIVEN recovery via RECEIVE_MONEY — must be LOAN, NOT INCOME)
+      {
+        id: 'tx-cls-loan-recovery',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'RECEIVE_MONEY',
+        total_amount: 400,
+        transaction_date: '2026-11-07',
+        description: 'Friend Repaid',
+        created_at: '2026-11-07T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-lrec',
+            transaction_id: 'tx-cls-loan-recovery',
+            target_account_id: 'acc-friend',
+            target_account: { id: 'acc-friend', name: 'Friend Loan', type: 'LOAN_GIVEN', subtype: 'DEFAULT' },
+            amount: 400,
+            notes: null
+          }
+        ]
+      }
+    ];
+
+    // Direct semantic classification assertions
+    expect(getTransactionKind(allFiveTransactions[0])).toBe('INCOME');
+    expect(getTransactionKind(allFiveTransactions[1])).toBe('EXPENSE');
+    expect(getTransactionKind(allFiveTransactions[2])).toBe('REPAYMENT');
+    expect(getTransactionKind(allFiveTransactions[3])).toBe('TRANSFER');
+    expect(getTransactionKind(allFiveTransactions[4])).toBe('LOAN');
+    expect(getTransactionKind(allFiveTransactions[5])).toBe('LOAN');
+    expect(getTransactionKind(allFiveTransactions[6])).toBe('LOAN');
+
+    // Render UI and verify badges & tab filtering
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(allFiveTransactions);
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('badge-tx-cls-cash-expense').textContent).toBe('Expense');
+      expect(screen.getByTestId('badge-tx-cls-repayment').textContent).toBe('Repayment');
+      expect(screen.getByTestId('badge-tx-cls-transfer').textContent).toBe('Transfer');
+      expect(screen.getByTestId('badge-tx-cls-loan-given').textContent).toBe('Loan');
+      expect(screen.getByTestId('badge-tx-cls-general-loan-repay').textContent).toBe('Loan');
+      expect(screen.getByTestId('badge-tx-cls-loan-recovery').textContent).toBe('Loan');
+    });
+
+    // Clicking Repayments tab must exclude CASH expense and GENERAL_LOAN repayment
+    fireEvent.click(screen.getByTestId('filter-repayment'));
+    expect(screen.getByTestId('txn-row-tx-cls-repayment')).toBeDefined();
+    expect(screen.queryByTestId('txn-row-tx-cls-cash-expense')).toBeNull();
+    expect(screen.queryByTestId('txn-row-tx-cls-general-loan-repay')).toBeNull();
+
+    // Clicking Transfers tab shows only transfer
+    fireEvent.click(screen.getByTestId('filter-transfer'));
+    expect(screen.getByTestId('txn-row-tx-cls-transfer')).toBeDefined();
+    expect(screen.queryByTestId('txn-row-tx-cls-repayment')).toBeNull();
+
+    // Clicking Loans tab shows all 3 loan transactions
+    fireEvent.click(screen.getByTestId('filter-loan'));
+    expect(screen.getByTestId('txn-row-tx-cls-loan-given')).toBeDefined();
+    expect(screen.getByTestId('txn-row-tx-cls-general-loan-repay')).toBeDefined();
+    expect(screen.getByTestId('txn-row-tx-cls-loan-recovery')).toBeDefined();
+    expect(screen.queryByTestId('txn-row-tx-cls-income')).toBeNull();
   });
 });

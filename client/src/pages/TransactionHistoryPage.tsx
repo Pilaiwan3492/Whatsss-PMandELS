@@ -9,7 +9,65 @@ import {
 } from '../api/transactionApi.js';
 import { getAccounts, Account } from '../api/accountApi.js';
 
-type SemanticKind = 'INCOME' | 'EXPENSE' | 'REPAYMENT' | 'TRANSFER' | 'LOAN';
+export type SemanticKind = 'INCOME' | 'EXPENSE' | 'REPAYMENT' | 'TRANSFER' | 'LOAN';
+
+/**
+ * Classifies a transaction into its authoritative semantic domain kind, matching backend F-15 rules:
+ * - LOAN: Allocation to LOAN_GIVEN or LOAN_TAKEN (subtype GENERAL_LOAN).
+ * - INCOME: RECEIVE_MONEY with an INCOME allocation.
+ * - EXPENSE: PAYMENT_CHARGE with an EXPENSE allocation (including ordinary CASH expenses and CC charges).
+ * - REPAYMENT: PAYMENT_CHARGE from CASH to LOAN_TAKEN with subtype CREDIT_CARD.
+ * - TRANSFER: PAYMENT_CHARGE from CASH to CASH.
+ */
+export function getTransactionKind(tx: HistoryTransaction): SemanticKind {
+  const lines = tx.allocation_lines || [];
+
+  if (
+    lines.some(
+      (l) =>
+        l.target_account?.type === 'LOAN_GIVEN' ||
+        (l.target_account?.type === 'LOAN_TAKEN' && l.target_account?.subtype === 'GENERAL_LOAN')
+    )
+  ) {
+    return 'LOAN';
+  }
+
+  if (
+    tx.form === 'RECEIVE_MONEY' &&
+    lines.some((l) => l.target_account?.type === 'INCOME')
+  ) {
+    return 'INCOME';
+  }
+
+  if (
+    tx.form === 'PAYMENT_CHARGE' &&
+    lines.some((l) => l.target_account?.type === 'EXPENSE')
+  ) {
+    return 'EXPENSE';
+  }
+
+  if (
+    tx.form === 'PAYMENT_CHARGE' &&
+    tx.primary_account?.type === 'CASH' &&
+    lines.some(
+      (l) =>
+        l.target_account?.type === 'LOAN_TAKEN' &&
+        (l.target_account?.subtype === 'CREDIT_CARD' || l.target_account?.subtype === undefined)
+    )
+  ) {
+    return 'REPAYMENT';
+  }
+
+  if (
+    tx.form === 'PAYMENT_CHARGE' &&
+    tx.primary_account?.type === 'CASH' &&
+    lines.some((l) => l.target_account?.type === 'CASH')
+  ) {
+    return 'TRANSFER';
+  }
+
+  return tx.form === 'RECEIVE_MONEY' ? 'INCOME' : 'EXPENSE';
+}
 
 export const TransactionHistoryPage: React.FC = () => {
   const [transactions, setTransactions] = useState<HistoryTransaction[]>([]);
@@ -158,27 +216,6 @@ export const TransactionHistoryPage: React.FC = () => {
   const formatCurrency = (amount: number | undefined): string => {
     if (amount === undefined || isNaN(amount)) return '0.00 THB';
     return `${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} THB`;
-  };
-
-  const getTransactionKind = (tx: HistoryTransaction): SemanticKind => {
-    const lines = tx.allocation_lines || [];
-    if (
-      lines.some(
-        (l) =>
-          l.target_account?.type === 'LOAN_GIVEN' ||
-          (l.target_account?.type === 'LOAN_TAKEN' && l.target_account?.subtype === 'GENERAL_LOAN')
-      )
-    ) {
-      return 'LOAN';
-    }
-    if (tx.form === 'RECEIVE_MONEY') return 'INCOME';
-    if (tx.primary_account?.type === 'CASH') {
-      if (lines.some((l) => l.target_account?.type === 'CASH')) {
-        return 'TRANSFER';
-      }
-      return 'REPAYMENT';
-    }
-    return 'EXPENSE';
   };
 
   const filteredTransactions = transactions.filter((tx) => {
@@ -377,6 +414,20 @@ export const TransactionHistoryPage: React.FC = () => {
           data-testid="filter-repayment"
         >
           Repayments ({transactions.filter((t) => getTransactionKind(t) === 'REPAYMENT').length})
+        </button>
+        <button
+          className={`btn btn-sm ${selectedFilter === 'TRANSFER' ? 'btn-info text-dark' : 'btn-outline-info text-dark'}`}
+          onClick={() => setSelectedFilter('TRANSFER')}
+          data-testid="filter-transfer"
+        >
+          Transfers ({transactions.filter((t) => getTransactionKind(t) === 'TRANSFER').length})
+        </button>
+        <button
+          className={`btn btn-sm ${selectedFilter === 'LOAN' ? 'btn-secondary' : 'btn-outline-secondary'}`}
+          onClick={() => setSelectedFilter('LOAN')}
+          data-testid="filter-loan"
+        >
+          Loans ({transactions.filter((t) => getTransactionKind(t) === 'LOAN').length})
         </button>
         <button
           className={`btn btn-sm ${favoritesOnly ? 'btn-warning text-dark fw-semibold' : 'btn-outline-secondary'}`}

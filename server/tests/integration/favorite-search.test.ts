@@ -96,7 +96,16 @@ vi.mock('../../src/prisma.js', () => {
     $transaction: vi.fn(async (callback) => {
       return callback(mockPrismaObj);
     }),
-    $queryRaw: vi.fn(async () => []),
+    $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
+      const sql = Array.isArray(strings) ? strings.join(' ') : String(strings);
+      if (sql.includes('FROM "transactions"')) {
+        const txId = values[0];
+        const uId = values[1];
+        const found = mockTransactions.find((t) => t.id === txId && t.user_id === uId);
+        return found ? [{ id: found.id }] : [];
+      }
+      return [];
+    }),
     user: {
       findUnique: vi.fn(async ({ where }) => findMockUser(where))
     },
