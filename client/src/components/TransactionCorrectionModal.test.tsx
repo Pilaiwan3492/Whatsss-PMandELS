@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { TransactionCorrectionModal } from './TransactionCorrectionModal.js';
+import { TransactionCorrectionModal, isAccountAllowedTarget } from './TransactionCorrectionModal.js';
 import * as transactionApi from '../api/transactionApi.js';
 import * as accountApi from '../api/accountApi.js';
 
@@ -247,5 +247,180 @@ describe('Frontend TransactionCorrectionModal Suite (WP-11, Feature F-16, Task 3
     await waitFor(() => {
       expect(screen.getByTestId('correction-error').textContent).toContain('Network Error');
     });
+  });
+
+  it('enforces explicit LOAN_TAKEN subtype filtering across RECEIVE_MONEY, LOAN_TAKEN charges, and CASH payments', () => {
+    const subtypeAccounts: accountApi.Account[] = [
+      ...mockAccounts,
+      {
+        id: 'acc-cash',
+        user_id: 'u1-uuid',
+        name: 'Checking Bank',
+        type: 'CASH',
+        subtype: 'DEFAULT',
+        opening_balance: 5000,
+        current_balance: 5000,
+        is_opening_locked: true,
+        is_archived: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      },
+      {
+        id: 'acc-gl',
+        user_id: 'u1-uuid',
+        name: 'Personal Loan',
+        type: 'LOAN_TAKEN',
+        subtype: 'GENERAL_LOAN',
+        opening_balance: 0,
+        current_balance: 2000,
+        is_opening_locked: true,
+        is_archived: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      },
+      {
+        id: 'acc-lt-default',
+        user_id: 'u1-uuid',
+        name: 'Default Loan',
+        type: 'LOAN_TAKEN',
+        subtype: 'DEFAULT',
+        opening_balance: 0,
+        current_balance: 0,
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      },
+      {
+        id: 'acc-lt-undef',
+        user_id: 'u1-uuid',
+        name: 'Undefined Loan',
+        type: 'LOAN_TAKEN',
+        subtype: undefined as any,
+        opening_balance: 0,
+        current_balance: 0,
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      },
+      {
+        id: 'acc-lt-unknown',
+        user_id: 'u1-uuid',
+        name: 'Unknown Loan',
+        type: 'LOAN_TAKEN',
+        subtype: 'CRYPTO_LOAN' as any,
+        opening_balance: 0,
+        current_balance: 0,
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      }
+    ];
+
+    // 1. RECEIVE_MONEY: allows only GENERAL_LOAN among LOAN_TAKEN; excludes CREDIT_CARD, DEFAULT, undefined, unknown
+    const receiveTx: transactionApi.HistoryTransaction = {
+      ...baseTransaction,
+      id: 'tx-recv-sub',
+      primary_account_id: 'acc-cash',
+      primary_account: { id: 'acc-cash', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+      form: 'RECEIVE_MONEY',
+      total_amount: 2000,
+      allocation_lines: [
+        {
+          id: 'l-gl',
+          transaction_id: 'tx-recv-sub',
+          target_account_id: 'acc-gl',
+          target_account: { id: 'acc-gl', name: 'Personal Loan', type: 'LOAN_TAKEN', subtype: 'GENERAL_LOAN' },
+          amount: 2000,
+          notes: null
+        }
+      ]
+    };
+    const { unmount: unmountRecv } = render(
+      <TransactionCorrectionModal
+        transaction={receiveTx}
+        accounts={subtypeAccounts}
+        onClose={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    );
+    const recvValues = Array.from(
+      (screen.getByTestId('corr-alloc-target-0') as HTMLSelectElement).options
+    ).map((o) => o.value);
+    expect(recvValues).toContain('acc-gl');
+    expect(recvValues).not.toContain('acc-cc');
+    expect(recvValues).not.toContain('acc-lt-default');
+    expect(recvValues).not.toContain('acc-lt-undef');
+    expect(recvValues).not.toContain('acc-lt-unknown');
+    unmountRecv();
+
+    // 2. PAYMENT_CHARGE with LOAN_TAKEN primary: allows EXPENSE only when primary subtype === CREDIT_CARD;
+    //    rejects GENERAL_LOAN, DEFAULT, undefined, and unknown primary subtypes
+    for (const badPrimarySubtype of ['GENERAL_LOAN', 'DEFAULT', undefined, 'CRYPTO_LOAN'] as const) {
+      const badChargeTx: transactionApi.HistoryTransaction = {
+        ...baseTransaction,
+        primary_account: {
+          id: 'acc-bad-lt',
+          name: 'Bad Loan Primary',
+          type: 'LOAN_TAKEN',
+          subtype: badPrimarySubtype as any
+        }
+      };
+      const { unmount } = render(
+        <TransactionCorrectionModal
+          transaction={badChargeTx}
+          accounts={subtypeAccounts}
+          onClose={vi.fn()}
+          onSuccess={vi.fn()}
+        />
+      );
+      const opts = Array.from(
+        (screen.getByTestId('corr-alloc-target-0') as HTMLSelectElement).options
+      ).map((o) => o.value);
+      expect(opts).not.toContain('acc-utilities');
+      expect(opts).not.toContain('acc-grocery');
+      expect(isAccountAllowedTarget(badChargeTx, mockAccounts[1])).toBe(false);
+      unmount();
+    }
+
+    // 3. PAYMENT_CHARGE with CASH primary: allows CREDIT_CARD and GENERAL_LOAN, excludes DEFAULT, undefined, unknown
+    const cashPayTx: transactionApi.HistoryTransaction = {
+      ...baseTransaction,
+      id: 'tx-cash-pay-sub',
+      primary_account_id: 'acc-cash',
+      primary_account: { id: 'acc-cash', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+      form: 'PAYMENT_CHARGE',
+      total_amount: 1000,
+      allocation_lines: [
+        {
+          id: 'l-cc',
+          transaction_id: 'tx-cash-pay-sub',
+          target_account_id: 'acc-cc',
+          target_account: { id: 'acc-cc', name: 'Visa Credit Card', type: 'LOAN_TAKEN', subtype: 'CREDIT_CARD' },
+          amount: 1000,
+          notes: null
+        }
+      ]
+    };
+    render(
+      <TransactionCorrectionModal
+        transaction={cashPayTx}
+        accounts={subtypeAccounts}
+        onClose={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    );
+    const cashPayValues = Array.from(
+      (screen.getByTestId('corr-alloc-target-0') as HTMLSelectElement).options
+    ).map((o) => o.value);
+    expect(cashPayValues).toContain('acc-cc');
+    expect(cashPayValues).toContain('acc-gl');
+    expect(cashPayValues).toContain('acc-dining');
+    expect(cashPayValues).not.toContain('acc-cash');
+    expect(cashPayValues).not.toContain('acc-lt-default');
+    expect(cashPayValues).not.toContain('acc-lt-undef');
+    expect(cashPayValues).not.toContain('acc-lt-unknown');
   });
 });

@@ -28,17 +28,30 @@ function parseToCents(val: string): number | null {
   return cents > 0 ? cents : null;
 }
 
-function isAccountAllowedTarget(tx: HistoryTransaction, acc: Account): boolean {
+function isExplicitLoanTakenSubtype(subtype: unknown): subtype is 'CREDIT_CARD' | 'GENERAL_LOAN' {
+  return subtype === 'CREDIT_CARD' || subtype === 'GENERAL_LOAN';
+}
+
+export function isAccountAllowedTarget(tx: HistoryTransaction, acc: Account): boolean {
   if (tx.form === 'RECEIVE_MONEY') {
-    return ['INCOME', 'LOAN_GIVEN', 'LOAN_TAKEN', 'CASH'].includes(acc.type);
+    if (acc.type === 'LOAN_TAKEN') {
+      return acc.subtype === 'GENERAL_LOAN';
+    }
+    return ['INCOME', 'LOAN_GIVEN', 'CASH'].includes(acc.type);
   }
   // PAYMENT_CHARGE
   if (tx.primary_account?.type === 'LOAN_TAKEN') {
+    if (tx.primary_account.subtype !== 'CREDIT_CARD') {
+      return false;
+    }
     return acc.type === 'EXPENSE';
   }
   if (tx.primary_account?.type === 'CASH') {
     if (acc.id === tx.primary_account_id) return false;
-    return ['EXPENSE', 'LOAN_TAKEN', 'LOAN_GIVEN', 'CASH'].includes(acc.type);
+    if (acc.type === 'LOAN_TAKEN') {
+      return isExplicitLoanTakenSubtype(acc.subtype);
+    }
+    return ['EXPENSE', 'LOAN_GIVEN', 'CASH'].includes(acc.type);
   }
   return acc.type === 'EXPENSE';
 }
