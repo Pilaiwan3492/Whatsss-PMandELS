@@ -16,8 +16,8 @@ export const IncomeForm: React.FC<IncomeFormProps> = ({
   onSuccess
 }) => {
   const safeAccounts = accounts || [];
-  const cashAccounts = safeAccounts.filter((a) => a.type === 'CASH');
-  const incomeAccounts = safeAccounts.filter((a) => a.type === 'INCOME');
+  const cashAccounts = safeAccounts.filter((a) => a.type === 'CASH' && !a.is_archived);
+  const incomeAccounts = safeAccounts.filter((a) => a.type === 'INCOME' && !a.is_archived);
 
   const [primaryAccountId, setPrimaryAccountId] = useState<string>('');
   const [incomeAccountId, setIncomeAccountId] = useState<string>('');

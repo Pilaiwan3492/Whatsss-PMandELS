@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { recordIncome, IncomeError } from '../services/income.service.js';
 import { recordExpense, ExpenseError } from '../services/expense.service.js';
 import { recordRepayment, RepaymentError } from '../services/repayment.service.js';
+import { recordTransfer, TransferError } from '../services/transfer.service.js';
 import { getTransactionHistory } from '../services/report.service.js';
 
 /**
@@ -170,6 +171,53 @@ export async function createRepaymentTransaction(
     });
   } catch (err: any) {
     if (err instanceof RepaymentError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * POST /api/transactions/transfer
+ * Records an internal cash transfer between two CASH accounts owned by the authenticated user (F-11, WP-08, FR-13).
+ * Atomically decreases source CASH balance and increases destination CASH balance while excluding
+ * the transfer from Income and Expense summaries (BR-02).
+ */
+export async function createTransferTransaction(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const result = await recordTransfer(userId, req.body);
+
+    res.status(201).json({
+      success: true,
+      data: result
+    });
+  } catch (err: any) {
+    if (err instanceof TransferError) {
       res.status(err.statusCode).json({
         success: false,
         error: {

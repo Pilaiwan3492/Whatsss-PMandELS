@@ -428,4 +428,201 @@ describe('Frontend Financial Accounts & Opening Balance Suite (WP-02)', () => {
     expect(screen.getByText('Current Debt')).toBeDefined();
     expect(screen.getByText(/3,000\.00/)).toBeDefined();
   });
+
+  it('TEST-ACC-01 & TEST-ACC-04 (UI): opens Create Account modal, creates a new custom account, and renames an existing account (F-10, WP-08)', async () => {
+    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/auth/me') {
+        return { data: { success: true, data: { user: mockUserDemo } } };
+      }
+      if (url === '/accounts') {
+        return { data: { success: true, data: { accounts: mockAccountsList } } };
+      }
+      throw new Error(`Unhandled get url: ${url}`);
+    });
+
+    const postSpy = vi.spyOn(axiosClient, 'post').mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          account: {
+            id: 'acc-savings-new',
+            user_id: 'u1-uuid',
+            name: 'Savings Bank',
+            type: 'CASH',
+            subtype: 'DEFAULT',
+            opening_balance: 5000.00,
+            current_balance: 5000.00,
+            is_opening_locked: false,
+            is_archived: false,
+            created_at: '2026-11-10T00:00:00.000Z',
+            updated_at: '2026-11-10T00:00:00.000Z'
+          }
+        }
+      }
+    });
+
+    const patchSpy = vi.spyOn(axiosClient, 'patch').mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          account: {
+            ...mockAccountsList[0],
+            name: 'Main Checking'
+          }
+        }
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Checking Bank')).toBeDefined();
+    });
+
+    // 1. Open Create Account Modal
+    fireEvent.click(screen.getByRole('button', { name: '+ Create Account' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Create Custom Account')).toBeDefined();
+    });
+
+    fireEvent.change(screen.getByLabelText('Account Name'), {
+      target: { value: '  Savings   Bank  ' }
+    });
+    fireEvent.change(screen.getByLabelText('Initial Opening Balance (THB)'), {
+      target: { value: '5000.00' }
+    });
+
+    fireEvent.submit(screen.getByLabelText('Account Name').closest('form')!);
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith('/accounts', {
+        name: 'Savings Bank',
+        type: 'CASH',
+        subtype: 'DEFAULT',
+        opening_balance: 5000
+      });
+      expect(screen.getByText('Savings Bank')).toBeDefined();
+    });
+
+    // 2. Open Rename Modal for Checking Bank
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Checking Bank' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Rename Account: Checking Bank')).toBeDefined();
+    });
+
+    fireEvent.change(screen.getByLabelText('New Account Name'), {
+      target: { value: 'Main Checking' }
+    });
+    fireEvent.submit(screen.getByLabelText('New Account Name').closest('form')!);
+
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith('/accounts/acc-1', { name: 'Main Checking' });
+      expect(screen.getByText('Main Checking')).toBeDefined();
+    });
+  });
+
+  it('TEST-XFER-01 (UI): opens Internal Cash Transfer modal and submits transfer between two CASH accounts (F-11, WP-08)', async () => {
+    const twoCashAccounts = [
+      {
+        id: 'acc-cash-1',
+        user_id: 'u1-uuid',
+        name: 'Checking Bank',
+        type: 'CASH',
+        opening_balance: 10000.00,
+        current_balance: 10000.00,
+        is_opening_locked: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      },
+      {
+        id: 'acc-cash-2',
+        user_id: 'u1-uuid',
+        name: 'Savings Bank',
+        type: 'CASH',
+        opening_balance: 2000.00,
+        current_balance: 2000.00,
+        is_opening_locked: false,
+        created_at: '2026-11-01T00:00:01.000Z',
+        updated_at: '2026-11-01T00:00:01.000Z'
+      }
+    ];
+
+    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/auth/me') {
+        return { data: { success: true, data: { user: mockUserDemo } } };
+      }
+      if (url === '/accounts') {
+        return { data: { success: true, data: { accounts: twoCashAccounts } } };
+      }
+      throw new Error(`Unhandled get url: ${url}`);
+    });
+
+    const postSpy = vi.spyOn(axiosClient, 'post').mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          transaction: {
+            id: 'txn-xfer-1',
+            primary_account_id: 'acc-cash-1',
+            form: 'PAYMENT_CHARGE',
+            total_amount: '3000.00',
+            transaction_date: '2026-11-10',
+            description: 'Move to Savings',
+            allocations: []
+          },
+          updated_from_cash_balance: '7000.00',
+          updated_to_cash_balance: '5000.00'
+        }
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Checking Bank')).toBeDefined();
+      expect(screen.getByText('Savings Bank')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Transfer Cash' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Internal Cash Transfer')).toBeDefined();
+    });
+
+    fireEvent.change(screen.getByLabelText('Transfer Amount (THB)'), {
+      target: { value: '3000.00' }
+    });
+    fireEvent.change(screen.getByLabelText('Transaction Date'), {
+      target: { value: '2026-11-10' }
+    });
+    fireEvent.change(screen.getByLabelText('Description (Optional)'), {
+      target: { value: 'Move to Savings' }
+    });
+
+    fireEvent.submit(screen.getByLabelText('Transfer Amount (THB)').closest('form')!);
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith('/transactions/transfer', {
+        from_account_id: 'acc-cash-1',
+        to_account_id: 'acc-cash-2',
+        amount: '3000.00',
+        transaction_date: '2026-11-10',
+        description: 'Move to Savings'
+      });
+    });
+  });
 });

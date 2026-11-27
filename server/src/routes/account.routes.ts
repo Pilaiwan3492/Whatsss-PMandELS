@@ -4,6 +4,8 @@ import { roleGuard } from '../middlewares/roleGuard.js';
 import {
   getAccounts,
   getAccountById,
+  createAccount,
+  updateAccount,
   updateOpeningBalance
 } from '../controllers/account.controller.js';
 
@@ -14,7 +16,9 @@ router.use(authGuard);
 router.use(roleGuard);
 
 router.get('/', getAccounts);
+router.post('/', createAccount);
 router.get('/:id', getAccountById);
+router.patch('/:id', updateAccount);
 router.patch('/:id/opening-balance', updateOpeningBalance);
 
 export default router;

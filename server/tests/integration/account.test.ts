@@ -60,9 +60,81 @@ vi.mock('../../src/prisma.js', () => {
                 if (a.user_id !== where.user_id_name.user_id) return false;
                 if (a.name !== where.user_id_name.name) return false;
               }
+              if (where?.user_id_normalized_name) {
+                if (a.user_id !== where.user_id_normalized_name.user_id) return false;
+                const aNorm =
+                  a.normalized_name || a.name.trim().replace(/\s+/g, ' ').toLowerCase();
+                if (aNorm !== where.user_id_normalized_name.normalized_name) return false;
+              }
               return true;
             }) || null
           );
+        }),
+        create: vi.fn(async ({ data }) => {
+          const norm =
+            data.normalized_name || data.name.trim().replace(/\s+/g, ' ').toLowerCase();
+          const conflict = mockAccounts.find((a) => {
+            if (a.user_id !== data.user_id) return false;
+            const aNorm =
+              a.normalized_name || a.name.trim().replace(/\s+/g, ' ').toLowerCase();
+            return aNorm === norm;
+          });
+          if (conflict) {
+            const err: any = new Error('Unique constraint failed on the fields: (`user_id`,`normalized_name`)');
+            err.code = 'P2002';
+            throw err;
+          }
+          const created = {
+            id: data.id || `acc-custom-${mockAccounts.length + 1}`,
+            user_id: data.user_id,
+            name: data.name,
+            normalized_name: norm,
+            type: data.type,
+            subtype: data.subtype || (data.type === 'LOAN_TAKEN' ? 'GENERAL_LOAN' : 'DEFAULT'),
+            opening_balance: new Prisma.Decimal((data.opening_balance ?? 0).toString()),
+            is_opening_locked: Boolean(data.is_opening_locked),
+            is_archived: Boolean(data.is_archived),
+            created_at: new Date(),
+            updated_at: new Date()
+          };
+          mockAccounts.push(created);
+          return created;
+        }),
+        update: vi.fn(async ({ where, data }) => {
+          const acc = mockAccounts.find((a) => a.id === where.id);
+          if (!acc) {
+            const err: any = new Error('Record to update not found');
+            err.code = 'P2025';
+            throw err;
+          }
+          if (data.name !== undefined) {
+            const norm =
+              data.normalized_name || data.name.trim().replace(/\s+/g, ' ').toLowerCase();
+            const conflict = mockAccounts.find((a) => {
+              if (a.id === acc.id || a.user_id !== acc.user_id) return false;
+              const aNorm =
+                a.normalized_name || a.name.trim().replace(/\s+/g, ' ').toLowerCase();
+              return aNorm === norm;
+            });
+            if (conflict) {
+              const err: any = new Error('Unique constraint failed on the fields: (`user_id`,`normalized_name`)');
+              err.code = 'P2002';
+              throw err;
+            }
+            acc.name = data.name;
+            acc.normalized_name = norm;
+          }
+          if (data.opening_balance !== undefined) {
+            acc.opening_balance = new Prisma.Decimal(data.opening_balance.toString());
+          }
+          if (data.is_opening_locked !== undefined) {
+            acc.is_opening_locked = data.is_opening_locked;
+          }
+          if (data.is_archived !== undefined) {
+            acc.is_archived = data.is_archived;
+          }
+          acc.updated_at = data.updated_at || new Date();
+          return acc;
         }),
         updateMany: vi.fn(async ({ where, data }) => {
           let count = 0;
@@ -780,6 +852,267 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       expect(res.body.data.account.current_balance).toBe(3000.00);
 
       delete (prisma as any).__mockAggregate;
+    });
+  });
+
+  describe('Feature F-10: Custom Account Creation & Management (WP-08, FR-12, AC-10-1..3)', () => {
+    it('TEST-ACC-01: creates custom accounts across all 5 account types with trimmed names and excludes opening balance from total_income (AC-10-1, BR-02)', async () => {
+      // 1. CASH account with initial opening balance 5000.00
+      const cashRes = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          name: '  Savings   Bank  ',
+          type: 'CASH',
+          opening_balance: 5000.00
+        });
+      expect(cashRes.status).toBe(201);
+      expect(cashRes.body.success).toBe(true);
+      expect(cashRes.body.data.account.name).toBe('Savings Bank');
+      expect(cashRes.body.data.account.normalized_name).toBe('savings bank');
+      expect(cashRes.body.data.account.type).toBe('CASH');
+      expect(cashRes.body.data.account.subtype).toBe('DEFAULT');
+      expect(cashRes.body.data.account.opening_balance).toBe(5000.00);
+      expect(cashRes.body.data.account.current_balance).toBe(5000.00);
+      expect(cashRes.body.data.account.is_opening_locked).toBe(false);
+      expect(cashRes.body.data.account.is_archived).toBe(false);
+
+      // 2. LOAN_GIVEN account
+      const loanGivenRes = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          name: 'Friend Loan',
+          type: 'LOAN_GIVEN',
+          opening_balance: 0.00
+        });
+      expect(loanGivenRes.status).toBe(201);
+      expect(loanGivenRes.body.data.account.type).toBe('LOAN_GIVEN');
+      expect(loanGivenRes.body.data.account.subtype).toBe('DEFAULT');
+
+      // 3. INCOME category account
+      const incomeRes = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          name: 'Freelance',
+          type: 'INCOME'
+        });
+      expect(incomeRes.status).toBe(201);
+      expect(incomeRes.body.data.account.type).toBe('INCOME');
+      expect(incomeRes.body.data.account.opening_balance).toBe(0.00);
+
+      // 4. EXPENSE category account
+      const expenseRes = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          name: 'Utilities',
+          type: 'EXPENSE'
+        });
+      expect(expenseRes.status).toBe(201);
+      expect(expenseRes.body.data.account.type).toBe('EXPENSE');
+      expect(expenseRes.body.data.account.opening_balance).toBe(0.00);
+
+      // 5. Verify GET /api/accounts returns all 9 accounts (5 seeded + 4 custom)
+      const listRes = await request(app)
+        .get('/api/accounts')
+        .set('Cookie', userACookie);
+      expect(listRes.status).toBe(200);
+      expect(listRes.body.data.accounts).toHaveLength(9);
+
+      // 6. Verify BR-02: Savings Bank opening balance of 5000.00 increases bank_balance but leaves total_income at 0.00
+      const summaryRes = await request(app)
+        .get('/api/reports/summary')
+        .set('Cookie', userACookie);
+      expect(summaryRes.status).toBe(200);
+      expect(summaryRes.body.data.bank_balance).toBe(5000.00);
+      expect(summaryRes.body.data.total_income).toBe(0.00);
+      expect(summaryRes.body.data.total_expense).toBe(0.00);
+    });
+
+    it('TEST-ACC-02: creates LOAN_TAKEN accounts with CREDIT_CARD and GENERAL_LOAN subtypes and rejects invalid subtype/opening_balance combinations (AC-10-1, BR-07 v1.1 Prerequisite)', async () => {
+      // (a) Create Mastercard with subtype CREDIT_CARD
+      const ccRes = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          name: 'Mastercard',
+          type: 'LOAN_TAKEN',
+          subtype: 'CREDIT_CARD',
+          opening_balance: 0.00
+        });
+      expect(ccRes.status).toBe(201);
+      expect(ccRes.body.data.account.subtype).toBe('CREDIT_CARD');
+
+      // (b) Create Personal Bank Loan with subtype GENERAL_LOAN (and test default subtype on LOAN_TAKEN)
+      const loanRes = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          name: 'Personal Bank Loan',
+          type: 'LOAN_TAKEN',
+          subtype: 'GENERAL_LOAN',
+          opening_balance: 1000.00
+        });
+      expect(loanRes.status).toBe(201);
+      expect(loanRes.body.data.account.subtype).toBe('GENERAL_LOAN');
+      expect(loanRes.body.data.account.opening_balance).toBe(1000.00);
+
+      // (c) Invalid subtype ('CREDIT_CARD') on a CASH account -> 400 INVALID_ACCOUNT_SUBTYPE
+      const invalidSubRes = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          name: 'Invalid Cash Card',
+          type: 'CASH',
+          subtype: 'CREDIT_CARD'
+        });
+      expect(invalidSubRes.status).toBe(400);
+      expect(invalidSubRes.body.error.code).toBe('INVALID_ACCOUNT_SUBTYPE');
+
+      // (d) Non-zero opening_balance on EXPENSE or INCOME category account -> 400 INVALID_OPENING_BALANCE
+      const invalidExpBal = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          name: 'Travel Category',
+          type: 'EXPENSE',
+          opening_balance: 500.00
+        });
+      expect(invalidExpBal.status).toBe(400);
+      expect(invalidExpBal.body.error.code).toBe('INVALID_OPENING_BALANCE');
+    });
+
+    it('TEST-ACC-03: rejects duplicate account names case-insensitively and across whitespace variations per tenant while allowing another tenant to use the same name (AC-10-2, BR-01)', async () => {
+      const variants = [
+        'Checking Bank',
+        'checking bank',
+        'CHECKING BANK',
+        '  Checking   Bank  ',
+        'checking    bank'
+      ];
+
+      for (const variant of variants) {
+        const dupCreateRes = await request(app)
+          .post('/api/accounts')
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', userACookie)
+          .send({
+            name: variant,
+            type: 'CASH'
+          });
+        expect(dupCreateRes.status).toBe(409);
+        expect(dupCreateRes.body.error.code).toBe('DUPLICATE_ACCOUNT_NAME');
+
+        // Also test renaming Salary to collide with Checking Bank
+        const dupRenameRes = await request(app)
+          .patch('/api/accounts/acc-demo-salary')
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', userACookie)
+          .send({ name: variant });
+        expect(dupRenameRes.status).toBe(409);
+        expect(dupRenameRes.body.error.code).toBe('DUPLICATE_ACCOUNT_NAME');
+      }
+
+      // Separately, user_demo creates "Travel Wallet" and user_other also creates "Travel Wallet" -> both succeed (BR-01)
+      const userACreate = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ name: 'Travel Wallet', type: 'CASH' });
+      expect(userACreate.status).toBe(201);
+
+      const userBCreate = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userBCookie)
+        .send({ name: 'Travel Wallet', type: 'CASH' });
+      expect(userBCreate.status).toBe(201);
+    });
+
+    it('TEST-ACC-04: renames own account with normalized name, rejects cross-tenant rename with 404 NOT_FOUND, and blocks ADMIN with 403 (AC-10-3, BR-01, BR-10)', async () => {
+      // (a) user_demo renames own account
+      const renameRes = await request(app)
+        .patch('/api/accounts/acc-demo-checking')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ name: '  Main   Checking  ' });
+      expect(renameRes.status).toBe(200);
+      expect(renameRes.body.data.account.name).toBe('Main Checking');
+      expect(renameRes.body.data.account.normalized_name).toBe('main checking');
+
+      // (b) user_demo attempts PATCH on user_other account -> 404 NOT_FOUND
+      const crossTenantRes = await request(app)
+        .patch('/api/accounts/acc-other-checking')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ name: 'Hijacked Name' });
+      expect(crossTenantRes.status).toBe(404);
+      expect(crossTenantRes.body.error.code).toBe('NOT_FOUND');
+
+      // (c) admin_demo attempts POST /api/accounts and PATCH /api/accounts/:id -> 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN
+      const adminCreateRes = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Admin Cash', type: 'CASH' });
+      expect(adminCreateRes.status).toBe(403);
+      expect(adminCreateRes.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
+    });
+
+    it('TEST-ACC-05: handles concurrent duplicate account creation requests and P2002 database unique constraint violations deterministically with 409 DUPLICATE_ACCOUNT_NAME (AC-10-2)', async () => {
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post('/api/accounts')
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', userACookie)
+          .send({ name: 'Emergency Fund', type: 'CASH' }),
+        request(app)
+          .post('/api/accounts')
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', userACookie)
+          .send({ name: '  emergency   fund ', type: 'CASH' })
+      ]);
+
+      const statuses = [res1.status, res2.status].sort();
+      expect(statuses).toEqual([201, 409]);
+
+      const conflictRes = res1.status === 409 ? res1 : res2;
+      expect(conflictRes.body.error.code).toBe('DUPLICATE_ACCOUNT_NAME');
+
+      // Verify exactly 1 Emergency Fund account exists for user_demo
+      const matching = mockAccounts.filter(
+        (a) =>
+          a.user_id === 'user-a-uuid' &&
+          (a.normalized_name || a.name.toLowerCase()) === 'emergency fund'
+      );
+      expect(matching).toHaveLength(1);
     });
   });
 });

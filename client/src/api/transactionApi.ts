@@ -105,6 +105,25 @@ export interface RepaymentApiResponse {
   data: RepaymentResponseData;
 }
 
+export interface TransferPayload {
+  from_account_id: string;
+  to_account_id: string;
+  amount: string;
+  transaction_date: string;
+  description?: string | null;
+}
+
+export interface TransferResponseData {
+  transaction: RepaymentTransaction;
+  updated_from_cash_balance: string;
+  updated_to_cash_balance: string;
+}
+
+export interface TransferApiResponse {
+  success: boolean;
+  data: TransferResponseData;
+}
+
 export interface HistoryAllocationLine {
   id: string;
   transaction_id: string;
@@ -168,6 +187,14 @@ export async function recordExpense(payload: ExpensePayload): Promise<ExpenseRes
  */
 export async function recordRepayment(payload: RepaymentPayload): Promise<RepaymentResponseData> {
   const res = await axiosClient.post<RepaymentApiResponse>('/transactions/repayment', payload);
+  return res.data.data;
+}
+
+/**
+ * Records an internal cash transfer between two owned CASH accounts (F-11, WP-08, FR-13, BR-02).
+ */
+export async function recordTransfer(payload: TransferPayload): Promise<TransferResponseData> {
+  const res = await axiosClient.post<TransferApiResponse>('/transactions/transfer', payload);
   return res.data.data;
 }
 

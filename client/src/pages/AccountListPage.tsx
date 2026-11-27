@@ -1,5 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { getAccounts, updateOpeningBalance, Account, AccountType } from '../api/accountApi.js';
+import {
+  getAccounts,
+  createAccount,
+  updateAccount,
+  updateOpeningBalance,
+  Account,
+  AccountType,
+  AccountSubtype
+} from '../api/accountApi.js';
+import { recordTransfer } from '../api/transactionApi.js';
 import { IncomeForm } from '../components/IncomeForm.js';
 import { ExpenseForm } from '../components/ExpenseForm.js';
 import { RepaymentForm } from '../components/RepaymentForm.js';
@@ -65,6 +74,34 @@ export const AccountListPage: React.FC = () => {
   const [isRepaymentModalOpen, setIsRepaymentModalOpen] = useState<boolean>(false);
   const [repaymentInitialCCId, setRepaymentInitialCCId] = useState<string | undefined>(undefined);
 
+  // Create Account modal state (F-10, WP-08)
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
+  const [newAccName, setNewAccName] = useState<string>('');
+  const [newAccType, setNewAccType] = useState<AccountType>('CASH');
+  const [newAccSubtype, setNewAccSubtype] = useState<AccountSubtype>('DEFAULT');
+  const [newAccOpeningBalance, setNewAccOpeningBalance] = useState<string>('0.00');
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState<boolean>(false);
+
+  // Rename Account modal state (F-10, WP-08)
+  const [renameTargetAccount, setRenameTargetAccount] = useState<Account | null>(null);
+  const [renameInput, setRenameInput] = useState<string>('');
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [isRenaming, setIsRenaming] = useState<boolean>(false);
+
+  // Internal Cash Transfer modal state (F-11, WP-08)
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState<boolean>(false);
+  const [transferFromId, setTransferFromId] = useState<string>('');
+  const [transferToId, setTransferToId] = useState<string>('');
+  const [transferAmount, setTransferAmount] = useState<string>('');
+  const [transferDate, setTransferDate] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  });
+  const [transferDesc, setTransferDesc] = useState<string>('');
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [isTransferring, setIsTransferring] = useState<boolean>(false);
+
   const fetchAccounts = async () => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -99,6 +136,157 @@ export const AccountListPage: React.FC = () => {
   const handleOpenRepayment = (creditCardId?: string) => {
     setRepaymentInitialCCId(creditCardId);
     setIsRepaymentModalOpen(true);
+  };
+
+  const handleOpenCreateModal = () => {
+    setNewAccName('');
+    setNewAccType('CASH');
+    setNewAccSubtype('DEFAULT');
+    setNewAccOpeningBalance('0.00');
+    setCreateError(null);
+    setIsCreateModalOpen(true);
+  };
+
+  const handleCloseCreateModal = () => {
+    setIsCreateModalOpen(false);
+    setCreateError(null);
+  };
+
+  const handleSubmitCreateAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedName = newAccName.trim().replace(/\s+/g, ' ');
+    if (!trimmedName || trimmedName.length > 100) {
+      setCreateError('Account name is required and must be 1–100 characters.');
+      return;
+    }
+
+    const isCategory = newAccType === 'INCOME' || newAccType === 'EXPENSE';
+    let numBalance = 0;
+    if (!isCategory) {
+      numBalance = Number(newAccOpeningBalance || '0');
+      if (isNaN(numBalance) || numBalance < 0) {
+        setCreateError('Opening balance must be a non-negative number.');
+        return;
+      }
+      const parts = (newAccOpeningBalance || '0').split('.');
+      if (parts.length === 2 && parts[1].length > 2) {
+        setCreateError('Opening balance allows at most 2 decimal places.');
+        return;
+      }
+    }
+
+    setIsCreating(true);
+    setCreateError(null);
+    try {
+      const subtypeToSend: AccountSubtype =
+        newAccType === 'LOAN_TAKEN'
+          ? newAccSubtype === 'CREDIT_CARD' || newAccSubtype === 'GENERAL_LOAN'
+            ? newAccSubtype
+            : 'GENERAL_LOAN'
+          : 'DEFAULT';
+
+      const created = await createAccount({
+        name: trimmedName,
+        type: newAccType,
+        subtype: subtypeToSend,
+        opening_balance: isCategory ? 0 : numBalance
+      });
+      setAccounts((prev) => [...prev, created]);
+      handleCloseCreateModal();
+    } catch (err: any) {
+      setCreateError(
+        err?.response?.data?.error?.message || 'Failed to create account. Please try again.'
+      );
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleOpenRenameModal = (acc: Account) => {
+    setRenameTargetAccount(acc);
+    setRenameInput(acc.name);
+    setRenameError(null);
+  };
+
+  const handleCloseRenameModal = () => {
+    setRenameTargetAccount(null);
+    setRenameInput('');
+    setRenameError(null);
+  };
+
+  const handleSubmitRenameAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renameTargetAccount) return;
+    const trimmedName = renameInput.trim().replace(/\s+/g, ' ');
+    if (!trimmedName || trimmedName.length > 100) {
+      setRenameError('Account name is required and must be 1–100 characters.');
+      return;
+    }
+    setIsRenaming(true);
+    setRenameError(null);
+    try {
+      const updated = await updateAccount(renameTargetAccount.id, { name: trimmedName });
+      setAccounts((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)));
+      handleCloseRenameModal();
+    } catch (err: any) {
+      setRenameError(
+        err?.response?.data?.error?.message || 'Failed to rename account. Please try again.'
+      );
+    } finally {
+      setIsRenaming(false);
+    }
+  };
+
+  const handleOpenTransferModal = () => {
+    const cashList = accounts.filter((a) => a.type === 'CASH' && !a.is_archived);
+    setTransferFromId(cashList[0]?.id || '');
+    setTransferToId(cashList[1]?.id || cashList[0]?.id || '');
+    setTransferAmount('');
+    setTransferDesc('');
+    setTransferError(null);
+    setIsTransferModalOpen(true);
+  };
+
+  const handleCloseTransferModal = () => {
+    setIsTransferModalOpen(false);
+    setTransferError(null);
+  };
+
+  const handleSubmitTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferFromId || !transferToId) {
+      setTransferError('Please select both source and destination cash accounts.');
+      return;
+    }
+    if (transferFromId === transferToId) {
+      setTransferError('Source and destination cash accounts must be distinct.');
+      return;
+    }
+    const trimmedAmt = transferAmount.trim();
+    const numAmt = Number(trimmedAmt);
+    if (!trimmedAmt || isNaN(numAmt) || numAmt <= 0) {
+      setTransferError('Transfer amount must be strictly greater than 0.00.');
+      return;
+    }
+    setIsTransferring(true);
+    setTransferError(null);
+    try {
+      await recordTransfer({
+        from_account_id: transferFromId,
+        to_account_id: transferToId,
+        amount: trimmedAmt,
+        transaction_date: transferDate,
+        description: transferDesc.trim() || null
+      });
+      await fetchAccounts();
+      handleCloseTransferModal();
+    } catch (err: any) {
+      setTransferError(
+        err?.response?.data?.error?.message || 'Failed to transfer cash. Please try again.'
+      );
+    } finally {
+      setIsTransferring(false);
+    }
   };
 
   const handleSubmitOpeningBalance = async (e: React.FormEvent) => {
@@ -158,7 +346,21 @@ export const AccountListPage: React.FC = () => {
             Manage your financial accounts grouped by type and configure initial opening balances.
           </p>
         </div>
-        <div className="d-flex gap-2">
+        <div className="d-flex gap-2 flex-wrap">
+          <button
+            type="button"
+            className="btn btn-dark fw-semibold shadow-sm"
+            onClick={handleOpenCreateModal}
+          >
+            + Create Account
+          </button>
+          <button
+            type="button"
+            className="btn btn-outline-primary fw-semibold shadow-sm"
+            onClick={handleOpenTransferModal}
+          >
+            Transfer Cash
+          </button>
           <button
             type="button"
             className="btn btn-success fw-semibold shadow-sm"
@@ -216,10 +418,27 @@ export const AccountListPage: React.FC = () => {
                       <div className="card h-100 shadow-sm border-0">
                         <div className="card-body d-flex flex-column">
                           <div className="d-flex justify-content-between align-items-start mb-2">
-                            <h5 className="card-title fw-bold mb-0">{acc.name}</h5>
-                            <span className={`badge ${group.badgeClass}`}>
-                              {acc.type}
-                            </span>
+                            <div className="d-flex align-items-center gap-2 flex-wrap">
+                              <h5 className="card-title fw-bold mb-0">{acc.name}</h5>
+                              <button
+                                type="button"
+                                className="btn btn-link btn-sm p-0 text-decoration-none"
+                                aria-label={`Rename ${acc.name}`}
+                                onClick={() => handleOpenRenameModal(acc)}
+                              >
+                                Rename
+                              </button>
+                            </div>
+                            <div className="d-flex gap-1 flex-wrap">
+                              <span className={`badge ${group.badgeClass}`}>
+                                {acc.type}
+                              </span>
+                              {acc.type === 'LOAN_TAKEN' && acc.subtype && (
+                                <span className="badge bg-dark">
+                                  {acc.subtype}
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="my-3">
@@ -392,6 +611,354 @@ export const AccountListPage: React.FC = () => {
                     disabled={isSubmitting}
                   >
                     {isSubmitting ? 'Saving...' : 'Save Opening Balance'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Custom Account Modal (F-10, WP-08) */}
+      {isCreateModalOpen && (
+        <div
+          className="modal show d-block"
+          tabIndex={-1}
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          role="dialog"
+          aria-labelledby="createAccountModalTitle"
+          aria-modal="true"
+        >
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content shadow">
+              <div className="modal-header">
+                <h5 className="modal-title fw-bold" id="createAccountModalTitle">
+                  Create Custom Account
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close"
+                  onClick={handleCloseCreateModal}
+                  disabled={isCreating}
+                />
+              </div>
+              <form onSubmit={handleSubmitCreateAccount}>
+                <div className="modal-body">
+                  {createError && (
+                    <div className="alert alert-danger py-2 small" role="alert">
+                      {createError}
+                    </div>
+                  )}
+
+                  <div className="mb-3">
+                    <label htmlFor="newAccountNameInput" className="form-label fw-semibold">
+                      Account Name
+                    </label>
+                    <input
+                      id="newAccountNameInput"
+                      type="text"
+                      className="form-control"
+                      value={newAccName}
+                      onChange={(e) => setNewAccName(e.target.value)}
+                      placeholder="e.g. Savings Bank"
+                      maxLength={100}
+                      required
+                    />
+                  </div>
+
+                  <div className="mb-3">
+                    <label htmlFor="newAccountTypeSelect" className="form-label fw-semibold">
+                      Account Type
+                    </label>
+                    <select
+                      id="newAccountTypeSelect"
+                      className="form-select"
+                      value={newAccType}
+                      onChange={(e) => {
+                        const nextType = e.target.value as AccountType;
+                        setNewAccType(nextType);
+                        if (nextType === 'LOAN_TAKEN') {
+                          setNewAccSubtype('GENERAL_LOAN');
+                        } else {
+                          setNewAccSubtype('DEFAULT');
+                        }
+                        if (nextType === 'INCOME' || nextType === 'EXPENSE') {
+                          setNewAccOpeningBalance('0.00');
+                        }
+                      }}
+                    >
+                      <option value="CASH">CASH (Liquid Bank / Wallet)</option>
+                      <option value="LOAN_TAKEN">LOAN_TAKEN (Credit Card / General Liability)</option>
+                      <option value="LOAN_GIVEN">LOAN_GIVEN (Receivable / Lent Funds)</option>
+                      <option value="INCOME">INCOME (Income Category)</option>
+                      <option value="EXPENSE">EXPENSE (Expense Category)</option>
+                    </select>
+                  </div>
+
+                  {newAccType === 'LOAN_TAKEN' && (
+                    <div className="mb-3">
+                      <label htmlFor="newAccountSubtypeSelect" className="form-label fw-semibold">
+                        Liability Subtype
+                      </label>
+                      <select
+                        id="newAccountSubtypeSelect"
+                        className="form-select"
+                        value={newAccSubtype}
+                        onChange={(e) => setNewAccSubtype(e.target.value as AccountSubtype)}
+                      >
+                        <option value="GENERAL_LOAN">GENERAL_LOAN (General Borrowing)</option>
+                        <option value="CREDIT_CARD">CREDIT_CARD (Credit Card)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {newAccType !== 'INCOME' && newAccType !== 'EXPENSE' && (
+                    <div className="mb-3">
+                      <label htmlFor="newAccountOpeningBalanceInput" className="form-label fw-semibold">
+                        Initial Opening Balance (THB)
+                      </label>
+                      <input
+                        id="newAccountOpeningBalanceInput"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className="form-control"
+                        value={newAccOpeningBalance}
+                        onChange={(e) => setNewAccOpeningBalance(e.target.value)}
+                        placeholder="0.00"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleCloseCreateModal}
+                    disabled={isCreating}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={isCreating}
+                  >
+                    {isCreating ? 'Creating...' : 'Save Account'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename Account Modal (F-10, WP-08) */}
+      {renameTargetAccount && (
+        <div
+          className="modal show d-block"
+          tabIndex={-1}
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          role="dialog"
+          aria-labelledby="renameAccountModalTitle"
+          aria-modal="true"
+        >
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content shadow">
+              <div className="modal-header">
+                <h5 className="modal-title fw-bold" id="renameAccountModalTitle">
+                  Rename Account: {renameTargetAccount.name}
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close"
+                  onClick={handleCloseRenameModal}
+                  disabled={isRenaming}
+                />
+              </div>
+              <form onSubmit={handleSubmitRenameAccount}>
+                <div className="modal-body">
+                  {renameError && (
+                    <div className="alert alert-danger py-2 small" role="alert">
+                      {renameError}
+                    </div>
+                  )}
+                  <div className="mb-3">
+                    <label htmlFor="renameAccountInput" className="form-label fw-semibold">
+                      New Account Name
+                    </label>
+                    <input
+                      id="renameAccountInput"
+                      type="text"
+                      className="form-control"
+                      value={renameInput}
+                      onChange={(e) => setRenameInput(e.target.value)}
+                      maxLength={100}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleCloseRenameModal}
+                    disabled={isRenaming}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={isRenaming}
+                  >
+                    {isRenaming ? 'Saving...' : 'Save New Name'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Internal Cash Transfer Modal (F-11, WP-08) */}
+      {isTransferModalOpen && (
+        <div
+          className="modal show d-block"
+          tabIndex={-1}
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          role="dialog"
+          aria-labelledby="transferModalTitle"
+          aria-modal="true"
+        >
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content shadow">
+              <div className="modal-header">
+                <h5 className="modal-title fw-bold" id="transferModalTitle">
+                  Internal Cash Transfer
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close"
+                  onClick={handleCloseTransferModal}
+                  disabled={isTransferring}
+                />
+              </div>
+              <form onSubmit={handleSubmitTransfer}>
+                <div className="modal-body">
+                  {transferError && (
+                    <div className="alert alert-danger py-2 small" role="alert">
+                      {transferError}
+                    </div>
+                  )}
+
+                  <div className="mb-3">
+                    <label htmlFor="transferFromSelect" className="form-label fw-semibold">
+                      From Cash Account
+                    </label>
+                    <select
+                      id="transferFromSelect"
+                      className="form-select"
+                      value={transferFromId}
+                      onChange={(e) => setTransferFromId(e.target.value)}
+                      required
+                    >
+                      <option value="">Select source cash account...</option>
+                      {accounts
+                        .filter((a) => a.type === 'CASH' && !a.is_archived)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({formatCurrency(Number(a.current_balance ?? a.opening_balance))})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div className="mb-3">
+                    <label htmlFor="transferToSelect" className="form-label fw-semibold">
+                      To Cash Account
+                    </label>
+                    <select
+                      id="transferToSelect"
+                      className="form-select"
+                      value={transferToId}
+                      onChange={(e) => setTransferToId(e.target.value)}
+                      required
+                    >
+                      <option value="">Select destination cash account...</option>
+                      {accounts
+                        .filter((a) => a.type === 'CASH' && !a.is_archived)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({formatCurrency(Number(a.current_balance ?? a.opening_balance))})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div className="mb-3">
+                    <label htmlFor="transferAmountInput" className="form-label fw-semibold">
+                      Transfer Amount (THB)
+                    </label>
+                    <input
+                      id="transferAmountInput"
+                      type="text"
+                      inputMode="decimal"
+                      className="form-control"
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      placeholder="0.00"
+                      required
+                    />
+                  </div>
+
+                  <div className="mb-3">
+                    <label htmlFor="transferDateInput" className="form-label fw-semibold">
+                      Transaction Date
+                    </label>
+                    <input
+                      id="transferDateInput"
+                      type="date"
+                      className="form-control"
+                      value={transferDate}
+                      onChange={(e) => setTransferDate(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="mb-3">
+                    <label htmlFor="transferDescInput" className="form-label fw-semibold">
+                      Description (Optional)
+                    </label>
+                    <input
+                      id="transferDescInput"
+                      type="text"
+                      className="form-control"
+                      value={transferDesc}
+                      onChange={(e) => setTransferDesc(e.target.value)}
+                      maxLength={255}
+                      placeholder="e.g. Monthly savings transfer"
+                    />
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleCloseTransferModal}
+                    disabled={isTransferring}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={isTransferring}
+                  >
+                    {isTransferring ? 'Transferring...' : 'Confirm Transfer'}
                   </button>
                 </div>
               </form>

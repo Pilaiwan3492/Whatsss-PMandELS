@@ -16,14 +16,18 @@ export interface MockUserRecord {
 }
 
 export type AccountType = 'CASH' | 'LOAN_TAKEN' | 'LOAN_GIVEN' | 'INCOME' | 'EXPENSE';
+export type AccountSubtype = 'DEFAULT' | 'CREDIT_CARD' | 'GENERAL_LOAN';
 
 export interface MockAccountRecord {
   id: string;
   user_id: string;
   name: string;
+  normalized_name?: string;
   type: AccountType;
+  subtype?: AccountSubtype;
   opening_balance: Prisma.Decimal;
   is_opening_locked: boolean;
+  is_archived?: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -38,7 +42,9 @@ export interface MockTransactionRecord {
   total_amount: Prisma.Decimal;
   transaction_date: Date;
   description: string | null;
+  is_favorite?: boolean;
   created_at: Date;
+  updated_at?: Date;
 }
 
 export interface MockAllocationLineRecord {
@@ -240,6 +246,9 @@ export const INITIAL_MOCK_ACCOUNTS: MockAccountRecord[] = [
 
 export let mockAccounts: MockAccountRecord[] = JSON.parse(JSON.stringify(INITIAL_MOCK_ACCOUNTS)).map((acc: any) => ({
   ...acc,
+  normalized_name: acc.name.trim().replace(/\s+/g, ' ').toLowerCase(),
+  subtype: acc.type === 'LOAN_TAKEN' ? 'CREDIT_CARD' : 'DEFAULT',
+  is_archived: false,
   opening_balance: new Prisma.Decimal(acc.opening_balance),
   created_at: new Date(acc.created_at),
   updated_at: new Date(acc.updated_at)
@@ -303,6 +312,9 @@ export function resetMockUsers(): void {
 export function resetMockAccounts(): void {
   mockAccounts = INITIAL_MOCK_ACCOUNTS.map((acc) => ({
     ...acc,
+    normalized_name: acc.name.trim().replace(/\s+/g, ' ').toLowerCase(),
+    subtype: acc.type === 'LOAN_TAKEN' ? ('CREDIT_CARD' as const) : ('DEFAULT' as const),
+    is_archived: false,
     opening_balance: new Prisma.Decimal(acc.opening_balance.toString()),
     is_opening_locked: acc.is_opening_locked,
     created_at: new Date(acc.created_at),

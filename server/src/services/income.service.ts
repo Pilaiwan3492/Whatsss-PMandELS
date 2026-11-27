@@ -371,6 +371,15 @@ export async function recordIncome(
           );
         }
 
+        // System Archived Account Guard (Section 1.2 of Sprint 2 Contracts)
+        if ((primaryAccount as any).is_archived || (incomeAccount as any).is_archived) {
+          throw new IncomeError(
+            'Cannot record transaction referencing an archived account.',
+            422,
+            'ACCOUNT_ARCHIVED'
+          );
+        }
+
         // C. Atomically lock opening balance of the primary CASH and target INCOME accounts (AC-03-3)
         // lockAccounts handles idempotency safely: if already locked, it does not re-write or fail.
         await lockAccounts(tx, [primaryAccount.id, incomeAccount.id], userId);
@@ -398,7 +407,7 @@ export async function recordIncome(
         });
 
         // E. Calculate dynamically updated cash balance:
-        // Cash Balance = opening_balance + sum(RECEIVE_MONEY) - sum(PAYMENT_CHARGE)
+        // Cash Balance = opening_balance + sum(RECEIVE_MONEY) + sum(incoming CASH->CASH transfers) - sum(PAYMENT_CHARGE)
         const receiveAgg = await tx.transaction.aggregate({
           where: {
             primary_account_id: primaryAccount.id,
@@ -418,6 +427,31 @@ export async function recordIncome(
         });
 
         const zero = new Prisma.Decimal('0.00');
+        let incomingTransfer = zero;
+        if (typeof tx.allocationLine?.aggregate === 'function') {
+          const transferAgg = await tx.allocationLine.aggregate({
+            where: {
+              target_account_id: primaryAccount.id,
+              target_account: {
+                type: 'CASH',
+                user_id: userId
+              },
+              transaction: {
+                user_id: userId,
+                form: 'PAYMENT_CHARGE',
+                primary_account: {
+                  type: 'CASH',
+                  user_id: userId
+                }
+              }
+            },
+            _sum: { amount: true }
+          });
+          if (transferAgg._sum?.amount) {
+            incomingTransfer = new Prisma.Decimal(transferAgg._sum.amount.toString());
+          }
+        }
+
         const totalReceive = receiveAgg._sum?.total_amount
           ? new Prisma.Decimal(receiveAgg._sum.total_amount.toString())
           : zero;
@@ -426,7 +460,7 @@ export async function recordIncome(
           : zero;
         const openingBal = new Prisma.Decimal(primaryAccount.opening_balance.toString());
 
-        const currentBalance = openingBal.add(totalReceive).sub(totalPayment);
+        const currentBalance = openingBal.add(totalReceive).add(incomingTransfer).sub(totalPayment);
 
         return {
           transaction: {
