@@ -435,6 +435,53 @@ describe('Integration Test: PostgreSQL Live Database Peer Lending (F-12) & Gener
     expect(checkingAcc.current_balance).toBe(7500.00);
     expect(friendLoanAcc.current_balance).toBe(2500.00);
     expect(await prisma.transaction.count({ where: { user_id: tenant.userId } })).toBe(1);
+
+    // 5. Payload validation sub-cases (400 INVALID_AMOUNT, INVALID_TRANSACTION_DATE, INVALID_DESCRIPTION) on Live PostgreSQL
+    for (const badAmount of [0, -50, 10.123, '1e2']) {
+      const badAmtRes = await request(app)
+        .post('/api/transactions/loan-given')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', tenant.cookie)
+        .send({
+          from_account_id: tenant.checkingId,
+          to_account_id: tenant.friendLoanId,
+          amount: badAmount,
+          transaction_date: '2026-11-14'
+        });
+      expect(badAmtRes.status).toBe(400);
+      expect(badAmtRes.body.error.code).toBe('INVALID_AMOUNT');
+    }
+
+    const badDateRes = await request(app)
+      .post('/api/transactions/loan-given')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.checkingId,
+        to_account_id: tenant.friendLoanId,
+        amount: 100.00,
+        transaction_date: '2026-13-01'
+      });
+    expect(badDateRes.status).toBe(400);
+    expect(badDateRes.body.error.code).toBe('INVALID_TRANSACTION_DATE');
+
+    const badDescRes = await request(app)
+      .post('/api/transactions/loan-given')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.checkingId,
+        to_account_id: tenant.friendLoanId,
+        amount: 100.00,
+        transaction_date: '2026-11-14',
+        description: 'X'.repeat(256)
+      });
+    expect(badDescRes.status).toBe(400);
+    expect(badDescRes.body.error.code).toBe('INVALID_DESCRIPTION');
+    expect(await prisma.transaction.count({ where: { user_id: tenant.userId } })).toBe(1);
   });
 
   it('TEST-LOAN-GIVEN-04 (Live PostgreSQL): enforces cross-tenant isolation (404 NOT_FOUND on another user account) and blocks ADMIN financial access (403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN) with zero database writes (BR-01, BR-10)', async (ctx) => {
@@ -512,6 +559,35 @@ describe('Integration Test: PostgreSQL Live Database Peer Lending (F-12) & Gener
       });
     expect(crossRepayRes.status).toBe(404);
     expect(crossRepayRes.body.error.code).toBe('NOT_FOUND');
+
+    // 3b. Non-LOAN_GIVEN target on loan-given / non-LOAN_GIVEN source on loan-recovery -> 400 INVALID_ACCOUNT_TYPE
+    const wrongTypeGive = await request(app)
+      .post('/api/transactions/loan-given')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenantA.cookie)
+      .send({
+        from_account_id: tenantA.checkingId,
+        to_account_id: tenantA.diningId,
+        amount: 500.00,
+        transaction_date: '2026-11-12'
+      });
+    expect(wrongTypeGive.status).toBe(400);
+    expect(wrongTypeGive.body.error.code).toBe('INVALID_ACCOUNT_TYPE');
+
+    const wrongTypeRec = await request(app)
+      .post('/api/transactions/loan-recovery')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenantA.cookie)
+      .send({
+        from_account_id: tenantA.salaryId,
+        to_account_id: tenantA.checkingId,
+        amount: 500.00,
+        transaction_date: '2026-11-12'
+      });
+    expect(wrongTypeRec.status).toBe(400);
+    expect(wrongTypeRec.body.error.code).toBe('INVALID_ACCOUNT_TYPE');
 
     // 4. ADMIN role blocked across all 4 loan endpoints -> 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN (BR-10)
     const adminUser = await prisma.user.findUniqueOrThrow({ where: { username: 'admin_demo' } });
@@ -858,6 +934,165 @@ describe('Integration Test: PostgreSQL Live Database Peer Lending (F-12) & Gener
       .set('Cookie', tenant.cookie);
     expect(accRes.body.data.accounts.find((a: any) => a.id === tenant.checkingId).current_balance).toBe(1000.00);
     expect(accRes.body.data.accounts.find((a: any) => a.id === tenant.personalLoanId).current_balance).toBe(4000.00);
+
+    // 5. Payload validation sub-cases (400 INVALID_AMOUNT, INVALID_TRANSACTION_DATE, INVALID_DESCRIPTION) on Live PostgreSQL
+    for (const badAmount of [0, -100, 25.999, '1e3']) {
+      const badAmtRes = await request(app)
+        .post('/api/transactions/loan-repayment')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', tenant.cookie)
+        .send({
+          from_account_id: tenant.checkingId,
+          to_account_id: tenant.personalLoanId,
+          amount: badAmount,
+          transaction_date: '2026-11-12'
+        });
+      expect(badAmtRes.status).toBe(400);
+      expect(badAmtRes.body.error.code).toBe('INVALID_AMOUNT');
+    }
+
+    const badDateRes = await request(app)
+      .post('/api/transactions/loan-borrowing')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.personalLoanId,
+        to_account_id: tenant.checkingId,
+        amount: 500.00,
+        transaction_date: '2026-02-30'
+      });
+    expect(badDateRes.status).toBe(400);
+    expect(badDateRes.body.error.code).toBe('INVALID_TRANSACTION_DATE');
+
+    const badDescRes = await request(app)
+      .post('/api/transactions/loan-repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.checkingId,
+        to_account_id: tenant.personalLoanId,
+        amount: 500.00,
+        transaction_date: '2026-11-12',
+        description: 'Y'.repeat(256)
+      });
+    expect(badDescRes.status).toBe(400);
+    expect(badDescRes.body.error.code).toBe('INVALID_DESCRIPTION');
+    expect(await prisma.transaction.count({ where: { user_id: tenant.userId } })).toBe(0);
+  });
+
+  it('TEST-LOAN-GIVEN-03 & TEST-LOAN-TAKEN-03 Archived CASH Account Guard (Live PostgreSQL): rejects Loan Given from Archived CASH, Loan Recovery to Archived CASH, General Loan Borrowing to Archived CASH, and General Loan Repayment from Archived CASH with 422 ACCOUNT_ARCHIVED and zero partial writes', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    // Create tenant with Checking Bank (CASH = 10000.00), Friend Loan (LOAN_GIVEN = 2500.00), Personal Loan (GENERAL_LOAN = 4000.00)
+    const tenant = await createIsolatedLoanTenant({
+      checkingOpening: '10000.00',
+      friendLoanOpening: '2500.00',
+      personalLoanOpening: '4000.00'
+    });
+
+    // Archive Checking Bank (CASH account) in PostgreSQL while Friend Loan and Personal Loan remain active (is_archived = false)
+    await prisma.account.update({
+      where: { id: tenant.checkingId },
+      data: { is_archived: true }
+    });
+
+    const assertNoDatabaseMutation = async () => {
+      expect(await prisma.transaction.count({ where: { user_id: tenant.userId } })).toBe(0);
+      expect(await prisma.allocationLine.count({ where: { transaction: { user_id: tenant.userId } } })).toBe(0);
+
+      const dbChecking = await prisma.account.findUniqueOrThrow({ where: { id: tenant.checkingId } });
+      const dbFriendLoan = await prisma.account.findUniqueOrThrow({ where: { id: tenant.friendLoanId } });
+      const dbPersonalLoan = await prisma.account.findUniqueOrThrow({ where: { id: tenant.personalLoanId } });
+
+      expect(dbChecking.opening_balance.toFixed(2)).toBe('10000.00');
+      expect(dbFriendLoan.opening_balance.toFixed(2)).toBe('2500.00');
+      expect(dbPersonalLoan.opening_balance.toFixed(2)).toBe('4000.00');
+      expect(dbChecking.is_opening_locked).toBe(false);
+      expect(dbFriendLoan.is_opening_locked).toBe(false);
+      expect(dbPersonalLoan.is_opening_locked).toBe(false);
+
+      const accRes = await request(app)
+        .get('/api/accounts')
+        .set('Cookie', tenant.cookie);
+      expect(accRes.status).toBe(200);
+      expect(accRes.body.data.accounts.find((a: any) => a.id === tenant.checkingId).current_balance).toBe(10000.00);
+      expect(accRes.body.data.accounts.find((a: any) => a.id === tenant.friendLoanId).current_balance).toBe(2500.00);
+      expect(accRes.body.data.accounts.find((a: any) => a.id === tenant.personalLoanId).current_balance).toBe(4000.00);
+    };
+
+    // 1. F-12: Loan Given from Archived CASH -> 422 ACCOUNT_ARCHIVED
+    const giveFromArchivedCash = await request(app)
+      .post('/api/transactions/loan-given')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.checkingId,
+        to_account_id: tenant.friendLoanId,
+        amount: 500.00,
+        transaction_date: '2026-11-12',
+        description: 'Loan given from archived cash'
+      });
+    expect(giveFromArchivedCash.status).toBe(422);
+    expect(giveFromArchivedCash.body.error.code).toBe('ACCOUNT_ARCHIVED');
+    await assertNoDatabaseMutation();
+
+    // 2. F-12: Loan Recovery to Archived CASH -> 422 ACCOUNT_ARCHIVED
+    const recoverToArchivedCash = await request(app)
+      .post('/api/transactions/loan-recovery')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.friendLoanId,
+        to_account_id: tenant.checkingId,
+        amount: 500.00,
+        transaction_date: '2026-11-12',
+        description: 'Loan recovery to archived cash'
+      });
+    expect(recoverToArchivedCash.status).toBe(422);
+    expect(recoverToArchivedCash.body.error.code).toBe('ACCOUNT_ARCHIVED');
+    await assertNoDatabaseMutation();
+
+    // 3. F-13: General Loan Borrowing to Archived CASH -> 422 ACCOUNT_ARCHIVED
+    const borrowToArchivedCash = await request(app)
+      .post('/api/transactions/loan-borrowing')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.personalLoanId,
+        to_account_id: tenant.checkingId,
+        amount: 500.00,
+        transaction_date: '2026-11-12',
+        description: 'General loan borrowing into archived cash'
+      });
+    expect(borrowToArchivedCash.status).toBe(422);
+    expect(borrowToArchivedCash.body.error.code).toBe('ACCOUNT_ARCHIVED');
+    await assertNoDatabaseMutation();
+
+    // 4. F-13: General Loan Repayment from Archived CASH -> 422 ACCOUNT_ARCHIVED
+    const repayFromArchivedCash = await request(app)
+      .post('/api/transactions/loan-repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.checkingId,
+        to_account_id: tenant.personalLoanId,
+        amount: 500.00,
+        transaction_date: '2026-11-12',
+        description: 'General loan repayment from archived cash'
+      });
+    expect(repayFromArchivedCash.status).toBe(422);
+    expect(repayFromArchivedCash.body.error.code).toBe('ACCOUNT_ARCHIVED');
+    await assertNoDatabaseMutation();
   });
 
   it('TEST-LOAN-TAKEN-05 (Live PostgreSQL): serializes concurrent general loan repayment requests under SELECT ... FOR UPDATE row locks so only 1 succeeds when total exceeds debt and debt never becomes negative', async (ctx) => {
