@@ -1109,4 +1109,152 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
       'NOT_FOUND'
     );
   });
+
+  it('TEST-FAV-05-LIVE (Live PG16): validates explicit LOAN_TAKEN subtypes, grouped multi-allocation debt/receivable checks, and unsupported combinations in PostgreSQL', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    const tenant = await createIsolatedTenant('sub_multi_live');
+
+    // Helper: assert zero Transaction/AllocationLine writes and unchanged summary on rejection
+    const assertRejected = async (txnId: string, expectedStatus: number, expectedCode: string) => {
+      const txBefore = await prisma.transaction.count({ where: { user_id: tenant.userId } });
+      const allocBefore = await prisma.allocationLine.count({
+        where: { transaction: { user_id: tenant.userId } }
+      });
+      const sumBefore = (
+        await request(app).get('/api/reports/summary').set('Cookie', tenant.cookie)
+      ).body.data;
+
+      const res = await request(app)
+        .post(`/api/transactions/${txnId}/duplicate`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', tenant.cookie)
+        .send({});
+
+      expect(res.status).toBe(expectedStatus);
+      expect(res.body.error.code).toBe(expectedCode);
+      expect(await prisma.transaction.count({ where: { user_id: tenant.userId } })).toBe(txBefore);
+      expect(
+        await prisma.allocationLine.count({ where: { transaction: { user_id: tenant.userId } } })
+      ).toBe(allocBefore);
+      const sumAfter = (
+        await request(app).get('/api/reports/summary').set('Cookie', tenant.cookie)
+      ).body.data;
+      expect(sumAfter).toEqual(sumBefore);
+    };
+
+    // 1. DEFAULT subtype on LOAN_TAKEN MUST be rejected with 400 INVALID_ACCOUNT_SUBTYPE (never treated as CREDIT_CARD)
+    const defaultLoanAcc = await prisma.account.create({
+      data: {
+        user_id: tenant.userId,
+        name: `Ambiguous Loan ${Date.now()}`,
+        normalized_name: `ambiguous loan ${Date.now()}`,
+        type: 'LOAN_TAKEN',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('2000.00'),
+        is_opening_locked: true
+      }
+    });
+    const defaultLoanTxn = await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('500.00'),
+        transaction_date: new Date('2026-11-02T00:00:00.000Z'),
+        description: 'Default Subtype Repay',
+        allocation_lines: {
+          create: [{ target_account_id: defaultLoanAcc.id, amount: new Prisma.Decimal('500.00') }]
+        }
+      }
+    });
+    await assertRejected(defaultLoanTxn.id, 400, 'INVALID_ACCOUNT_SUBTYPE');
+
+    // 2. Multi-allocation grouped repayment targeting same CREDIT_CARD (3000 debt, repay 1000+1000=2000 leaves 1000 -> duplicate 2000 > 1000 -> 422 REPAYMENT_EXCEEDS_DEBT)
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.cc.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('3000.00'),
+        transaction_date: new Date('2026-11-03T00:00:00.000Z'),
+        description: 'CC Charge 3000',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.dining.id, amount: new Prisma.Decimal('3000.00') }]
+        }
+      }
+    });
+    const multiRepayTxn = await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('2000.00'),
+        transaction_date: new Date('2026-11-04T00:00:00.000Z'),
+        description: 'Multi-line CC Repay',
+        allocation_lines: {
+          create: [
+            { target_account_id: tenant.accounts.cc.id, amount: new Prisma.Decimal('1000.00'), notes: 'Part 1' },
+            { target_account_id: tenant.accounts.cc.id, amount: new Prisma.Decimal('1000.00'), notes: 'Part 2' }
+          ]
+        }
+      }
+    });
+    await assertRejected(multiRepayTxn.id, 422, 'REPAYMENT_EXCEEDS_DEBT');
+
+    // 3. Multi-allocation grouped LOAN_GIVEN recovery (disburse 1500, recover 600+600=1200 leaves 300 -> duplicate 1200 > 300 -> 422 RECOVERY_EXCEEDS_RECEIVABLE)
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1500.00'),
+        transaction_date: new Date('2026-11-05T00:00:00.000Z'),
+        description: 'Loan Given 1500',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.loanGiven.id, amount: new Prisma.Decimal('1500.00') }]
+        }
+      }
+    });
+    const multiRecoveryTxn = await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('1200.00'),
+        transaction_date: new Date('2026-11-06T00:00:00.000Z'),
+        description: 'Multi-line Recovery',
+        allocation_lines: {
+          create: [
+            { target_account_id: tenant.accounts.loanGiven.id, amount: new Prisma.Decimal('600.00'), notes: 'R1' },
+            { target_account_id: tenant.accounts.loanGiven.id, amount: new Prisma.Decimal('600.00'), notes: 'R2' }
+          ]
+        }
+      }
+    });
+    await assertRejected(multiRecoveryTxn.id, 422, 'RECOVERY_EXCEEDS_RECEIVABLE');
+
+    // 4. Unsupported mixed combination (PAYMENT_CHARGE mixing EXPENSE + LOAN_TAKEN) -> 400 INVALID_ACCOUNT_TYPE
+    const mixedTxn = await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('900.00'),
+        transaction_date: new Date('2026-11-07T00:00:00.000Z'),
+        description: 'Mixed EXPENSE + LOAN_TAKEN',
+        allocation_lines: {
+          create: [
+            { target_account_id: tenant.accounts.dining.id, amount: new Prisma.Decimal('400.00') },
+            { target_account_id: tenant.accounts.cc.id, amount: new Prisma.Decimal('500.00') }
+          ]
+        }
+      }
+    });
+    await assertRejected(mixedTxn.id, 400, 'INVALID_ACCOUNT_TYPE');
+  });
 });

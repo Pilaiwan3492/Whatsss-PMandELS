@@ -1302,5 +1302,54 @@ describe('WP-10 Integration Suite: F-14 Favorite & Duplicate + F-15 Search & Fil
       .send({ transaction_date: '2026-11-09' });
     expect(orderDupRes.status).toBe(201);
     expect(orderDupRes.body.data.transaction.allocations).toHaveLength(2);
+
+    // 7. Multiple allocations targeting DIFFERENT LOAN_TAKEN (CREDIT_CARD) accounts with mixed valid & invalid balances
+    mockAccounts.push({
+      id: 'acc-demo-cc-2',
+      user_id: 'user-a-uuid',
+      name: 'Mastercard',
+      normalized_name: 'mastercard',
+      type: 'LOAN_TAKEN',
+      subtype: 'CREDIT_CARD',
+      opening_balance: new Prisma.Decimal('1300.00'), // 1300 - 700 = 600.00 remaining debt
+      is_opening_locked: false,
+      is_archived: false
+    });
+    // acc-demo-cc has 2000.00 remaining debt (valid for 500.00), acc-demo-cc-2 has 600.00 debt (invalid for 700.00)
+    mockTransactions.push({
+      id: 'txn-multi-diff-cc-mixed',
+      user_id: 'user-a-uuid',
+      primary_account_id: 'acc-demo-checking',
+      form: 'PAYMENT_CHARGE',
+      total_amount: new Prisma.Decimal('1200.00'),
+      transaction_date: new Date('2026-11-09T00:00:00.000Z'),
+      description: 'Multi CC mixed valid/invalid',
+      is_favorite: false,
+      created_at: new Date('2026-11-09T08:00:00.000Z'),
+      updated_at: new Date('2026-11-09T08:00:00.000Z')
+    });
+    mockAllocationLines.push(
+      {
+        id: 'alloc-mcc-1',
+        transaction_id: 'txn-multi-diff-cc-mixed',
+        target_account_id: 'acc-demo-cc',
+        amount: new Prisma.Decimal('500.00'),
+        notes: 'Valid CC 1'
+      },
+      {
+        id: 'alloc-mcc-2',
+        transaction_id: 'txn-multi-diff-cc-mixed',
+        target_account_id: 'acc-demo-cc-2',
+        amount: new Prisma.Decimal('700.00'),
+        notes: 'Exceeds CC 2'
+      }
+    );
+    const mixedCcRes = await request(app)
+      .post('/api/transactions/txn-multi-diff-cc-mixed/duplicate')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({});
+    expect(mixedCcRes.status).toBe(422);
+    expect(mixedCcRes.body.error.code).toBe('REPAYMENT_EXCEEDS_DEBT');
   });
 });
