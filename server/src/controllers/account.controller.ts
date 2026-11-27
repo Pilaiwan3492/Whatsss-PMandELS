@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { Prisma } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '../prisma.js';
+import { acquireAccountRowLocks } from '../services/accountLock.service.js';
 
 export const MAX_OPENING_BALANCE = new Prisma.Decimal('9999999999.99');
 
@@ -461,13 +462,14 @@ export async function computeSingleAccountCurrentBalanceDecimal(
   userId: string,
   accountId: string,
   accountType: string,
-  openingDecimal: Prisma.Decimal
+  openingDecimal: Prisma.Decimal,
+  db: Prisma.TransactionClient | PrismaClient = prisma
 ): Promise<Prisma.Decimal> {
   const zero = new Prisma.Decimal('0.00');
   let currentBalanceDecimal = openingDecimal;
 
-  if (accountType === 'CASH' && typeof prisma.transaction?.aggregate === 'function') {
-    const receiveAgg = await prisma.transaction.aggregate({
+  if (accountType === 'CASH' && typeof (db as any).transaction?.aggregate === 'function') {
+    const receiveAgg = await db.transaction.aggregate({
       where: {
         user_id: userId,
         primary_account_id: accountId,
@@ -475,7 +477,7 @@ export async function computeSingleAccountCurrentBalanceDecimal(
       },
       _sum: { total_amount: true }
     });
-    const paymentAgg = await prisma.transaction.aggregate({
+    const paymentAgg = await db.transaction.aggregate({
       where: {
         user_id: userId,
         primary_account_id: accountId,
@@ -485,8 +487,8 @@ export async function computeSingleAccountCurrentBalanceDecimal(
     });
 
     let incomingTransfer = zero;
-    if (typeof prisma.allocationLine?.aggregate === 'function') {
-      const transferAgg = await prisma.allocationLine.aggregate({
+    if (typeof (db as any).allocationLine?.aggregate === 'function') {
+      const transferAgg = await db.allocationLine.aggregate({
         where: {
           target_account_id: accountId,
           target_account: {
@@ -520,8 +522,8 @@ export async function computeSingleAccountCurrentBalanceDecimal(
     let charges = zero;
     let borrowings = zero;
     let repayments = zero;
-    if (typeof prisma.transaction?.aggregate === 'function') {
-      const chargeAgg = await prisma.transaction.aggregate({
+    if (typeof (db as any).transaction?.aggregate === 'function') {
+      const chargeAgg = await db.transaction.aggregate({
         where: {
           user_id: userId,
           primary_account_id: accountId,
@@ -533,8 +535,8 @@ export async function computeSingleAccountCurrentBalanceDecimal(
         charges = new Prisma.Decimal(chargeAgg._sum.total_amount.toString());
       }
     }
-    if (typeof prisma.allocationLine?.aggregate === 'function') {
-      const repaymentAgg = await prisma.allocationLine.aggregate({
+    if (typeof (db as any).allocationLine?.aggregate === 'function') {
+      const repaymentAgg = await db.allocationLine.aggregate({
         where: {
           target_account_id: accountId,
           target_account: {
@@ -556,7 +558,7 @@ export async function computeSingleAccountCurrentBalanceDecimal(
         repayments = new Prisma.Decimal(repaymentAgg._sum.amount.toString());
       }
 
-      const borrowAgg = await prisma.allocationLine.aggregate({
+      const borrowAgg = await db.allocationLine.aggregate({
         where: {
           target_account_id: accountId,
           target_account: {
@@ -579,8 +581,8 @@ export async function computeSingleAccountCurrentBalanceDecimal(
       }
     }
     currentBalanceDecimal = openingDecimal.add(charges).add(borrowings).sub(repayments);
-  } else if (accountType === 'LOAN_GIVEN' && typeof prisma.allocationLine?.aggregate === 'function') {
-    const disburseAgg = await prisma.allocationLine.aggregate({
+  } else if (accountType === 'LOAN_GIVEN' && typeof (db as any).allocationLine?.aggregate === 'function') {
+    const disburseAgg = await db.allocationLine.aggregate({
       where: {
         target_account_id: accountId,
         target_account: { type: 'LOAN_GIVEN', user_id: userId },
@@ -592,7 +594,7 @@ export async function computeSingleAccountCurrentBalanceDecimal(
       },
       _sum: { amount: true }
     });
-    const recoverAgg = await prisma.allocationLine.aggregate({
+    const recoverAgg = await db.allocationLine.aggregate({
       where: {
         target_account_id: accountId,
         target_account: { type: 'LOAN_GIVEN', user_id: userId },
@@ -1142,6 +1144,164 @@ export async function updateAccount(req: Request, res: Response, next: NextFunct
           user_id: updated.user_id,
           name: updated.name,
           normalized_name: updated.normalized_name || normalizedName,
+          type: updated.type,
+          subtype:
+            updated.subtype ||
+            (updated.type === 'LOAN_TAKEN' ? 'CREDIT_CARD' : 'DEFAULT'),
+          opening_balance: Number(openingDecimal.toFixed(2)),
+          current_balance: Number(currentBalanceDecimal.toFixed(2)),
+          is_opening_locked: Boolean(updated.is_opening_locked),
+          is_archived: Boolean(updated.is_archived),
+          created_at:
+            updated.created_at instanceof Date
+              ? updated.created_at.toISOString()
+              : String(updated.created_at),
+          updated_at:
+            updated.updated_at instanceof Date
+              ? updated.updated_at.toISOString()
+              : String(updated.updated_at)
+        }
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PATCH /api/accounts/:id/archive
+ * Archives or unarchives an account owned by the authenticated tenant (F-18, FR-21, AC-18-2, AC-18-3).
+ * Acquires a row-level FOR UPDATE lock inside a transaction before evaluating balance/debt/receivable
+ * so concurrent balance mutations cannot race with archival validation.
+ */
+export async function archiveAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Authentication required', details: [] }
+      });
+      return;
+    }
+
+    const accountId = String(req.params.id ?? '');
+    const isArchived = req.body?.is_archived;
+
+    if (typeof isArchived !== 'boolean') {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ARCHIVE_FLAG',
+          message: 'is_archived must be a boolean.',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const executeInTx = async (tx: Prisma.TransactionClient) => {
+      await acquireAccountRowLocks(tx, [accountId], userId);
+
+      const account = await tx.account.findFirst({
+        where: {
+          id: accountId,
+          user_id: userId
+        }
+      });
+
+      if (!account) {
+        return { kind: 'NOT_FOUND' as const };
+      }
+
+      const openingDecimal = new Prisma.Decimal(account.opening_balance.toString());
+      const currentBalanceDecimal = await computeSingleAccountCurrentBalanceDecimal(
+        userId,
+        account.id,
+        account.type,
+        openingDecimal,
+        tx
+      );
+
+      if (isArchived && ['CASH', 'LOAN_TAKEN', 'LOAN_GIVEN'].includes(account.type)) {
+        const roundedBalance = currentBalanceDecimal.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+        if (!roundedBalance.equals(new Prisma.Decimal('0.00'))) {
+          return {
+            kind: 'NON_ZERO' as const,
+            balance: roundedBalance.toFixed(2)
+          };
+        }
+      }
+
+      let updated: any;
+      if (typeof (tx.account as any).update === 'function') {
+        updated = await (tx.account as any).update({
+          where: { id: account.id },
+          data: {
+            is_archived: isArchived,
+            updated_at: new Date()
+          }
+        });
+      } else {
+        await tx.account.updateMany({
+          where: { id: account.id, user_id: userId },
+          data: {
+            is_archived: isArchived,
+            updated_at: new Date()
+          } as any
+        });
+        updated = await tx.account.findFirst({
+          where: { id: account.id, user_id: userId }
+        });
+      }
+
+      return {
+        kind: 'OK' as const,
+        updated,
+        openingDecimal,
+        currentBalanceDecimal
+      };
+    };
+
+    const result =
+      typeof (prisma as any).$transaction === 'function'
+        ? await (prisma as any).$transaction(executeInTx)
+        : await executeInTx(prisma as unknown as Prisma.TransactionClient);
+
+    if (result.kind === 'NOT_FOUND') {
+      res.status(404).json({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Account not found.',
+          details: []
+        }
+      });
+      return;
+    }
+
+    if (result.kind === 'NON_ZERO') {
+      res.status(422).json({
+        success: false,
+        error: {
+          code: 'ACCOUNT_BALANCE_NON_ZERO',
+          message: `Cannot archive an account with a non-zero balance (${result.balance}).`,
+          details: []
+        }
+      });
+      return;
+    }
+
+    const { updated, openingDecimal, currentBalanceDecimal } = result;
+    res.status(200).json({
+      success: true,
+      data: {
+        account: {
+          id: updated.id,
+          user_id: updated.user_id,
+          name: updated.name,
+          normalized_name:
+            updated.normalized_name || normalizeAccountName(updated.name).normalizedName,
           type: updated.type,
           subtype:
             updated.subtype ||

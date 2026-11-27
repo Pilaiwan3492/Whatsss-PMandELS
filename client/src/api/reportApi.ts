@@ -36,3 +36,34 @@ export async function getFinancialSummary(): Promise<FinancialSummaryData> {
   const res = await reportClient.get<FinancialSummaryResponse>('/reports/summary');
   return res.data.data;
 }
+
+export interface CategorySpendingItem {
+  category_id: string;
+  category_name: string;
+  total_amount: string;
+  percentage: string;
+  transaction_count: number;
+}
+
+export interface CategorySpendingReportData {
+  total_expense: string;
+  categories: CategorySpendingItem[];
+}
+
+export interface CategorySpendingReportResponse {
+  success: boolean;
+  data: CategorySpendingReportData;
+}
+
+export async function getCategorySpendingReport(params?: {
+  startDate?: string;
+  endDate?: string;
+}): Promise<CategorySpendingReportData> {
+  const queryParams: Record<string, string> = {};
+  if (params?.startDate) queryParams.startDate = params.startDate;
+  if (params?.endDate) queryParams.endDate = params.endDate;
+  const res = await reportClient.get<CategorySpendingReportResponse>('/reports/categories', {
+    params: queryParams
+  });
+  return res.data.data;
+}

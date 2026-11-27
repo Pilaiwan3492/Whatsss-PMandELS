@@ -922,4 +922,45 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
       expect(screen.getByTestId('txn-row-tx-salary')).toBeDefined();
     });
   });
+
+  it('TEST-UI-AUDIT-01: opens Audit History modal on Audit button click and renders correction snapshots', async () => {
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+    const auditSpy = vi.spyOn(transactionApi, 'getTransactionAuditHistory').mockResolvedValue([
+      {
+        id: 'log-1',
+        sequence_number: 2,
+        transaction_id: 'tx-salary',
+        user_id: 'u1-uuid',
+        action: 'CORRECTED',
+        previous_snapshot: {
+          total_amount: '20000.00',
+          transaction_date: '2026-11-02',
+          description: 'Salary',
+          allocations: []
+        },
+        new_snapshot: {
+          total_amount: '22000.00',
+          transaction_date: '2026-11-02',
+          description: 'Salary + Bonus',
+          allocations: []
+        },
+        created_at: '2026-11-05T12:00:00.000Z'
+      }
+    ]);
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-audit-tx-salary')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-audit-tx-salary'));
+
+    await waitFor(() => {
+      expect(auditSpy).toHaveBeenCalledWith('tx-salary');
+      expect(screen.getByTestId('audit-history-modal')).toBeDefined();
+      expect(screen.getByTestId('audit-entry-0').textContent).toContain('20000.00 THB');
+      expect(screen.getByTestId('audit-entry-0').textContent).toContain('22000.00 THB');
+    });
+  });
 });

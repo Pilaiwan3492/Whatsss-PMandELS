@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { prisma } from '../prisma.js';
 import { recordIncome, IncomeError } from '../services/income.service.js';
 import { recordExpense, ExpenseError } from '../services/expense.service.js';
 import { recordRepayment, RepaymentError } from '../services/repayment.service.js';
@@ -568,6 +569,90 @@ export async function correctTransactionHandler(
       });
       return;
     }
+    next(err);
+  }
+}
+
+/**
+ * GET /api/transactions/:id/audit-history
+ * Returns immutable TransactionAuditLog snapshots for a user-owned transaction
+ * in deterministic reverse chronological order (F-18, FR-21, AC-18-1, BR-01, BR-10).
+ */
+export async function getTransactionAuditHistory(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const transactionId = String(req.params.id ?? '');
+    const txn = await prisma.transaction.findFirst({
+      where: {
+        id: transactionId,
+        user_id: userId
+      },
+      select: { id: true }
+    });
+
+    if (!txn) {
+      res.status(404).json({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Transaction not found.',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const logs = await prisma.transactionAuditLog.findMany({
+      where: {
+        transaction_id: transactionId,
+        user_id: userId
+      },
+      orderBy: [
+        { sequence_number: 'desc' },
+        { created_at: 'desc' },
+        { id: 'desc' }
+      ]
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        transaction_id: transactionId,
+        audit_logs: logs.map((log: any) => ({
+          id: log.id,
+          sequence_number:
+            log.sequence_number !== undefined && log.sequence_number !== null
+              ? Number(log.sequence_number)
+              : undefined,
+          transaction_id: log.transaction_id,
+          user_id: log.user_id,
+          action: log.action,
+          previous_snapshot: log.previous_snapshot,
+          new_snapshot: log.new_snapshot,
+          created_at:
+            log.created_at instanceof Date
+              ? log.created_at.toISOString()
+              : String(log.created_at)
+        }))
+      }
+    });
+  } catch (err) {
     next(err);
   }
 }

@@ -6,7 +6,8 @@ import {
   getAccountById,
   createAccount,
   updateAccount,
-  updateOpeningBalance
+  updateOpeningBalance,
+  archiveAccount
 } from '../controllers/account.controller.js';
 
 const router = Router();
@@ -20,5 +21,6 @@ router.post('/', createAccount);
 router.get('/:id', getAccountById);
 router.patch('/:id', updateAccount);
 router.patch('/:id/opening-balance', updateOpeningBalance);
+router.patch('/:id/archive', archiveAccount);
 
 export default router;

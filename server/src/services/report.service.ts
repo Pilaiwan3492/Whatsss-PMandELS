@@ -530,3 +530,176 @@ export async function getTransactionHistory(
     };
   });
 }
+
+export class ReportError extends Error {
+  statusCode: number;
+  code: string;
+  details: any[];
+
+  constructor(
+    message: string,
+    statusCode: number = 400,
+    code: string = 'INVALID_DATE_RANGE',
+    details: any[] = []
+  ) {
+    super(message);
+    this.name = 'ReportError';
+    this.statusCode = statusCode;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+export interface CategorySpendingItem {
+  category_id: string;
+  category_name: string;
+  total_amount: string;
+  percentage: string;
+  transaction_count: number;
+}
+
+export interface CategorySpendingReportResult {
+  total_expense: string;
+  categories: CategorySpendingItem[];
+}
+
+export interface CategorySpendingQuery {
+  startDate?: unknown;
+  endDate?: unknown;
+}
+
+function parseReportCalendarDate(raw: unknown, fieldName: string): Date {
+  if (typeof raw !== 'string') {
+    throw new ReportError(`${fieldName} must be a valid YYYY-MM-DD calendar date.`, 400, 'INVALID_DATE_RANGE');
+  }
+  const trimmed = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    throw new ReportError(`${fieldName} must be in YYYY-MM-DD format.`, 400, 'INVALID_DATE_RANGE');
+  }
+  const [yStr, mStr, dStr] = trimmed.split('-');
+  const year = parseInt(yStr, 10);
+  const month = parseInt(mStr, 10);
+  const day = parseInt(dStr, 10);
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  if (utc.getUTCFullYear() !== year || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) {
+    throw new ReportError(`${fieldName} is not a valid calendar date.`, 400, 'INVALID_DATE_RANGE');
+  }
+  return utc;
+}
+
+/**
+ * Computes category-wise EXPENSE spending summaries for a tenant within an optional date range (F-17, FR-20).
+ * Strictly excludes opening balances (BR-02), internal cash transfers (F-11, BR-02),
+ * credit card repayments (F-07, BR-08), and loan principal flows (F-12, F-13, BR-08).
+ */
+export async function getCategorySpendingReport(
+  userId: string,
+  query: CategorySpendingQuery = {},
+  prismaClient: PrismaClient = defaultPrisma
+): Promise<CategorySpendingReportResult> {
+  const startDateRaw = query.startDate !== undefined && query.startDate !== '' ? query.startDate : undefined;
+  const endDateRaw = query.endDate !== undefined && query.endDate !== '' ? query.endDate : undefined;
+
+  let startDateObj: Date | undefined;
+  let endDateObj: Date | undefined;
+
+  if (startDateRaw !== undefined) {
+    startDateObj = parseReportCalendarDate(startDateRaw, 'startDate');
+  }
+  if (endDateRaw !== undefined) {
+    endDateObj = parseReportCalendarDate(endDateRaw, 'endDate');
+  }
+  if (startDateObj && endDateObj && startDateObj.getTime() > endDateObj.getTime()) {
+    throw new ReportError('startDate must be less than or equal to endDate.', 400, 'INVALID_DATE_RANGE');
+  }
+
+  const transactionDateFilter =
+    startDateObj || endDateObj
+      ? {
+          ...(startDateObj ? { gte: startDateObj } : {}),
+          ...(endDateObj ? { lte: endDateObj } : {})
+        }
+      : undefined;
+
+  const lines = await prismaClient.allocationLine.findMany({
+    where: {
+      target_account: {
+        type: 'EXPENSE',
+        user_id: userId
+      },
+      transaction: {
+        user_id: userId,
+        form: 'PAYMENT_CHARGE',
+        ...(transactionDateFilter ? { transaction_date: transactionDateFilter } : {})
+      }
+    },
+    select: {
+      transaction_id: true,
+      target_account_id: true,
+      amount: true,
+      target_account: {
+        select: {
+          id: true,
+          name: true
+        }
+      }
+    }
+  });
+
+  const zero = new Prisma.Decimal('0.00');
+  const categoryMap = new Map<
+    string,
+    {
+      category_id: string;
+      category_name: string;
+      totalDecimal: Prisma.Decimal;
+      transactionIds: Set<string>;
+    }
+  >();
+
+  let totalExpenseDecimal = zero;
+
+  for (const line of lines) {
+    const amountDecimal = new Prisma.Decimal(line.amount.toString());
+    totalExpenseDecimal = totalExpenseDecimal.add(amountDecimal);
+
+    const categoryId = line.target_account?.id ?? line.target_account_id;
+    const categoryName = line.target_account?.name ?? 'Unknown Category';
+    const existing = categoryMap.get(categoryId);
+    if (existing) {
+      existing.totalDecimal = existing.totalDecimal.add(amountDecimal);
+      existing.transactionIds.add(line.transaction_id);
+    } else {
+      categoryMap.set(categoryId, {
+        category_id: categoryId,
+        category_name: categoryName,
+        totalDecimal: amountDecimal,
+        transactionIds: new Set([line.transaction_id])
+      });
+    }
+  }
+
+  const sortedEntries = Array.from(categoryMap.values()).sort((a, b) => {
+    const cmp = b.totalDecimal.comparedTo(a.totalDecimal);
+    if (cmp !== 0) return cmp;
+    return a.category_name.localeCompare(b.category_name);
+  });
+
+  const categories: CategorySpendingItem[] = sortedEntries.map((entry) => {
+    const percentageDecimal = totalExpenseDecimal.gt(zero)
+      ? entry.totalDecimal.mul(100).div(totalExpenseDecimal).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+      : zero;
+    return {
+      category_id: entry.category_id,
+      category_name: entry.category_name,
+      total_amount: entry.totalDecimal.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toFixed(2),
+      percentage: percentageDecimal.toFixed(2),
+      transaction_count: entry.transactionIds.size
+    };
+  });
+
+  return {
+    total_expense: totalExpenseDecimal.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toFixed(2),
+    categories
+  };
+}

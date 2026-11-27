@@ -262,4 +262,60 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
       expect(screen.getByText('No transactions recorded yet.')).toBeDefined();
     });
   });
+
+  it('TEST-UI-REP-CAT-01: renders period-filtered category spending report with percentages and handles invalid range errors', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+    const catSpy = vi
+      .spyOn(reportApi, 'getCategorySpendingReport')
+      .mockResolvedValueOnce({
+        total_expense: '3000.00',
+        categories: [
+          {
+            category_id: 'cat-grocery',
+            category_name: 'Grocery',
+            total_amount: '2000.00',
+            percentage: '66.67',
+            transaction_count: 1
+          },
+          {
+            category_id: 'cat-dining',
+            category_name: 'Dining',
+            total_amount: '1000.00',
+            percentage: '33.33',
+            transaction_count: 1
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        total_expense: '1000.00',
+        categories: [
+          {
+            category_id: 'cat-dining',
+            category_name: 'Dining',
+            total_amount: '1000.00',
+            percentage: '100.00',
+            transaction_count: 1
+          }
+        ]
+      });
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-total').textContent).toContain('3,000.00 THB');
+      expect(screen.getByTestId('category-row-Grocery').textContent).toContain('66.67%');
+      expect(screen.getByTestId('category-row-Dining').textContent).toContain('33.33%');
+    });
+
+    fireEvent.change(screen.getByLabelText('Start Date'), { target: { value: '2026-11-01' } });
+    fireEvent.change(screen.getByLabelText('End Date'), { target: { value: '2026-11-02' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(catSpy).toHaveBeenLastCalledWith({ startDate: '2026-11-01', endDate: '2026-11-02' });
+      expect(screen.getByTestId('category-report-total').textContent).toContain('1,000.00 THB');
+      expect(screen.getByTestId('category-row-Dining').textContent).toContain('100.00%');
+    });
+  });
 });

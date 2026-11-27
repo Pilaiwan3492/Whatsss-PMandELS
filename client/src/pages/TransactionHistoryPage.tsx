@@ -4,8 +4,10 @@ import {
   getTransactions,
   toggleFavorite,
   duplicateTransaction,
+  getTransactionAuditHistory,
   HistoryTransaction,
-  TransactionFilterParams
+  TransactionFilterParams,
+  TransactionAuditLogEntry
 } from '../api/transactionApi.js';
 import { getAccounts, Account } from '../api/accountApi.js';
 import { TransactionCorrectionModal } from '../components/TransactionCorrectionModal.js';
@@ -88,6 +90,27 @@ export const TransactionHistoryPage: React.FC = () => {
   const [editingTxn, setEditingTxn] = useState<HistoryTransaction | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Audit History Modal state (F-18)
+  const [auditTargetTxn, setAuditTargetTxn] = useState<HistoryTransaction | null>(null);
+  const [auditLogs, setAuditLogs] = useState<TransactionAuditLogEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState<boolean>(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
+  const handleOpenAuditHistory = async (tx: HistoryTransaction) => {
+    setAuditTargetTxn(tx);
+    setAuditLogs([]);
+    setAuditError(null);
+    setAuditLoading(true);
+    try {
+      const logs = await getTransactionAuditHistory(tx.id);
+      setAuditLogs(logs);
+    } catch (err: any) {
+      setAuditError(err?.response?.data?.error?.message || 'Failed to load audit history.');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
 
   // Quick tab filter (client-side refinement over fetched results)
   const [selectedFilter, setSelectedFilter] = useState<'ALL' | SemanticKind>('ALL');
@@ -656,7 +679,7 @@ export const TransactionHistoryPage: React.FC = () => {
                           </button>
                           <button
                             type="button"
-                            className="btn btn-sm btn-outline-secondary"
+                            className="btn btn-sm btn-outline-secondary me-1"
                             onClick={() => {
                               setCorrectionFeedback(null);
                               setEditingTxn(tx);
@@ -664,6 +687,14 @@ export const TransactionHistoryPage: React.FC = () => {
                             data-testid={`btn-edit-${tx.id}`}
                           >
                             Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-dark"
+                            onClick={() => handleOpenAuditHistory(tx)}
+                            data-testid={`btn-audit-${tx.id}`}
+                          >
+                            Audit
                           </button>
                         </td>
                       </tr>
@@ -726,6 +757,80 @@ export const TransactionHistoryPage: React.FC = () => {
             await fetchHistory();
           }}
         />
+      )}
+
+      {/* Transaction Audit History Modal (F-18) */}
+      {auditTargetTxn && (
+        <div
+          className="modal d-block"
+          tabIndex={-1}
+          role="dialog"
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          data-testid="audit-history-modal"
+        >
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title fw-bold">
+                  Audit History — {auditTargetTxn.description || auditTargetTxn.transaction_date}
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close"
+                  onClick={() => setAuditTargetTxn(null)}
+                />
+              </div>
+              <div className="modal-body">
+                {auditLoading ? (
+                  <div className="text-center py-3 text-muted">Loading audit history...</div>
+                ) : auditError ? (
+                  <div className="alert alert-danger" role="alert">
+                    {auditError}
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <p className="text-muted mb-0">
+                    No correction history recorded for this transaction.
+                  </p>
+                ) : (
+                  <div className="d-flex flex-column gap-3">
+                    {auditLogs.map((log, idx) => (
+                      <div key={log.id} className="border rounded p-3 bg-light" data-testid={`audit-entry-${idx}`}>
+                        <div className="d-flex justify-content-between align-items-center mb-2">
+                          <span className="badge bg-dark">{log.action}</span>
+                          <small className="text-muted">{log.created_at}</small>
+                        </div>
+                        <div className="row g-2 small">
+                          <div className="col-md-6">
+                            <div className="fw-semibold text-muted">Previous Snapshot</div>
+                            <div>Amount: {log.previous_snapshot?.total_amount} THB</div>
+                            <div>Date: {log.previous_snapshot?.transaction_date}</div>
+                            <div>Description: {log.previous_snapshot?.description || '—'}</div>
+                          </div>
+                          <div className="col-md-6">
+                            <div className="fw-semibold text-success">New Snapshot</div>
+                            <div>Amount: {log.new_snapshot?.total_amount} THB</div>
+                            <div>Date: {log.new_snapshot?.transaction_date}</div>
+                            <div>Description: {log.new_snapshot?.description || '—'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setAuditTargetTxn(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Duplicate Transaction Modal (F-14) */}
