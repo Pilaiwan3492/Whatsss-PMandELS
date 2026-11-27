@@ -1147,32 +1147,40 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
       expect(sumAfter).toEqual(sumBefore);
     };
 
-    // 1. DEFAULT subtype on LOAN_TAKEN MUST be rejected with 400 INVALID_ACCOUNT_SUBTYPE (never treated as CREDIT_CARD)
-    const defaultLoanAcc = await prisma.account.create({
+    // 1. GENERAL_LOAN subtype on LOAN_TAKEN duplicates cleanly below the 500 THB CC floor (exempt from BR-07 v1.1)
+    await prisma.transaction.create({
       data: {
         user_id: tenant.userId,
-        name: `Ambiguous Loan ${Date.now()}`,
-        normalized_name: `ambiguous loan ${Date.now()}`,
-        type: 'LOAN_TAKEN',
-        subtype: 'DEFAULT',
-        opening_balance: new Prisma.Decimal('2000.00'),
-        is_opening_locked: true
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('2000.00'),
+        transaction_date: new Date('2026-11-01T00:00:00.000Z'),
+        description: 'General Loan Borrow',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.generalLoan.id, amount: new Prisma.Decimal('2000.00') }]
+        }
       }
     });
-    const defaultLoanTxn = await prisma.transaction.create({
+    const glRepayTxn = await prisma.transaction.create({
       data: {
         user_id: tenant.userId,
         primary_account_id: tenant.accounts.checking.id,
         form: 'PAYMENT_CHARGE',
-        total_amount: new Prisma.Decimal('500.00'),
+        total_amount: new Prisma.Decimal('200.00'),
         transaction_date: new Date('2026-11-02T00:00:00.000Z'),
-        description: 'Default Subtype Repay',
+        description: 'GL Repay 200',
         allocation_lines: {
-          create: [{ target_account_id: defaultLoanAcc.id, amount: new Prisma.Decimal('500.00') }]
+          create: [{ target_account_id: tenant.accounts.generalLoan.id, amount: new Prisma.Decimal('200.00') }]
         }
       }
     });
-    await assertRejected(defaultLoanTxn.id, 400, 'INVALID_ACCOUNT_SUBTYPE');
+    const glDupRes = await request(app)
+      .post(`/api/transactions/${glRepayTxn.id}/duplicate`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({ transaction_date: '2026-11-02' });
+    expect(glDupRes.status).toBe(201);
 
     // 2. Multi-allocation grouped repayment targeting same CREDIT_CARD (3000 debt, repay 1000+1000=2000 leaves 1000 -> duplicate 2000 > 1000 -> 422 REPAYMENT_EXCEEDS_DEBT)
     await prisma.transaction.create({
