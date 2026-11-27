@@ -95,50 +95,7 @@ function makeAuthCookie(user: { id: string; username: string; role: string }) {
   return `token=${token}`;
 }
 
-function seedGoldenState() {
-  // Income 20000 -> Checking Bank balance becomes 20000 (then -3000 repay = 17000)
-  mockTransactions.push({
-    id: 'tx-income-1',
-    user_id: 'user-a-uuid',
-    primary_account_id: 'acc-demo-checking',
-    form: 'RECEIVE_MONEY',
-    total_amount: new Prisma.Decimal('20000.00'),
-    transaction_date: new Date('2026-11-02'),
-    description: 'Salary',
-    created_at: new Date('2026-11-02T10:00:00Z')
-  });
-
-  // CC purchase 3000 + CC repayment 3000 -> Visa CC debt is 0.00
-  mockTransactions.push({
-    id: 'tx-expense-1',
-    user_id: 'user-a-uuid',
-    primary_account_id: 'acc-demo-cc',
-    form: 'PAYMENT_CHARGE',
-    total_amount: new Prisma.Decimal('3000.00'),
-    transaction_date: new Date('2026-11-03'),
-    description: 'Purchase',
-    created_at: new Date('2026-11-03T12:00:00Z')
-  });
-  mockTransactions.push({
-    id: 'tx-repay-1',
-    user_id: 'user-a-uuid',
-    primary_account_id: 'acc-demo-checking',
-    form: 'PAYMENT_CHARGE',
-    total_amount: new Prisma.Decimal('3000.00'),
-    transaction_date: new Date('2026-11-04'),
-    description: 'Repayment',
-    created_at: new Date('2026-11-04T15:00:00Z')
-  });
-  mockAllocationLines.push({
-    id: 'line-repay-1',
-    transaction_id: 'tx-repay-1',
-    target_account_id: 'acc-demo-cc',
-    amount: new Prisma.Decimal('3000.00'),
-    notes: null
-  });
-}
-
-describe('Integration Test: Account Archival & Unarchival (F-18, TEST-AUDIT-02, TEST-AUDIT-04)', () => {
+describe('Integration Test: Account Archival & Unarchival Lifecycle (F-18, TEST-AUDIT-02, TEST-AUDIT-04)', () => {
   const userDemoCookie = makeAuthCookie({
     id: 'user-a-uuid',
     username: 'user_demo',
@@ -158,102 +115,140 @@ describe('Integration Test: Account Archival & Unarchival (F-18, TEST-AUDIT-02, 
   beforeEach(() => {
     resetMockAccounts();
     resetMockTransactions();
-    seedGoldenState();
   });
 
-  it('TEST-AUDIT-02: rejects archiving CASH, LOAN_TAKEN, and LOAN_GIVEN accounts with non-zero balance/debt/receivable (422 ACCOUNT_BALANCE_NON_ZERO)', async () => {
-    // 1. CASH Checking Bank has balance 17000.00
-    const cashRes = await request(app)
-      .patch('/api/accounts/acc-demo-checking/archive')
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Cookie', userDemoCookie)
-      .send({ is_archived: true });
+  it('TEST-AUDIT-02: enforces zero-balance archival preconditions and archive/unarchive lifecycle across all 5 account types', async () => {
+    // Prepare zero and non-zero fixtures across all 5 types + both LOAN_TAKEN subtypes
+    mockAccounts.push(
+      {
+        id: 'acc-cash-zero',
+        user_id: 'user-a-uuid',
+        name: 'Zero Cash Vault',
+        type: 'CASH',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      {
+        id: 'acc-cash-nonzero',
+        user_id: 'user-a-uuid',
+        name: 'Funded Cash',
+        type: 'CASH',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('1500.00'),
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      {
+        id: 'acc-cc-nonzero',
+        user_id: 'user-a-uuid',
+        name: 'Card Debt NonZero',
+        type: 'LOAN_TAKEN',
+        subtype: 'CREDIT_CARD',
+        opening_balance: new Prisma.Decimal('2000.00'),
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      {
+        id: 'acc-genloan-zero',
+        user_id: 'user-a-uuid',
+        name: 'General Loan Zero',
+        type: 'LOAN_TAKEN',
+        subtype: 'GENERAL_LOAN',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      {
+        id: 'acc-genloan-nonzero',
+        user_id: 'user-a-uuid',
+        name: 'General Loan NonZero',
+        type: 'LOAN_TAKEN',
+        subtype: 'GENERAL_LOAN',
+        opening_balance: new Prisma.Decimal('800.00'),
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      {
+        id: 'acc-loangiven-zero',
+        user_id: 'user-a-uuid',
+        name: 'Receivable Zero',
+        type: 'LOAN_GIVEN',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      {
+        id: 'acc-loangiven-nonzero',
+        user_id: 'user-a-uuid',
+        name: 'Receivable NonZero',
+        type: 'LOAN_GIVEN',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('2500.00'),
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      }
+    );
 
-    expect(cashRes.status).toBe(422);
-    expect(cashRes.body.error.code).toBe('ACCOUNT_BALANCE_NON_ZERO');
+    // 1. Reject non-zero CASH, LOAN_TAKEN (CREDIT_CARD & GENERAL_LOAN), LOAN_GIVEN
+    for (const id of ['acc-cash-nonzero', 'acc-cc-nonzero', 'acc-genloan-nonzero', 'acc-loangiven-nonzero']) {
+      const failRes = await request(app)
+        .patch(`/api/accounts/${id}/archive`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userDemoCookie)
+        .send({ is_archived: true });
+      expect(failRes.status).toBe(422);
+      expect(failRes.body.error.code).toBe('ACCOUNT_BALANCE_NON_ZERO');
+      expect(mockAccounts.find((a) => a.id === id)!.is_archived).toBe(false);
+    }
 
-    // 2. LOAN_TAKEN account with 500.00 opening debt -> rejected
-    mockAccounts.push({
-      id: 'acc-loan-taken-nonzero',
-      user_id: 'user-a-uuid',
-      name: 'Car Loan',
-      normalized_name: 'car loan',
-      type: 'LOAN_TAKEN',
-      subtype: 'GENERAL_LOAN',
-      opening_balance: new Prisma.Decimal('500.00'),
-      is_opening_locked: false,
-      is_archived: false,
-      created_at: new Date(),
-      updated_at: new Date()
-    });
+    // 2. Archive and Unarchive zero-balance CASH, LOAN_TAKEN/CREDIT_CARD, LOAN_TAKEN/GENERAL_LOAN, LOAN_GIVEN, INCOME, EXPENSE
+    for (const id of [
+      'acc-cash-zero',
+      'acc-demo-cc',
+      'acc-genloan-zero',
+      'acc-loangiven-zero',
+      'acc-demo-salary',
+      'acc-demo-dining'
+    ]) {
+      const archRes = await request(app)
+        .patch(`/api/accounts/${id}/archive`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userDemoCookie)
+        .send({ is_archived: true });
+      expect(archRes.status).toBe(200);
+      expect(archRes.body.data.account.is_archived).toBe(true);
+      expect(archRes.body.data.account.current_balance).toBe(0);
+      expect(mockAccounts.find((a) => a.id === id)!.is_archived).toBe(true);
 
-    const loanTakenRes = await request(app)
-      .patch('/api/accounts/acc-loan-taken-nonzero/archive')
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Cookie', userDemoCookie)
-      .send({ is_archived: true });
-
-    expect(loanTakenRes.status).toBe(422);
-    expect(loanTakenRes.body.error.code).toBe('ACCOUNT_BALANCE_NON_ZERO');
-
-    // 3. LOAN_GIVEN account with 250.00 opening receivable -> rejected
-    mockAccounts.push({
-      id: 'acc-loan-given-nonzero',
-      user_id: 'user-a-uuid',
-      name: 'Friend Bob',
-      normalized_name: 'friend bob',
-      type: 'LOAN_GIVEN',
-      subtype: 'DEFAULT',
-      opening_balance: new Prisma.Decimal('250.00'),
-      is_opening_locked: false,
-      is_archived: false,
-      created_at: new Date(),
-      updated_at: new Date()
-    });
-
-    const loanGivenRes = await request(app)
-      .patch('/api/accounts/acc-loan-given-nonzero/archive')
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Cookie', userDemoCookie)
-      .send({ is_archived: true });
-
-    expect(loanGivenRes.status).toBe(422);
-    expect(loanGivenRes.body.error.code).toBe('ACCOUNT_BALANCE_NON_ZERO');
+      const unarchRes = await request(app)
+        .patch(`/api/accounts/${id}/archive`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userDemoCookie)
+        .send({ is_archived: false });
+      expect(unarchRes.status).toBe(200);
+      expect(unarchRes.body.data.account.is_archived).toBe(false);
+      expect(mockAccounts.find((a) => a.id === id)!.is_archived).toBe(false);
+    }
   });
 
-  it('TEST-AUDIT-04: allows archiving and unarchiving zero-balance LOAN_TAKEN, CASH, and EXPENSE accounts', async () => {
-    // Visa Credit Card has 0.00 debt after 3000.00 purchase + 3000.00 repayment
-    const archiveCcRes = await request(app)
-      .patch('/api/accounts/acc-demo-cc/archive')
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Cookie', userDemoCookie)
-      .send({ is_archived: true });
-
-    expect(archiveCcRes.status).toBe(200);
-    expect(archiveCcRes.body.data.account.is_archived).toBe(true);
-
-    // Unarchive Visa Credit Card
-    const unarchiveCcRes = await request(app)
-      .patch('/api/accounts/acc-demo-cc/archive')
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Cookie', userDemoCookie)
-      .send({ is_archived: false });
-
-    expect(unarchiveCcRes.status).toBe(200);
-    expect(unarchiveCcRes.body.data.account.is_archived).toBe(false);
-
-    // Archive EXPENSE category (always allowed)
-    const archiveExpenseRes = await request(app)
-      .patch('/api/accounts/acc-demo-dining/archive')
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Cookie', userDemoCookie)
-      .send({ is_archived: true });
-
-    expect(archiveExpenseRes.status).toBe(200);
-    expect(archiveExpenseRes.body.data.account.is_archived).toBe(true);
-  });
-
-  it('validates archive flag, tenant isolation (BR-01), and admin exclusion (BR-10)', async () => {
+  it('TEST-AUDIT-04: validates archive payload (INVALID_ARCHIVE_PAYLOAD), tenant isolation (404 NOT_FOUND), and admin exclusion (403)', async () => {
     const badFlagRes = await request(app)
       .patch('/api/accounts/acc-demo-checking/archive')
       .set('Origin', TRUSTED_ORIGIN)
@@ -261,7 +256,7 @@ describe('Integration Test: Account Archival & Unarchival (F-18, TEST-AUDIT-02, 
       .send({ is_archived: 'yes' });
 
     expect(badFlagRes.status).toBe(400);
-    expect(badFlagRes.body.error.code).toBe('INVALID_ARCHIVE_FLAG');
+    expect(badFlagRes.body.error.code).toBe('INVALID_ARCHIVE_PAYLOAD');
 
     const foreignRes = await request(app)
       .patch('/api/accounts/acc-demo-checking/archive')
@@ -270,6 +265,7 @@ describe('Integration Test: Account Archival & Unarchival (F-18, TEST-AUDIT-02, 
       .send({ is_archived: true });
 
     expect(foreignRes.status).toBe(404);
+    expect(foreignRes.body.error.code).toBe('NOT_FOUND');
 
     const adminRes = await request(app)
       .patch('/api/accounts/acc-demo-checking/archive')

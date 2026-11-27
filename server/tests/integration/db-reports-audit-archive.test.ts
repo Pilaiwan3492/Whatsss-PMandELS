@@ -18,7 +18,7 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
 
   beforeAll(async () => {
     if (!isCI && !allowLiveDb) return;
-    assertTestDatabase(databaseUrl);
+    assertTestDatabase(databaseUrl, { isCI, allowLiveDb });
     prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
     await prisma.$connect();
     isDbConnected = true;
@@ -88,16 +88,47 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
     }
     const tenant = await createIsolatedTenant('rep_cat');
 
+    const savings = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Savings Bank',
+        normalized_name: 'savings bank',
+        type: 'CASH',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00')
+      }
+    });
+    const loanGiven = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Friend Loan',
+        normalized_name: 'friend loan',
+        type: 'LOAN_GIVEN',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00')
+      }
+    });
+    const genLoan = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Personal Loan',
+        normalized_name: 'personal loan',
+        type: 'LOAN_TAKEN',
+        subtype: 'GENERAL_LOAN',
+        opening_balance: new Prisma.Decimal('0.00')
+      }
+    });
+
     await request(app)
       .post('/api/transactions/income')
       .set('Origin', TRUSTED_ORIGIN)
       .set('Cookie', tenant.cookie)
       .send({
         primary_account_id: tenant.accounts.checking.id,
-        total_amount: '10000.00',
+        income_account_id: tenant.accounts.salary.id,
+        total_amount: '20000.00',
         transaction_date: '2026-11-01',
-        description: 'Salary',
-        allocations: [{ target_account_id: tenant.accounts.salary.id, amount: '10000.00' }]
+        description: 'Salary'
       });
 
     await request(app)
@@ -120,11 +151,47 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
       .set('Origin', TRUSTED_ORIGIN)
       .set('Cookie', tenant.cookie)
       .send({
-        primary_account_id: tenant.accounts.checking.id,
-        target_account_id: tenant.accounts.cc.id,
+        from_account_id: tenant.accounts.checking.id,
+        to_account_id: tenant.accounts.cc.id,
         amount: '3000.00',
         transaction_date: '2026-11-06',
         description: 'CC Repay'
+      });
+
+    await request(app)
+      .post('/api/transactions/transfer')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.accounts.checking.id,
+        to_account_id: savings.id,
+        amount: '2000.00',
+        transaction_date: '2026-11-07',
+        description: 'Transfer'
+      });
+
+    await request(app)
+      .post('/api/transactions/loan-given')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.accounts.checking.id,
+        to_account_id: loanGiven.id,
+        amount: '1000.00',
+        transaction_date: '2026-11-08',
+        description: 'Loan given'
+      });
+
+    await request(app)
+      .post('/api/transactions/loan-borrowing')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: genLoan.id,
+        to_account_id: tenant.accounts.checking.id,
+        amount: '1500.00',
+        transaction_date: '2026-11-09',
+        description: 'Loan borrowing'
       });
 
     const res = await request(app)
@@ -132,6 +199,7 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
       .set('Cookie', tenant.cookie);
 
     expect(res.status).toBe(200);
+    expect(res.body.data.period).toEqual({ start_date: '2026-11-01', end_date: '2026-11-30' });
     expect(res.body.data.total_expense).toBe('3000.00');
     expect(res.body.data.categories).toEqual([
       {
@@ -164,10 +232,10 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
       .set('Cookie', tenant.cookie)
       .send({
         primary_account_id: tenant.accounts.checking.id,
+        income_account_id: tenant.accounts.salary.id,
         total_amount: '20000.00',
         transaction_date: '2026-11-02',
-        description: 'Salary',
-        allocations: [{ target_account_id: tenant.accounts.salary.id, amount: '20000.00' }]
+        description: 'Salary'
       });
     const txnId = incRes.body.data.transaction.id;
 
@@ -208,10 +276,237 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
     // Parent transaction delete blocked by onDelete: Restrict
     await expect(prisma.transaction.delete({ where: { id: txnId } })).rejects.toThrow();
 
-    // Direct audit log delete blocked by PostgreSQL immutability trigger
+    // Direct audit log update & delete blocked by PostgreSQL immutability trigger
+    await expect(
+      prisma.transactionAuditLog.update({
+        where: { id: histRes.body.data.audit_logs[0].id },
+        data: { action: 'TAMPERED' }
+      })
+    ).rejects.toThrow();
     await expect(
       prisma.transactionAuditLog.delete({ where: { id: histRes.body.data.audit_logs[0].id } })
     ).rejects.toThrow();
+
+    // Re-query audit history to confirm all 2 original records remain completely intact
+    const verifyRes = await request(app)
+      .get(`/api/transactions/${txnId}/audit-history`)
+      .set('Cookie', tenant.cookie);
+    expect(verifyRes.status).toBe(200);
+    expect(verifyRes.body.data.audit_logs).toHaveLength(2);
+    expect(verifyRes.body.data.audit_logs[0].action).toBe('CORRECTED');
+  });
+
+  it('TEST-AUDIT-03 (Live PG16): rejects all 8 transaction workflows referencing archived accounts (422 ACCOUNT_ARCHIVED) with zero writes and intact history', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+    const tenant = await createIsolatedTenant('audit_arch_guard');
+
+    // Seed active income + CC expense so historical reports & duplicate baseline exist
+    const incRes = await request(app)
+      .post('/api/transactions/income')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        primary_account_id: tenant.accounts.checking.id,
+        income_account_id: tenant.accounts.salary.id,
+        total_amount: '10000.00',
+        transaction_date: '2026-11-01',
+        description: 'Initial Salary'
+      });
+    const salaryTxnId = incRes.body.data.transaction.id;
+
+    // Create zero-balance accounts across types to archive
+    const archivedCash = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Archived Cash',
+        normalized_name: 'archived cash',
+        type: 'CASH',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_archived: true
+      }
+    });
+    const archivedCC = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Archived CC',
+        normalized_name: 'archived cc',
+        type: 'LOAN_TAKEN',
+        subtype: 'CREDIT_CARD',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_archived: true
+      }
+    });
+    const archivedExpense = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Archived Expense',
+        normalized_name: 'archived expense',
+        type: 'EXPENSE',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_archived: true
+      }
+    });
+    const archivedIncome = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Archived Income',
+        normalized_name: 'archived income',
+        type: 'INCOME',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_archived: true
+      }
+    });
+    const archivedLoanGiven = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Archived Loan Given',
+        normalized_name: 'archived loan given',
+        type: 'LOAN_GIVEN',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_archived: true
+      }
+    });
+    const archivedGenLoan = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Archived Gen Loan',
+        normalized_name: 'archived gen loan',
+        type: 'LOAN_TAKEN',
+        subtype: 'GENERAL_LOAN',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_archived: true
+      }
+    });
+
+    const initialTxnCount = await prisma.transaction.count({ where: { user_id: tenant.user.id } });
+
+    // 1. Income with archived CASH
+    const incArch = await request(app)
+      .post('/api/transactions/income')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        primary_account_id: archivedCash.id,
+        income_account_id: tenant.accounts.salary.id,
+        total_amount: '500.00',
+        transaction_date: '2026-11-05'
+      });
+    expect(incArch.status).toBe(422);
+    expect(incArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // 2. Split Expense with archived EXPENSE on split line 2
+    const expArch = await request(app)
+      .post('/api/transactions/expense')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        primary_account_id: tenant.accounts.cc.id,
+        total_amount: '600.00',
+        transaction_date: '2026-11-05',
+        allocations: [
+          { target_account_id: tenant.accounts.dining.id, amount: '300.00' },
+          { target_account_id: archivedExpense.id, amount: '300.00' }
+        ]
+      });
+    expect(expArch.status).toBe(422);
+    expect(expArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // 3. CC Repayment with archived CC
+    const repayArch = await request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.accounts.checking.id,
+        to_account_id: archivedCC.id,
+        amount: '500.00',
+        transaction_date: '2026-11-05'
+      });
+    expect(repayArch.status).toBe(422);
+    expect(repayArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // 4. Transfer with archived destination CASH
+    const xferArch = await request(app)
+      .post('/api/transactions/transfer')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.accounts.checking.id,
+        to_account_id: archivedCash.id,
+        amount: '500.00',
+        transaction_date: '2026-11-05'
+      });
+    expect(xferArch.status).toBe(422);
+    expect(xferArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // 5. Loan Given with archived LOAN_GIVEN
+    const lgArch = await request(app)
+      .post('/api/transactions/loan-given')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.accounts.checking.id,
+        to_account_id: archivedLoanGiven.id,
+        amount: '500.00',
+        transaction_date: '2026-11-05'
+      });
+    expect(lgArch.status).toBe(422);
+    expect(lgArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // 6. General Loan Borrowing with archived GENERAL_LOAN
+    const glArch = await request(app)
+      .post('/api/transactions/loan-borrowing')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: archivedGenLoan.id,
+        to_account_id: tenant.accounts.checking.id,
+        amount: '500.00',
+        transaction_date: '2026-11-05'
+      });
+    expect(glArch.status).toBe(422);
+    expect(glArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // 7. Correction referencing archived INCOME account
+    const corrArch = await request(app)
+      .put(`/api/transactions/${salaryTxnId}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '10000.00',
+        transaction_date: '2026-11-01',
+        allocations: [{ target_account_id: archivedIncome.id, amount: '10000.00' }]
+      });
+    expect(corrArch.status).toBe(422);
+    expect(corrArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // 8. Archive Salary category, then Duplicate salaryTxnId -> 422 ACCOUNT_ARCHIVED
+    await request(app)
+      .patch(`/api/accounts/${tenant.accounts.salary.id}/archive`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({ is_archived: true });
+
+    const dupArch = await request(app)
+      .post(`/api/transactions/${salaryTxnId}/duplicate`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({});
+    expect(dupArch.status).toBe(422);
+    expect(dupArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // Zero new transactions written & historical summary still readable
+    expect(await prisma.transaction.count({ where: { user_id: tenant.user.id } })).toBe(initialTxnCount);
+    const sumRes = await request(app).get('/api/reports/summary').set('Cookie', tenant.cookie);
+    expect(sumRes.status).toBe(200);
+    expect(sumRes.body.data.bank_balance).toBe(10000);
   });
 
   it('TEST-AUDIT-06 (Live PG16): serializes concurrent Archive vs Income on zero-balance CASH account under FOR UPDATE locks', async (ctx) => {
@@ -246,10 +541,10 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
         .set('Cookie', tenant.cookie)
         .send({
           primary_account_id: savings.id,
+          income_account_id: tenant.accounts.salary.id,
           total_amount: '1000.00',
           transaction_date: '2026-11-05',
-          description: 'Concurrent Deposit',
-          allocations: [{ target_account_id: tenant.accounts.salary.id, amount: '1000.00' }]
+          description: 'Concurrent Deposit'
         })
     ]);
 

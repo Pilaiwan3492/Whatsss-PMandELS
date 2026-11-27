@@ -491,6 +491,9 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
    ```prisma
    model TransactionAuditLog {
      id                String      @id @default(uuid())
+     // Monotonic database-allocated event order (BIGSERIAL) allocated under Transaction row locks.
+     // Required instead of timestamp/UUID ordering because rapid/concurrent corrections can share identical timestamps.
+     sequence_number   BigInt      @unique @default(autoincrement())
      transaction_id    String
      transaction       Transaction @relation(fields: [transaction_id], references: [id], onDelete: Restrict)
      user_id           String
@@ -500,6 +503,7 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
      created_at        DateTime    @default(now())
 
      @@index([transaction_id, created_at(sort: Desc), id(sort: Desc)])
+     @@index([transaction_id, sequence_number(sort: Desc)])
      @@index([user_id])
      @@map("transaction_audit_logs")
    }

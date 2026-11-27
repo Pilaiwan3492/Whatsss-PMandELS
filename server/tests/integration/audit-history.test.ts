@@ -130,7 +130,6 @@ describe('Integration Test: Transaction Audit History (F-18, TEST-AUDIT-01, TEST
     expect(res.body.success).toBe(true);
     expect(res.body.data.transaction_id).toBe('txn-audit-1');
     expect(res.body.data.audit_logs).toHaveLength(2);
-    // Index 0 must be sequence_number 2 (22000 -> 25000) even though its UUID sorts before log-uuid-zzz
     expect(res.body.data.audit_logs[0].sequence_number).toBe(2);
     expect(res.body.data.audit_logs[0].new_snapshot.total_amount).toBe('25000.00');
     expect(res.body.data.audit_logs[1].sequence_number).toBe(1);
@@ -155,18 +154,38 @@ describe('Integration Test: Transaction Audit History (F-18, TEST-AUDIT-01, TEST
     expect(adminRes.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
   });
 
-  it('TEST-AUDIT-05 (API): rejects mutation/deletion HTTP methods on /api/transactions/:id/audit-history', async () => {
-    const putRes = await request(app)
-      .put('/api/transactions/txn-audit-1/audit-history')
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Cookie', userDemoCookie)
-      .send({});
-    expect([404, 405]).toContain(putRes.status);
+  it('TEST-AUDIT-05 (API): rejects PUT/PATCH/DELETE on audit-history and audit-history/:logId while preserving all snapshots', async () => {
+    for (const path of [
+      '/api/transactions/txn-audit-1/audit-history',
+      '/api/transactions/txn-audit-1/audit-history/log-uuid-aaa'
+    ]) {
+      const putRes = await request(app)
+        .put(path)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userDemoCookie)
+        .send({});
+      expect([404, 405]).toContain(putRes.status);
 
-    const deleteRes = await request(app)
-      .delete('/api/transactions/txn-audit-1/audit-history')
+      const patchRes = await request(app)
+        .patch(path)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userDemoCookie)
+        .send({});
+      expect([404, 405]).toContain(patchRes.status);
+
+      const deleteRes = await request(app)
+        .delete(path)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Cookie', userDemoCookie);
+      expect([404, 405]).toContain(deleteRes.status);
+    }
+
+    // Re-query to prove both audit logs remain intact
+    const verifyRes = await request(app)
+      .get('/api/transactions/txn-audit-1/audit-history')
       .set('Origin', TRUSTED_ORIGIN)
       .set('Cookie', userDemoCookie);
-    expect([404, 405]).toContain(deleteRes.status);
+    expect(verifyRes.status).toBe(200);
+    expect(verifyRes.body.data.audit_logs).toHaveLength(2);
   });
 });

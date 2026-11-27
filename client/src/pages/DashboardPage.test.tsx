@@ -269,6 +269,7 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
     const catSpy = vi
       .spyOn(reportApi, 'getCategorySpendingReport')
       .mockResolvedValueOnce({
+        period: { start_date: null, end_date: null },
         total_expense: '3000.00',
         categories: [
           {
@@ -288,6 +289,7 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
         ]
       })
       .mockResolvedValueOnce({
+        period: { start_date: '2026-11-01', end_date: '2026-11-02' },
         total_expense: '1000.00',
         categories: [
           {

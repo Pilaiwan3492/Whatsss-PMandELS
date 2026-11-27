@@ -559,6 +559,10 @@ export interface CategorySpendingItem {
 }
 
 export interface CategorySpendingReportResult {
+  period: {
+    start_date: string | null;
+    end_date: string | null;
+  };
   total_expense: string;
   categories: CategorySpendingItem[];
 }
@@ -699,6 +703,10 @@ export async function getCategorySpendingReport(
   });
 
   return {
+    period: {
+      start_date: typeof startDateRaw === 'string' ? startDateRaw.trim() : null,
+      end_date: typeof endDateRaw === 'string' ? endDateRaw.trim() : null
+    },
     total_expense: totalExpenseDecimal.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toFixed(2),
     categories
   };

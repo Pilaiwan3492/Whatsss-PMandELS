@@ -1192,7 +1192,7 @@ export async function archiveAccount(req: Request, res: Response, next: NextFunc
       res.status(400).json({
         success: false,
         error: {
-          code: 'INVALID_ARCHIVE_FLAG',
+          code: 'INVALID_ARCHIVE_PAYLOAD',
           message: 'is_archived must be a boolean.',
           details: []
         }

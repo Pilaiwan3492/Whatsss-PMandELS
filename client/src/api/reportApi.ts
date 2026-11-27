@@ -46,6 +46,10 @@ export interface CategorySpendingItem {
 }
 
 export interface CategorySpendingReportData {
+  period?: {
+    start_date: string | null;
+    end_date: string | null;
+  };
   total_expense: string;
   categories: CategorySpendingItem[];
 }
