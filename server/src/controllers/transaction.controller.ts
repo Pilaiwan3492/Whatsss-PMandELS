@@ -3,6 +3,12 @@ import { recordIncome, IncomeError } from '../services/income.service.js';
 import { recordExpense, ExpenseError } from '../services/expense.service.js';
 import { recordRepayment, RepaymentError } from '../services/repayment.service.js';
 import { recordTransfer, TransferError } from '../services/transfer.service.js';
+import { queryTransactions, TransactionQueryError } from '../services/transactionQuery.service.js';
+import {
+  toggleTransactionFavorite,
+  duplicateTransaction,
+  FavoriteDuplicateError
+} from '../services/favoriteDuplicate.service.js';
 import {
   recordLoanGiven,
   recordLoanRecovery,
@@ -10,7 +16,6 @@ import {
   recordLoanRepayment,
   LoanError
 } from '../services/loan.service.js';
-import { getTransactionHistory } from '../services/report.service.js';
 
 /**
  * Transaction Controller
@@ -19,7 +24,8 @@ import { getTransactionHistory } from '../services/report.service.js';
 
 /**
  * GET /api/transactions
- * Retrieves chronological transaction history for the authenticated tenant (F-09, WP-06, FR-11, AC-09-1).
+ * Retrieves chronological transaction history for the authenticated tenant with optional
+ * search & multi-criteria filtering (F-09, F-15, FR-11, FR-18, AC-09-1, AC-15-1..3).
  * Ordered by transaction_date DESC, created_at DESC.
  */
 export async function getTransactions(
@@ -41,13 +47,24 @@ export async function getTransactions(
       return;
     }
 
-    const transactions = await getTransactionHistory(userId);
+    const transactions = await queryTransactions(userId, req.query as any);
 
     res.status(200).json({
       success: true,
       data: { transactions }
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err instanceof TransactionQueryError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
     next(err);
   }
 }
@@ -225,6 +242,96 @@ export async function createTransferTransaction(
     });
   } catch (err: any) {
     if (err instanceof TransferError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * PATCH /api/transactions/:id/favorite
+ * Toggles favorite status on a user-owned transaction (F-14, WP-10, FR-16, AC-14-1).
+ */
+export async function toggleFavoriteTransaction(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const result = await toggleTransactionFavorite(userId, req.params.id, req.body);
+
+    res.status(200).json({
+      success: true,
+      data: result
+    });
+  } catch (err: any) {
+    if (err instanceof FavoriteDuplicateError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * POST /api/transactions/:id/duplicate
+ * Duplicates an existing user-owned transaction with live domain re-validation (F-14, WP-10, FR-17, AC-14-2..3).
+ */
+export async function duplicateTransactionHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const result = await duplicateTransaction(userId, req.params.id, req.body || {});
+
+    res.status(201).json({
+      success: true,
+      data: result
+    });
+  } catch (err: any) {
+    if (err instanceof FavoriteDuplicateError) {
       res.status(err.statusCode).json({
         success: false,
         error: {

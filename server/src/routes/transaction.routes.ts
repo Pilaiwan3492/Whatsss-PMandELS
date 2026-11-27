@@ -10,7 +10,9 @@ import {
   createLoanGivenTransaction,
   createLoanRecoveryTransaction,
   createLoanBorrowingTransaction,
-  createLoanRepaymentTransaction
+  createLoanRepaymentTransaction,
+  toggleFavoriteTransaction,
+  duplicateTransactionHandler
 } from '../controllers/transaction.controller.js';
 
 const router = Router();
@@ -28,5 +30,7 @@ router.post('/loan-given', createLoanGivenTransaction);
 router.post('/loan-recovery', createLoanRecoveryTransaction);
 router.post('/loan-borrowing', createLoanBorrowingTransaction);
 router.post('/loan-repayment', createLoanRepaymentTransaction);
+router.patch('/:id/favorite', toggleFavoriteTransaction);
+router.post('/:id/duplicate', duplicateTransactionHandler);
 
 export default router;

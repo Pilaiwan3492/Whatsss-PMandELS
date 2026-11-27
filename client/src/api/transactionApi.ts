@@ -172,6 +172,7 @@ export interface HistoryAllocationLine {
     id: string;
     name: string;
     type: string;
+    subtype?: string;
   };
   amount: number;
   notes: string | null;
@@ -185,13 +186,31 @@ export interface HistoryTransaction {
     id: string;
     name: string;
     type: string;
+    subtype?: string;
   };
   form: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
   total_amount: number;
   transaction_date: string;
   description: string | null;
+  is_favorite?: boolean;
   created_at: string;
   allocation_lines: HistoryAllocationLine[];
+}
+
+export interface TransactionFilterParams {
+  startDate?: string;
+  endDate?: string;
+  accountId?: string;
+  categoryId?: string;
+  form?: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
+  type?: 'INCOME' | 'EXPENSE' | 'REPAYMENT' | 'TRANSFER' | 'LOAN';
+  favorite?: 'true' | 'false';
+  q?: string;
+}
+
+export interface DuplicatePayload {
+  transaction_date?: string;
+  description?: string;
 }
 
 export interface TransactionsApiResponse {
@@ -271,9 +290,54 @@ export async function recordLoanRepayment(payload: LoanFlowPayload): Promise<Gen
 }
 
 /**
- * Fetches chronological transaction history for the authenticated tenant (WP-06, F-09, FR-11, AC-09-1).
+ * Fetches chronological transaction history for the authenticated tenant with optional
+ * search & multi-criteria filtering (WP-06, WP-10, F-09, F-15, FR-11, FR-18).
  */
-export async function getTransactions(): Promise<HistoryTransaction[]> {
+export async function getTransactions(
+  filters?: TransactionFilterParams
+): Promise<HistoryTransaction[]> {
+  if (filters) {
+    const cleanParams: Record<string, string> = {};
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== null && String(v).trim() !== '') {
+        cleanParams[k] = String(v).trim();
+      }
+    }
+    if (Object.keys(cleanParams).length > 0) {
+      const res = await reportClient.get<TransactionsApiResponse>('/transactions', {
+        params: cleanParams
+      });
+      return res.data.data.transactions;
+    }
+  }
   const res = await reportClient.get<TransactionsApiResponse>('/transactions');
   return res.data.data.transactions;
+}
+
+/**
+ * Toggles favorite status on a user-owned transaction (F-14, WP-10, FR-16, AC-14-1).
+ */
+export async function toggleFavorite(
+  transactionId: string,
+  is_favorite: boolean
+): Promise<HistoryTransaction> {
+  const res = await axiosClient.patch<{ success: boolean; data: { transaction: HistoryTransaction } }>(
+    `/transactions/${transactionId}/favorite`,
+    { is_favorite }
+  );
+  return res.data.data.transaction;
+}
+
+/**
+ * Duplicates an existing user-owned transaction with live re-validation (F-14, WP-10, FR-17, AC-14-2..3).
+ */
+export async function duplicateTransaction(
+  transactionId: string,
+  payload: DuplicatePayload = {}
+): Promise<any> {
+  const res = await axiosClient.post<{ success: boolean; data: { transaction: any } }>(
+    `/transactions/${transactionId}/duplicate`,
+    payload
+  );
+  return res.data.data.transaction;
 }
