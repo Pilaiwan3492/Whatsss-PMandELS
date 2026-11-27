@@ -480,9 +480,19 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
       orderBy: [{ created_at: 'asc' }, { id: 'asc' }]
     });
     expect(logs).toHaveLength(2);
-    // Strict sequential chaining proved by PostgreSQL row locks: 20000 -> X, then X -> Y
-    expect((logs[0].previous_snapshot as any).total_amount).toBe('20000.00');
-    expect((logs[1].previous_snapshot as any).total_amount).toBe((logs[0].new_snapshot as any).total_amount);
+    // Strict sequential chaining proved by PostgreSQL row locks: 20000 -> X, then X -> Y.
+    // Identify first/second by snapshot chain because two serialized commits can share the same millisecond
+    // and random UUIDv4 tie-breaking on `id` does not encode commit order.
+    const firstLog = logs.find((l) => (l.previous_snapshot as any).total_amount === '20000.00');
+    expect(firstLog).toBeDefined();
+    const secondLog = logs.find((l) => l.id !== firstLog!.id);
+    expect(secondLog).toBeDefined();
+    expect((secondLog!.previous_snapshot as any).total_amount).toBe(
+      (firstLog!.new_snapshot as any).total_amount
+    );
+    expect(
+      [(firstLog!.new_snapshot as any).total_amount, (secondLog!.new_snapshot as any).total_amount].sort()
+    ).toEqual(['22000.00', '25000.00']);
   });
 
   // ============================================================================
