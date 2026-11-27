@@ -824,12 +824,29 @@ describe('Work Package WP-09: Peer Lending (F-12) & General Borrowing (F-13) (Is
     expect(repay2.body.data.updated_cash_balance).toBe('50.00');
     expect(repay2.body.data.updated_debt).toBe('50.00');
 
-    // Verify GET /api/reports/summary: total_expense remains 0.00 (BR-08)
+    // 3. Full repayment of remaining 50.00 THB general loan debt -> debt and cash return to 0.00
+    const repay3 = await request(app)
+      .post('/api/transactions/loan-repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        from_account_id: MOCK_UUIDS.DEMO_CHECKING,
+        to_account_id: PERSONAL_LOAN_UUID,
+        amount: 50.00,
+        transaction_date: '2026-11-17',
+        description: 'Full final general loan principal settlement'
+      });
+    expect(repay3.status).toBe(201);
+    expect(repay3.body.data.updated_cash_balance).toBe('0.00');
+    expect(repay3.body.data.updated_debt).toBe('0.00');
+
+    // Verify GET /api/reports/summary: total_expense remains 0.00 (BR-08) and debt is 0.00
     const summaryRes = await request(app)
       .get('/api/reports/summary')
       .set('Cookie', userACookie);
-    expect(summaryRes.body.data.bank_balance).toBe(50.00);
-    expect(summaryRes.body.data.credit_debt).toBe(50.00);
+    expect(summaryRes.body.data.bank_balance).toBe(0.00);
+    expect(summaryRes.body.data.credit_debt).toBe(0.00);
     expect(summaryRes.body.data.total_expense).toBe(0.00);
     expect(summaryRes.body.data.total_income).toBe(0.00);
   });
@@ -1070,5 +1087,180 @@ describe('Work Package WP-09: Peer Lending (F-12) & General Borrowing (F-13) (Is
     expect(successRes.body.data.updated_cash_balance).toBe('8500.00');
     expect(failedRes.body.error.code).toBe('REPAYMENT_EXCEEDS_DEBT');
     expect(mockTransactions).toHaveLength(1);
+  });
+
+  it('Multi-Workflow Ledger & Report Consistency Regression: executes Income (F-04), CC Purchase (F-05), CC Repayment (F-07 / BR-07 v1.1), Internal Cash Transfer (F-11 / BR-02), Loan Given & Recovery (F-12 / BR-08), and General Loan Borrowing & Repayment (F-13 / BR-08) without double counting and verifies /api/accounts matches /api/reports/summary', async () => {
+    const DEMO_SAVINGS_UUID = '11111111-1111-4111-8111-111111111109';
+    mockAccounts.push({
+      id: DEMO_SAVINGS_UUID,
+      user_id: 'user-a-uuid',
+      name: 'Savings Bank',
+      normalized_name: 'savings bank',
+      type: 'CASH',
+      subtype: 'DEFAULT',
+      opening_balance: new Prisma.Decimal('2000.00'),
+      is_opening_locked: false,
+      is_archived: false,
+      created_at: new Date('2026-11-01T00:07:00Z'),
+      updated_at: new Date('2026-11-01T00:07:00Z')
+    });
+
+    // 1. Income: +20000.00 into Checking (10000 + 20000 = 30000)
+    const incRes = await request(app)
+      .post('/api/transactions/income')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        primary_account_id: MOCK_UUIDS.DEMO_CHECKING,
+        income_account_id: MOCK_UUIDS.DEMO_SALARY,
+        total_amount: '20000.00',
+        transaction_date: '2026-11-01',
+        description: 'Monthly Salary'
+      });
+    expect(incRes.status).toBe(201);
+
+    // 2. Credit Card Purchase: 3000.00 on Visa Credit Card for Dining
+    const expRes = await request(app)
+      .post('/api/transactions/expense')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        primary_account_id: MOCK_UUIDS.DEMO_CC,
+        total_amount: '3000.00',
+        transaction_date: '2026-11-02',
+        description: 'Dining Purchase',
+        allocations: [{ target_account_id: MOCK_UUIDS.DEMO_DINING, amount: '3000.00' }]
+      });
+    expect(expRes.status).toBe(201);
+
+    // 3. Credit Card Repayment (BR-07 v1.1): 400.00 rejected with 422 MIN_REPAYMENT_NOT_MET, 1000.00 accepted
+    const badCcRepay = await request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        from_account_id: MOCK_UUIDS.DEMO_CHECKING,
+        to_account_id: MOCK_UUIDS.DEMO_CC,
+        amount: 400.00,
+        transaction_date: '2026-11-03'
+      });
+    expect(badCcRepay.status).toBe(422);
+    expect(badCcRepay.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+
+    const ccRepay = await request(app)
+      .post('/api/transactions/repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        from_account_id: MOCK_UUIDS.DEMO_CHECKING,
+        to_account_id: MOCK_UUIDS.DEMO_CC,
+        amount: 1000.00,
+        transaction_date: '2026-11-03'
+      });
+    expect(ccRepay.status).toBe(201);
+
+    // 4. Internal Cash Transfer: 4000.00 Checking -> Savings (Checking = 25000, Savings = 6000)
+    const xferRes = await request(app)
+      .post('/api/transactions/transfer')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        from_account_id: MOCK_UUIDS.DEMO_CHECKING,
+        to_account_id: DEMO_SAVINGS_UUID,
+        amount: 4000.00,
+        transaction_date: '2026-11-04'
+      });
+    expect(xferRes.status).toBe(201);
+
+    // 5. Loan Given (2500.00 from Checking) & Partial Recovery (1000.00 into Savings)
+    // -> Checking = 22500, Savings = 7000, Friend Loan Receivable = 1500
+    const giveRes = await request(app)
+      .post('/api/transactions/loan-given')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        from_account_id: MOCK_UUIDS.DEMO_CHECKING,
+        to_account_id: FRIEND_LOAN_UUID,
+        amount: 2500.00,
+        transaction_date: '2026-11-05'
+      });
+    expect(giveRes.status).toBe(201);
+
+    const recRes = await request(app)
+      .post('/api/transactions/loan-recovery')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        from_account_id: FRIEND_LOAN_UUID,
+        to_account_id: DEMO_SAVINGS_UUID,
+        amount: 1000.00,
+        transaction_date: '2026-11-06'
+      });
+    expect(recRes.status).toBe(201);
+
+    // 6. General Loan Borrowing (5000.00 into Checking) & Partial Repayment (1200.00 from Checking)
+    // -> Checking = 26300, Savings = 7000, Personal Loan Debt = 3800, Visa CC Debt = 2000
+    const borrowRes = await request(app)
+      .post('/api/transactions/loan-borrowing')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        from_account_id: PERSONAL_LOAN_UUID,
+        to_account_id: MOCK_UUIDS.DEMO_CHECKING,
+        amount: 5000.00,
+        transaction_date: '2026-11-07'
+      });
+    expect(borrowRes.status).toBe(201);
+
+    const genRepay = await request(app)
+      .post('/api/transactions/loan-repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', userACookie)
+      .send({
+        from_account_id: MOCK_UUIDS.DEMO_CHECKING,
+        to_account_id: PERSONAL_LOAN_UUID,
+        amount: 1200.00,
+        transaction_date: '2026-11-08'
+      });
+    expect(genRepay.status).toBe(201);
+
+    // 7. Cross-verify GET /api/accounts and GET /api/reports/summary
+    const accRes = await request(app)
+      .get('/api/accounts')
+      .set('Cookie', userACookie);
+    expect(accRes.status).toBe(200);
+    const accs = accRes.body.data.accounts as Array<any>;
+
+    const checkingAcc = accs.find((a) => a.id === MOCK_UUIDS.DEMO_CHECKING);
+    const savingsAcc = accs.find((a) => a.id === DEMO_SAVINGS_UUID);
+    const friendLoanAcc = accs.find((a) => a.id === FRIEND_LOAN_UUID);
+    const personalLoanAcc = accs.find((a) => a.id === PERSONAL_LOAN_UUID);
+    const visaCardAcc = accs.find((a) => a.id === MOCK_UUIDS.DEMO_CC);
+
+    expect(checkingAcc.current_balance).toBe(26300.00);
+    expect(savingsAcc.current_balance).toBe(7000.00);
+    expect(friendLoanAcc.current_balance).toBe(1500.00);
+    expect(personalLoanAcc.current_balance).toBe(3800.00);
+    expect(visaCardAcc.current_balance).toBe(2000.00);
+
+    const summaryRes = await request(app)
+      .get('/api/reports/summary')
+      .set('Cookie', userACookie);
+    expect(summaryRes.status).toBe(200);
+    expect(summaryRes.body.data.bank_balance).toBe(checkingAcc.current_balance + savingsAcc.current_balance);
+    expect(summaryRes.body.data.bank_balance).toBe(33300.00);
+    expect(summaryRes.body.data.credit_debt).toBe(visaCardAcc.current_balance + personalLoanAcc.current_balance);
+    expect(summaryRes.body.data.credit_debt).toBe(5800.00);
+    expect(summaryRes.body.data.total_income).toBe(20000.00);
+    expect(summaryRes.body.data.total_expense).toBe(3000.00);
   });
 });
