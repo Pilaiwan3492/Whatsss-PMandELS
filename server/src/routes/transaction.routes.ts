@@ -6,7 +6,9 @@ import {
   createIncomeTransaction,
   createExpenseTransaction,
   createRepaymentTransaction,
-  createTransferTransaction
+  createTransferTransaction,
+  toggleFavoriteTransaction,
+  duplicateTransactionHandler
 } from '../controllers/transaction.controller.js';
 
 const router = Router();
@@ -20,5 +22,7 @@ router.post('/income', createIncomeTransaction);
 router.post('/expense', createExpenseTransaction);
 router.post('/repayment', createRepaymentTransaction);
 router.post('/transfer', createTransferTransaction);
+router.patch('/:id/favorite', toggleFavoriteTransaction);
+router.post('/:id/duplicate', duplicateTransactionHandler);
 
 export default router;

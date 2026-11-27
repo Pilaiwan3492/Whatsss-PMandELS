@@ -53,11 +53,13 @@ export interface TransactionHistoryRecord {
     id: string;
     name: string;
     type: string;
+    subtype?: string;
   };
   form: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
   total_amount: number;
   transaction_date: string;
   description: string | null;
+  is_favorite?: boolean;
   created_at: string;
   allocation_lines: Array<{
     id: string;
@@ -67,6 +69,7 @@ export interface TransactionHistoryRecord {
       id: string;
       name: string;
       type: string;
+      subtype?: string;
     };
     amount: number;
     notes: string | null;

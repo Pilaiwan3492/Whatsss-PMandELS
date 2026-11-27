@@ -220,4 +220,103 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
       expect(screen.getByTestId('transactions-table')).toBeDefined();
     });
   });
+
+  it('TEST-UI-FAV-01: toggles favorite star on a transaction row and filters Favorites Only (F-14, AC-14-1)', async () => {
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(
+      mockGoldenTransactions.map((t) => ({ ...t, is_favorite: t.id === 'tx-purchase' }))
+    );
+    const favSpy = vi.spyOn(transactionApi, 'toggleFavorite').mockResolvedValue({
+      ...mockGoldenTransactions[2],
+      is_favorite: true
+    });
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-favorite-tx-salary')).toBeDefined();
+    });
+
+    // Toggle favorite on tx-salary
+    fireEvent.click(screen.getByTestId('btn-favorite-tx-salary'));
+
+    await waitFor(() => {
+      expect(favSpy).toHaveBeenCalledWith('tx-salary', true);
+      expect(screen.getByTestId('btn-favorite-tx-salary').textContent).toBe('★');
+    });
+
+    // Toggle Favorites Only filter -> tx-repay (not favorite) should be hidden
+    fireEvent.click(screen.getByTestId('filter-favorites-only'));
+    expect(screen.queryByTestId('txn-row-tx-repay')).toBeNull();
+    expect(screen.getByTestId('txn-row-tx-purchase')).toBeDefined();
+    expect(screen.getByTestId('txn-row-tx-salary')).toBeDefined();
+  });
+
+  it('TEST-UI-FAV-02: opens duplicate modal, submits duplicateTransaction, and displays 422 errors (F-14, AC-14-2..3)', async () => {
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+    const dupSpy = vi
+      .spyOn(transactionApi, 'duplicateTransaction')
+      .mockRejectedValueOnce({
+        response: { data: { error: { code: 'ZERO_OUTSTANDING_DEBT', message: 'Outstanding repayment debt is 0.00' } } }
+      })
+      .mockResolvedValueOnce({ id: 'tx-dup-new' });
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-duplicate-tx-purchase')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-duplicate-tx-purchase'));
+    expect(screen.getByTestId('duplicate-modal')).toBeDefined();
+
+    fireEvent.change(screen.getByTestId('duplicate-date-input'), { target: { value: '2026-11-15' } });
+    fireEvent.click(screen.getByTestId('btn-confirm-duplicate'));
+
+    // First attempt rejected -> error shown inside modal
+    await waitFor(() => {
+      expect(screen.getByTestId('duplicate-error').textContent).toContain('Outstanding repayment debt is 0.00');
+    });
+
+    // Second attempt succeeds -> modal closes and feedback shown
+    fireEvent.click(screen.getByTestId('btn-confirm-duplicate'));
+    await waitFor(() => {
+      expect(dupSpy).toHaveBeenCalledWith('tx-purchase', {
+        transaction_date: '2026-11-15',
+        description: 'Dining & Grocery Split'
+      });
+      expect(screen.queryByTestId('duplicate-modal')).toBeNull();
+      expect(screen.getByTestId('history-feedback').textContent).toContain('duplicated successfully');
+    });
+  });
+
+  it('TEST-UI-SRCH-01: submits keyword, date range, and type filters to getTransactions and clears filters (F-15, AC-15-1..2)', async () => {
+    const getSpy = vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('search-filter-form')).toBeDefined();
+    });
+
+    fireEvent.change(screen.getByTestId('search-keyword-input'), { target: { value: 'Dining' } });
+    fireEvent.change(screen.getByTestId('filter-start-date'), { target: { value: '2026-11-01' } });
+    fireEvent.change(screen.getByTestId('filter-end-date'), { target: { value: '2026-11-15' } });
+    fireEvent.change(screen.getByTestId('filter-type-select'), { target: { value: 'EXPENSE' } });
+    fireEvent.click(screen.getByTestId('btn-apply-filters'));
+
+    await waitFor(() => {
+      expect(getSpy).toHaveBeenCalledWith({
+        q: 'Dining',
+        startDate: '2026-11-01',
+        endDate: '2026-11-15',
+        type: 'EXPENSE'
+      });
+    });
+
+    fireEvent.click(screen.getByTestId('btn-clear-filters'));
+    await waitFor(() => {
+      expect((screen.getByTestId('search-keyword-input') as HTMLInputElement).value).toBe('');
+      expect((screen.getByTestId('filter-type-select') as HTMLSelectElement).value).toBe('');
+    });
+  });
 });
