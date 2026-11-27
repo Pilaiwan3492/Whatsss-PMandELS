@@ -413,132 +413,12 @@ export async function getAccountById(req: Request, res: Response, next: NextFunc
 
     const zero = new Prisma.Decimal('0.00');
     const openingDecimal = new Prisma.Decimal(account.opening_balance.toString());
-    let currentBalanceDecimal = openingDecimal;
-
-    if (account.type === 'CASH' && typeof prisma.transaction?.aggregate === 'function') {
-      const receiveAgg = await prisma.transaction.aggregate({
-        where: {
-          user_id: userId,
-          primary_account_id: account.id,
-          form: 'RECEIVE_MONEY'
-        },
-        _sum: { total_amount: true }
-      });
-      const paymentAgg = await prisma.transaction.aggregate({
-        where: {
-          user_id: userId,
-          primary_account_id: account.id,
-          form: 'PAYMENT_CHARGE'
-        },
-        _sum: { total_amount: true }
-      });
-
-      let incomingTransfer = zero;
-      if (typeof prisma.allocationLine?.aggregate === 'function') {
-        const transferAgg = await prisma.allocationLine.aggregate({
-          where: {
-            target_account_id: account.id,
-            target_account: {
-              type: 'CASH',
-              user_id: userId
-            },
-            transaction: {
-              user_id: userId,
-              form: 'PAYMENT_CHARGE',
-              primary_account: {
-                type: 'CASH',
-                user_id: userId
-              }
-            }
-          },
-          _sum: { amount: true }
-        });
-        if (transferAgg._sum?.amount) {
-          incomingTransfer = new Prisma.Decimal(transferAgg._sum.amount.toString());
-        }
-      }
-
-      const received = receiveAgg._sum?.total_amount
-        ? new Prisma.Decimal(receiveAgg._sum.total_amount.toString())
-        : zero;
-      const paid = paymentAgg._sum?.total_amount
-        ? new Prisma.Decimal(paymentAgg._sum.total_amount.toString())
-        : zero;
-      currentBalanceDecimal = openingDecimal.add(received).add(incomingTransfer).sub(paid);
-    } else if (account.type === 'LOAN_TAKEN') {
-      let charges = zero;
-      let borrowings = zero;
-      let repayments = zero;
-      if (typeof prisma.transaction?.aggregate === 'function') {
-        const chargeAgg = await prisma.transaction.aggregate({
-          where: {
-            user_id: userId,
-            primary_account_id: account.id,
-            form: 'PAYMENT_CHARGE'
-          },
-          _sum: { total_amount: true }
-        });
-        if (chargeAgg._sum?.total_amount) {
-          charges = new Prisma.Decimal(chargeAgg._sum.total_amount.toString());
-        }
-      }
-      if (typeof prisma.allocationLine?.aggregate === 'function') {
-        const repaymentAgg = await prisma.allocationLine.aggregate({
-          where: {
-            target_account_id: account.id,
-            target_account: {
-              type: 'LOAN_TAKEN',
-              user_id: userId
-            },
-            transaction: {
-              user_id: userId,
-              form: 'PAYMENT_CHARGE',
-              primary_account: {
-                type: 'CASH',
-                user_id: userId
-              }
-            }
-          },
-          _sum: { amount: true }
-        });
-        if (repaymentAgg._sum?.amount) {
-          repayments = new Prisma.Decimal(repaymentAgg._sum.amount.toString());
-        }
-      }
-      currentBalanceDecimal = openingDecimal.add(charges).add(borrowings).sub(repayments);
-    } else if (account.type === 'LOAN_GIVEN' && typeof prisma.allocationLine?.aggregate === 'function') {
-      const disburseAgg = await prisma.allocationLine.aggregate({
-        where: {
-          target_account_id: account.id,
-          target_account: { type: 'LOAN_GIVEN', user_id: userId },
-          transaction: {
-            user_id: userId,
-            form: 'PAYMENT_CHARGE',
-            primary_account: { type: 'CASH', user_id: userId }
-          }
-        },
-        _sum: { amount: true }
-      });
-      const recoverAgg = await prisma.allocationLine.aggregate({
-        where: {
-          target_account_id: account.id,
-          target_account: { type: 'LOAN_GIVEN', user_id: userId },
-          transaction: {
-            user_id: userId,
-            form: 'RECEIVE_MONEY',
-            primary_account: { type: 'CASH', user_id: userId }
-          }
-        },
-        _sum: { amount: true }
-      });
-      const disbursed = disburseAgg._sum?.amount
-        ? new Prisma.Decimal(disburseAgg._sum.amount.toString())
-        : zero;
-      const recovered = recoverAgg._sum?.amount
-        ? new Prisma.Decimal(recoverAgg._sum.amount.toString())
-        : zero;
-      currentBalanceDecimal = openingDecimal.add(disbursed).sub(recovered);
-    }
+    const currentBalanceDecimal = await computeSingleAccountCurrentBalanceDecimal(
+      userId,
+      account.id,
+      account.type,
+      openingDecimal
+    );
 
     const accAny = account as any;
     const resolvedSubtype =
@@ -567,6 +447,173 @@ export async function getAccountById(req: Request, res: Response, next: NextFunc
   } catch (err) {
     next(err);
   }
+}
+
+/**
+ * Computes the authoritative current_balance of a single account using exact Prisma.Decimal arithmetic,
+ * matching the exact formulas used in getAccounts():
+ * - CASH: opening_balance + sum(RECEIVE_MONEY) + sum(incoming CASH -> CASH transfer allocations) - sum(PAYMENT_CHARGE)
+ * - LOAN_TAKEN: opening_balance + sum(PAYMENT_CHARGE on LOAN_TAKEN) + sum(RECEIVE_MONEY on CASH targeting LOAN_TAKEN) - sum(PAYMENT_CHARGE on CASH targeting LOAN_TAKEN)
+ * - LOAN_GIVEN: opening_balance + sum(PAYMENT_CHARGE on CASH targeting LOAN_GIVEN) - sum(RECEIVE_MONEY on CASH targeting LOAN_GIVEN)
+ * - INCOME / EXPENSE: opening_balance (0.00)
+ */
+export async function computeSingleAccountCurrentBalanceDecimal(
+  userId: string,
+  accountId: string,
+  accountType: string,
+  openingDecimal: Prisma.Decimal
+): Promise<Prisma.Decimal> {
+  const zero = new Prisma.Decimal('0.00');
+  let currentBalanceDecimal = openingDecimal;
+
+  if (accountType === 'CASH' && typeof prisma.transaction?.aggregate === 'function') {
+    const receiveAgg = await prisma.transaction.aggregate({
+      where: {
+        user_id: userId,
+        primary_account_id: accountId,
+        form: 'RECEIVE_MONEY'
+      },
+      _sum: { total_amount: true }
+    });
+    const paymentAgg = await prisma.transaction.aggregate({
+      where: {
+        user_id: userId,
+        primary_account_id: accountId,
+        form: 'PAYMENT_CHARGE'
+      },
+      _sum: { total_amount: true }
+    });
+
+    let incomingTransfer = zero;
+    if (typeof prisma.allocationLine?.aggregate === 'function') {
+      const transferAgg = await prisma.allocationLine.aggregate({
+        where: {
+          target_account_id: accountId,
+          target_account: {
+            type: 'CASH',
+            user_id: userId
+          },
+          transaction: {
+            user_id: userId,
+            form: 'PAYMENT_CHARGE',
+            primary_account: {
+              type: 'CASH',
+              user_id: userId
+            }
+          }
+        },
+        _sum: { amount: true }
+      });
+      if (transferAgg._sum?.amount) {
+        incomingTransfer = new Prisma.Decimal(transferAgg._sum.amount.toString());
+      }
+    }
+
+    const received = receiveAgg._sum?.total_amount
+      ? new Prisma.Decimal(receiveAgg._sum.total_amount.toString())
+      : zero;
+    const paid = paymentAgg._sum?.total_amount
+      ? new Prisma.Decimal(paymentAgg._sum.total_amount.toString())
+      : zero;
+    currentBalanceDecimal = openingDecimal.add(received).add(incomingTransfer).sub(paid);
+  } else if (accountType === 'LOAN_TAKEN') {
+    let charges = zero;
+    let borrowings = zero;
+    let repayments = zero;
+    if (typeof prisma.transaction?.aggregate === 'function') {
+      const chargeAgg = await prisma.transaction.aggregate({
+        where: {
+          user_id: userId,
+          primary_account_id: accountId,
+          form: 'PAYMENT_CHARGE'
+        },
+        _sum: { total_amount: true }
+      });
+      if (chargeAgg._sum?.total_amount) {
+        charges = new Prisma.Decimal(chargeAgg._sum.total_amount.toString());
+      }
+    }
+    if (typeof prisma.allocationLine?.aggregate === 'function') {
+      const repaymentAgg = await prisma.allocationLine.aggregate({
+        where: {
+          target_account_id: accountId,
+          target_account: {
+            type: 'LOAN_TAKEN',
+            user_id: userId
+          },
+          transaction: {
+            user_id: userId,
+            form: 'PAYMENT_CHARGE',
+            primary_account: {
+              type: 'CASH',
+              user_id: userId
+            }
+          }
+        },
+        _sum: { amount: true }
+      });
+      if (repaymentAgg._sum?.amount) {
+        repayments = new Prisma.Decimal(repaymentAgg._sum.amount.toString());
+      }
+
+      const borrowAgg = await prisma.allocationLine.aggregate({
+        where: {
+          target_account_id: accountId,
+          target_account: {
+            type: 'LOAN_TAKEN',
+            user_id: userId
+          },
+          transaction: {
+            user_id: userId,
+            form: 'RECEIVE_MONEY',
+            primary_account: {
+              type: 'CASH',
+              user_id: userId
+            }
+          }
+        },
+        _sum: { amount: true }
+      });
+      if (borrowAgg._sum?.amount) {
+        borrowings = new Prisma.Decimal(borrowAgg._sum.amount.toString());
+      }
+    }
+    currentBalanceDecimal = openingDecimal.add(charges).add(borrowings).sub(repayments);
+  } else if (accountType === 'LOAN_GIVEN' && typeof prisma.allocationLine?.aggregate === 'function') {
+    const disburseAgg = await prisma.allocationLine.aggregate({
+      where: {
+        target_account_id: accountId,
+        target_account: { type: 'LOAN_GIVEN', user_id: userId },
+        transaction: {
+          user_id: userId,
+          form: 'PAYMENT_CHARGE',
+          primary_account: { type: 'CASH', user_id: userId }
+        }
+      },
+      _sum: { amount: true }
+    });
+    const recoverAgg = await prisma.allocationLine.aggregate({
+      where: {
+        target_account_id: accountId,
+        target_account: { type: 'LOAN_GIVEN', user_id: userId },
+        transaction: {
+          user_id: userId,
+          form: 'RECEIVE_MONEY',
+          primary_account: { type: 'CASH', user_id: userId }
+        }
+      },
+      _sum: { amount: true }
+    });
+    const disbursed = disburseAgg._sum?.amount
+      ? new Prisma.Decimal(disburseAgg._sum.amount.toString())
+      : zero;
+    const recovered = recoverAgg._sum?.amount
+      ? new Prisma.Decimal(recoverAgg._sum.amount.toString())
+      : zero;
+    currentBalanceDecimal = openingDecimal.add(disbursed).sub(recovered);
+  }
+
+  return currentBalanceDecimal;
 }
 
 /**
@@ -1080,6 +1127,12 @@ export async function updateAccount(req: Request, res: Response, next: NextFunct
     }
 
     const openingDecimal = new Prisma.Decimal(updated.opening_balance.toString());
+    const currentBalanceDecimal = await computeSingleAccountCurrentBalanceDecimal(
+      userId,
+      updated.id,
+      updated.type,
+      openingDecimal
+    );
 
     res.status(200).json({
       success: true,
@@ -1094,7 +1147,7 @@ export async function updateAccount(req: Request, res: Response, next: NextFunct
             updated.subtype ||
             (updated.type === 'LOAN_TAKEN' ? 'CREDIT_CARD' : 'DEFAULT'),
           opening_balance: Number(openingDecimal.toFixed(2)),
-          current_balance: Number(openingDecimal.toFixed(2)),
+          current_balance: Number(currentBalanceDecimal.toFixed(2)),
           is_opening_locked: Boolean(updated.is_opening_locked),
           is_archived: Boolean(updated.is_archived),
           created_at:

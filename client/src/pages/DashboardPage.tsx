@@ -71,7 +71,7 @@ export const DashboardPage: React.FC = () => {
               Role: <span className="badge bg-primary">{user?.role}</span> | Email: {user?.email}
             </p>
           </div>
-          <div className="d-flex gap-2 mt-3 mt-md-0">
+          <div className="d-flex gap-2 mt-3 mt-md-0 flex-wrap">
             <Link to="/accounts" className="btn btn-success btn-sm d-flex align-items-center gap-1" id="btn-quick-income">
               <span>+</span> Record Income
             </Link>
@@ -80,6 +80,9 @@ export const DashboardPage: React.FC = () => {
             </Link>
             <Link to="/accounts" className="btn btn-primary btn-sm d-flex align-items-center gap-1" id="btn-quick-repayment">
               <span>💳</span> Pay Debt
+            </Link>
+            <Link to="/accounts" className="btn btn-outline-primary btn-sm d-flex align-items-center gap-1" id="btn-quick-transfer">
+              <span>⇄</span> Transfer Cash
             </Link>
             <Link to="/transactions" className="btn btn-outline-secondary btn-sm" id="btn-view-history">
               History

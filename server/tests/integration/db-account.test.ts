@@ -902,4 +902,147 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
       }
     });
   });
+
+  describe('Live PostgreSQL Verification for WP-08 (F-10: TEST-ACC-05 Concurrency, Trigger & Migration Safety)', () => {
+    it('TEST-ACC-05 (Live PostgreSQL): serializes concurrent duplicate account creation requests (exact match, case-insensitive, whitespace variants) via DB unique constraint and maps P2002 to 409 DUPLICATE_ACCOUNT_NAME', async (ctx) => {
+      if (!isDbConnected) {
+        ctx.skip();
+        return;
+      }
+
+      const tempUsername = `temp_acc05_${Date.now()}`;
+      const tempUser = await prisma.user.create({
+        data: {
+          username: tempUsername,
+          email: `${tempUsername}@whatsss.test`,
+          password_hash: '$2b$10$TempAcc05LiveTestHashValue12345678901234567890123456',
+          role: 'USER',
+          is_active: true
+        }
+      });
+
+      pendingCleanups.push(async () => {
+        await prisma.account.deleteMany({ where: { user_id: tempUser.id } });
+        await prisma.user.deleteMany({ where: { id: tempUser.id } });
+      });
+
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .send({ username: 'user_demo', password: 'Password123!' });
+      expect(loginRes.status).toBe(200);
+      const demoCookie = loginRes.headers['set-cookie'];
+
+      const userDemo = await prisma.user.findUniqueOrThrow({ where: { username: 'user_demo' } });
+
+      // Ensure cleanup of any Emergency Fund test rows for user_demo
+      const baseName = `Emergency Fund ${Date.now()}`;
+      const lowerVariant = baseName.toLowerCase();
+      const whitespaceVariant = `   ${baseName.replace(' ', '    ')}   `;
+
+      pendingCleanups.push(async () => {
+        await prisma.account.deleteMany({
+          where: {
+            user_id: userDemo.id,
+            normalized_name: lowerVariant
+          }
+        });
+      });
+
+      // 1. Concurrent API requests with case + whitespace variants on live PostgreSQL
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post('/api/accounts')
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', demoCookie)
+          .send({ name: baseName, type: 'CASH', opening_balance: 100.00 }),
+        request(app)
+          .post('/api/accounts')
+          .set('Origin', TRUSTED_ORIGIN)
+          .set('Content-Type', 'application/json')
+          .set('Cookie', demoCookie)
+          .send({ name: whitespaceVariant.toUpperCase(), type: 'CASH', opening_balance: 100.00 })
+      ]);
+
+      const statuses = [res1.status, res2.status].sort();
+      expect(statuses).toEqual([201, 409]);
+
+      const conflictRes = res1.status === 409 ? res1 : res2;
+      expect(conflictRes.body.success).toBe(false);
+      expect(conflictRes.body.error.code).toBe('DUPLICATE_ACCOUNT_NAME');
+
+      // Verify PostgreSQL holds strictly 1 row for this normalized name
+      const persistedRows = await prisma.account.findMany({
+        where: {
+          user_id: userDemo.id,
+          normalized_name: lowerVariant
+        }
+      });
+      expect(persistedRows).toHaveLength(1);
+      expect(persistedRows[0].normalized_name).toBe(lowerVariant);
+
+      // 2. Direct PostgreSQL trigger & functional unique index test (P2 Item 5 & 6):
+      // Insert directly without specifying normalized_name, verify trigger computes it,
+      // and verify direct SQL UPDATE / INSERT with "Food" vs "  food  " is blocked by DB unique index.
+      const foodAcc = await prisma.account.create({
+        data: {
+          user_id: tempUser.id,
+          name: '  Food   &   Drink  ',
+          type: 'EXPENSE',
+          opening_balance: 0.00
+        }
+      });
+      expect(foodAcc.normalized_name).toBe('food & drink');
+
+      // Direct SQL UPDATE of name without touching normalized_name must trigger sync_account_normalized_name()
+      await prisma.$executeRaw`
+        UPDATE "accounts"
+        SET "name" = '  Fresh   Groceries  '
+        WHERE "id" = ${foodAcc.id}
+      `;
+      const afterDirectUpdate = await prisma.account.findUniqueOrThrow({ where: { id: foodAcc.id } });
+      expect(afterDirectUpdate.normalized_name).toBe('fresh groceries');
+
+      // Attempting to insert "FRESH   GROCERIES" for the same user must fail at DB level with P2002
+      await expect(
+        prisma.account.create({
+          data: {
+            user_id: tempUser.id,
+            name: 'FRESH   GROCERIES',
+            type: 'EXPENSE',
+            opening_balance: 0.00
+          }
+        })
+      ).rejects.toThrow();
+
+      // 3. Verify LOAN_TAKEN subtype trigger preservation (P2 Item 7):
+      // Creating a LOAN_TAKEN account with explicit GENERAL_LOAN must keep GENERAL_LOAN (never overwritten to CREDIT_CARD)
+      const generalLoanAcc = await prisma.account.create({
+        data: {
+          user_id: tempUser.id,
+          name: 'Education Loan',
+          type: 'LOAN_TAKEN',
+          subtype: 'GENERAL_LOAN',
+          opening_balance: 5000.00
+        }
+      });
+      expect(generalLoanAcc.subtype).toBe('GENERAL_LOAN');
+
+      // Verify seeded Visa Credit Card has subtype CREDIT_CARD
+      const seededCc = await prisma.account.findFirstOrThrow({
+        where: { user_id: userDemo.id, name: 'Visa Credit Card' }
+      });
+      expect(seededCc.subtype).toBe('CREDIT_CARD');
+
+      // 4. Verify Pre-Migration Collision Check Function and Backfill Function execute cleanly on existing data (P2 Item 6 & 7)
+      await expect(
+        prisma.$queryRaw`SELECT check_pre_migration_account_name_collisions()`
+      ).resolves.toBeDefined();
+      await expect(
+        prisma.$queryRaw`SELECT backfill_loan_taken_subtypes()`
+      ).resolves.toBeDefined();
+    });
+  });
 });

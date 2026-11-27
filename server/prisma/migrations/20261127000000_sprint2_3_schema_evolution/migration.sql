@@ -1,3 +1,31 @@
+-- Pre-Migration Safety Check: Verify no existing user accounts collide after case-insensitive and whitespace normalization.
+-- Never automatically deletes or renames user accounts; aborts cleanly with an explicit report if duplicates exist.
+CREATE OR REPLACE FUNCTION check_pre_migration_account_name_collisions()
+RETURNS VOID AS $$
+DECLARE
+  v_conflict RECORD;
+BEGIN
+  SELECT
+    "user_id",
+    LOWER(REGEXP_REPLACE(BTRIM("name"), '\s+', ' ', 'g')) AS norm_name,
+    COUNT(*) AS cnt,
+    STRING_AGG("name", ', ' ORDER BY "created_at", "id") AS conflicting_names
+  INTO v_conflict
+  FROM "accounts"
+  GROUP BY "user_id", LOWER(REGEXP_REPLACE(BTRIM("name"), '\s+', ' ', 'g'))
+  HAVING COUNT(*) > 1
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'Pre-migration check failed: duplicate normalized account names detected for user_id=% (normalized="%", count=%, existing names=[%]). Manual review required without auto-renaming or deleting user data.',
+      v_conflict."user_id", v_conflict.norm_name, v_conflict.cnt, v_conflict.conflicting_names
+      USING ERRCODE = '23505';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT check_pre_migration_account_name_collisions();
+
 -- CreateEnum
 CREATE TYPE "AccountSubtype" AS ENUM ('DEFAULT', 'CREDIT_CARD', 'GENERAL_LOAN');
 
@@ -7,23 +35,66 @@ ALTER TABLE "accounts"
     ADD COLUMN "subtype" "AccountSubtype" NOT NULL DEFAULT 'DEFAULT',
     ADD COLUMN "is_archived" BOOLEAN NOT NULL DEFAULT false;
 
--- Backfill normalized_name and subtype for existing rows
+-- Backfill normalized_name unconditionally from name for all existing rows
 UPDATE "accounts"
 SET "normalized_name" = LOWER(REGEXP_REPLACE(BTRIM("name"), '\s+', ' ', 'g'));
 
-UPDATE "accounts"
-SET "subtype" = 'CREDIT_CARD'
-WHERE "type" = 'LOAN_TAKEN' AND LOWER(BTRIM("name")) LIKE '%credit%';
+-- Deterministic LOAN_TAKEN Subtype Backfill (ARCH-S2-01 / BR-07 v1.1 Prerequisite):
+-- 1. All Sprint 1 LOAN_TAKEN accounts that are seeded credit cards or have recorded credit-card purchase charges
+--    (Transaction with primary_account_id = account.id and form = 'PAYMENT_CHARGE') or no general-loan borrowing allocations
+--    are classified as CREDIT_CARD.
+-- 2. Any LOAN_TAKEN account that has general-loan borrowing inflow allocations (Transaction with form = 'RECEIVE_MONEY'
+--    on a CASH primary_account targeting this LOAN_TAKEN account) and zero credit-card purchase charges is classified as GENERAL_LOAN.
+CREATE OR REPLACE FUNCTION backfill_loan_taken_subtypes()
+RETURNS VOID AS $$
+BEGIN
+  -- Classify LOAN_TAKEN accounts with general borrowing inflows and no direct purchase charges as GENERAL_LOAN
+  UPDATE "accounts" a
+  SET "subtype" = 'GENERAL_LOAN'
+  WHERE a."type" = 'LOAN_TAKEN'
+    AND EXISTS (
+      SELECT 1
+      FROM "allocation_lines" al
+      JOIN "transactions" t ON t."id" = al."transaction_id"
+      JOIN "accounts" p ON p."id" = t."primary_account_id"
+      WHERE al."target_account_id" = a."id"
+        AND t."form" = 'RECEIVE_MONEY'
+        AND p."type" = 'CASH'
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM "transactions" t2
+      WHERE t2."primary_account_id" = a."id"
+        AND t2."form" = 'PAYMENT_CHARGE'
+    );
 
--- Trigger to automatically populate normalized_name (and default LOAN_TAKEN subtype to CREDIT_CARD when omitted) on INSERT/UPDATE
+  -- All remaining Sprint 1 LOAN_TAKEN accounts (including seeded Visa Credit Card) are CREDIT_CARD
+  UPDATE "accounts" a
+  SET "subtype" = 'CREDIT_CARD'
+  WHERE a."type" = 'LOAN_TAKEN'
+    AND a."subtype" = 'DEFAULT';
+
+  -- Ensure non-LOAN_TAKEN accounts strictly retain DEFAULT subtype
+  UPDATE "accounts"
+  SET "subtype" = 'DEFAULT'
+  WHERE "type" <> 'LOAN_TAKEN' AND "subtype" <> 'DEFAULT';
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT backfill_loan_taken_subtypes();
+
+-- Trigger to unconditionally compute normalized_name from NEW.name on every INSERT or UPDATE,
+-- and preserve explicit GENERAL_LOAN / CREDIT_CARD subtypes while defaulting omitted LOAN_TAKEN subtype to CREDIT_CARD
 CREATE OR REPLACE FUNCTION sync_account_normalized_name()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF NEW."normalized_name" IS NULL OR BTRIM(NEW."normalized_name") = '' THEN
-    NEW."normalized_name" := LOWER(REGEXP_REPLACE(BTRIM(NEW."name"), '\s+', ' ', 'g'));
-  END IF;
-  IF NEW."type" = 'LOAN_TAKEN' AND (NEW."subtype" IS NULL OR NEW."subtype" = 'DEFAULT') THEN
-    NEW."subtype" := 'CREDIT_CARD';
+  NEW."normalized_name" := LOWER(REGEXP_REPLACE(BTRIM(COALESCE(NEW."name", '')), '\s+', ' ', 'g'));
+  IF NEW."type" = 'LOAN_TAKEN' THEN
+    IF NEW."subtype" IS NULL OR NEW."subtype" = 'DEFAULT' THEN
+      NEW."subtype" := 'CREDIT_CARD';
+    END IF;
+  ELSE
+    NEW."subtype" := 'DEFAULT';
   END IF;
   RETURN NEW;
 END;

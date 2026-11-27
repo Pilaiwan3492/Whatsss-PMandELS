@@ -6,7 +6,10 @@ import { config } from '../../src/config/env.js';
 import {
   findMockUser,
   mockAccounts,
-  resetMockAccounts
+  mockTransactions,
+  mockAllocationLines,
+  resetMockAccounts,
+  resetMockTransactions
 } from '../fixtures/mockPrisma.js';
 import { lockAccounts } from '../../src/services/accountLock.service.js';
 
@@ -159,22 +162,135 @@ vi.mock('../../src/prisma.js', () => {
         })
       },
       transaction: {
-        groupBy: vi.fn(async () => {
+        groupBy: vi.fn(async ({ where }) => {
           if ((prisma as any).__mockCharges) {
             return (prisma as any).__mockCharges;
           }
-          return [];
+          const matching = mockTransactions.filter((t) => {
+            if (where?.user_id && t.user_id !== where.user_id) return false;
+            if (
+              where?.primary_account_id?.in &&
+              !where.primary_account_id.in.includes(t.primary_account_id)
+            )
+              return false;
+            if (where?.form && t.form !== where.form) return false;
+            return true;
+          });
+          const map = new Map<string, Prisma.Decimal>();
+          for (const t of matching) {
+            const key = `${t.primary_account_id}:::${t.form}`;
+            const prev = map.get(key) || new Prisma.Decimal('0.00');
+            map.set(key, prev.add(new Prisma.Decimal(t.total_amount.toString())));
+          }
+          const rows: any[] = [];
+          for (const [k, sum] of map.entries()) {
+            const [primary_account_id, form] = k.split(':::');
+            rows.push({
+              primary_account_id,
+              form,
+              _sum: { total_amount: sum }
+            });
+          }
+          return rows;
         }),
-        aggregate: vi.fn(async () => {
+        aggregate: vi.fn(async ({ where }) => {
           if ((prisma as any).__mockAggregate) {
             return (prisma as any).__mockAggregate;
           }
-          return { _sum: { total_amount: null } };
+          const matching = mockTransactions.filter((t) => {
+            if (where?.user_id && t.user_id !== where.user_id) return false;
+            if (where?.primary_account_id) {
+              if (typeof where.primary_account_id === 'string') {
+                if (t.primary_account_id !== where.primary_account_id) return false;
+              } else if (where.primary_account_id.in) {
+                if (!where.primary_account_id.in.includes(t.primary_account_id)) return false;
+              }
+            }
+            if (where?.form && t.form !== where.form) return false;
+            return true;
+          });
+          if (matching.length === 0) return { _sum: { total_amount: null } };
+          const sum = matching.reduce(
+            (acc, t) => acc.add(new Prisma.Decimal(t.total_amount.toString())),
+            new Prisma.Decimal('0.00')
+          );
+          return { _sum: { total_amount: sum } };
         })
       },
       allocationLine: {
-        groupBy: vi.fn(async () => []),
-        aggregate: vi.fn(async () => ({ _sum: { amount: null } }))
+        groupBy: vi.fn(async ({ where }) => {
+          const matching = mockAllocationLines.filter((line) => {
+            const tx = mockTransactions.find((t) => t.id === line.transaction_id);
+            const targetAcc = mockAccounts.find((a) => a.id === line.target_account_id);
+            const primaryAcc = mockAccounts.find((a) => a.id === tx?.primary_account_id);
+
+            if (
+              where?.target_account_id?.in &&
+              !where.target_account_id.in.includes(line.target_account_id)
+            )
+              return false;
+            if (where?.target_account?.type && targetAcc?.type !== where.target_account.type)
+              return false;
+            if (where?.target_account?.user_id && targetAcc?.user_id !== where.target_account.user_id)
+              return false;
+            if (where?.transaction?.user_id && tx?.user_id !== where.transaction.user_id)
+              return false;
+            if (where?.transaction?.form && tx?.form !== where.transaction.form) return false;
+            if (
+              where?.transaction?.primary_account?.type &&
+              primaryAcc?.type !== where.transaction.primary_account.type
+            )
+              return false;
+            return true;
+          });
+          const map = new Map<string, Prisma.Decimal>();
+          for (const l of matching) {
+            const prev = map.get(l.target_account_id) || new Prisma.Decimal('0.00');
+            map.set(l.target_account_id, prev.add(new Prisma.Decimal(l.amount.toString())));
+          }
+          const rows: any[] = [];
+          for (const [target_account_id, sum] of map.entries()) {
+            rows.push({
+              target_account_id,
+              _sum: { amount: sum }
+            });
+          }
+          return rows;
+        }),
+        aggregate: vi.fn(async ({ where }) => {
+          const matching = mockAllocationLines.filter((line) => {
+            const tx = mockTransactions.find((t) => t.id === line.transaction_id);
+            const targetAcc = mockAccounts.find((a) => a.id === line.target_account_id);
+            const primaryAcc = mockAccounts.find((a) => a.id === tx?.primary_account_id);
+
+            if (where?.target_account_id) {
+              if (typeof where.target_account_id === 'string') {
+                if (line.target_account_id !== where.target_account_id) return false;
+              } else if (where.target_account_id.in) {
+                if (!where.target_account_id.in.includes(line.target_account_id)) return false;
+              }
+            }
+            if (where?.target_account?.type && targetAcc?.type !== where.target_account.type)
+              return false;
+            if (where?.target_account?.user_id && targetAcc?.user_id !== where.target_account.user_id)
+              return false;
+            if (where?.transaction?.user_id && tx?.user_id !== where.transaction.user_id)
+              return false;
+            if (where?.transaction?.form && tx?.form !== where.transaction.form) return false;
+            if (
+              where?.transaction?.primary_account?.type &&
+              primaryAcc?.type !== where.transaction.primary_account.type
+            )
+              return false;
+            return true;
+          });
+          if (matching.length === 0) return { _sum: { amount: null } };
+          const sum = matching.reduce(
+            (acc, l) => acc.add(new Prisma.Decimal(l.amount.toString())),
+            new Prisma.Decimal('0.00')
+          );
+          return { _sum: { amount: sum } };
+        })
       }
     }
   };
@@ -201,6 +317,7 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
 
   beforeEach(() => {
     resetMockAccounts();
+    resetMockTransactions();
     vi.clearAllMocks();
   });
 
@@ -1051,17 +1168,191 @@ describe('Feature F-03: Financial Account Foundation & Opening Balance Lifecycle
       expect(userBCreate.status).toBe(201);
     });
 
-    it('TEST-ACC-04: renames own account with normalized name, rejects cross-tenant rename with 404 NOT_FOUND, and blocks ADMIN with 403 (AC-10-3, BR-01, BR-10)', async () => {
-      // (a) user_demo renames own account
-      const renameRes = await request(app)
+    it('TEST-ACC-04: renames own account with normalized name, preserves dynamic current_balance across CASH/LOAN_TAKEN/LOAN_GIVEN accounts without mutating transactions, rejects cross-tenant rename with 404 NOT_FOUND, and blocks ADMIN with 403 (AC-10-3, BR-01, BR-10)', async () => {
+      // 1. Setup non-zero opening balances and transactions across CASH, LOAN_TAKEN, and LOAN_GIVEN
+      const checking = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+      checking.opening_balance = new Prisma.Decimal('10000.00');
+      checking.is_opening_locked = true;
+
+      const cc = mockAccounts.find((a) => a.id === 'acc-demo-cc')!;
+      cc.opening_balance = new Prisma.Decimal('500.00');
+      cc.is_opening_locked = true;
+
+      // Create a LOAN_GIVEN account with opening balance 1000.00
+      const createLoanGivenRes = await request(app)
+        .post('/api/accounts')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({
+          name: 'Alice Receivable',
+          type: 'LOAN_GIVEN',
+          opening_balance: 1000.00
+        });
+      expect(createLoanGivenRes.status).toBe(201);
+      const loanGivenId = createLoanGivenRes.body.data.account.id;
+
+      // Seed transactions:
+      // - Txn 1 (Income): +20,000.00 into Checking Bank
+      mockTransactions.push({
+        id: 'txn-rename-inc-1',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('20000.00'),
+        transaction_date: new Date('2026-11-06'),
+        description: 'Salary Inflow',
+        created_at: new Date('2026-11-06T09:00:00Z')
+      });
+      mockAllocationLines.push({
+        id: 'alloc-rename-inc-1',
+        transaction_id: 'txn-rename-inc-1',
+        target_account_id: 'acc-demo-salary',
+        amount: new Prisma.Decimal('20000.00'),
+        notes: 'Salary'
+      });
+
+      // - Txn 2 (CC Expense): +3,000.00 charge on Visa Credit Card (opening 500 + 3000 = 3500 debt)
+      mockTransactions.push({
+        id: 'txn-rename-exp-2',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-cc',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('3000.00'),
+        transaction_date: new Date('2026-11-06'),
+        description: 'Dining Purchase',
+        created_at: new Date('2026-11-06T10:00:00Z')
+      });
+      mockAllocationLines.push({
+        id: 'alloc-rename-exp-2',
+        transaction_id: 'txn-rename-exp-2',
+        target_account_id: 'acc-demo-dining',
+        amount: new Prisma.Decimal('3000.00'),
+        notes: 'Dining'
+      });
+
+      // - Txn 3 (CC Repayment): -1,200.00 from Checking Bank targeting Visa Credit Card (debt: 3500 - 1200 = 2300.00)
+      mockTransactions.push({
+        id: 'txn-rename-repay-3',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1200.00'),
+        transaction_date: new Date('2026-11-07'),
+        description: 'CC Partial Repayment',
+        created_at: new Date('2026-11-07T10:00:00Z')
+      });
+      mockAllocationLines.push({
+        id: 'alloc-rename-repay-3',
+        transaction_id: 'txn-rename-repay-3',
+        target_account_id: 'acc-demo-cc',
+        amount: new Prisma.Decimal('1200.00'),
+        notes: 'Repayment'
+      });
+
+      // - Txn 4 (Loan Given Disbursement): -2,500.00 from Checking Bank targeting Alice Receivable (receivable: 1000 + 2500 = 3500)
+      mockTransactions.push({
+        id: 'txn-rename-lg-disb-4',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('2500.00'),
+        transaction_date: new Date('2026-11-08'),
+        description: 'Loan to Alice',
+        created_at: new Date('2026-11-08T10:00:00Z')
+      });
+      mockAllocationLines.push({
+        id: 'alloc-rename-lg-disb-4',
+        transaction_id: 'txn-rename-lg-disb-4',
+        target_account_id: loanGivenId,
+        amount: new Prisma.Decimal('2500.00'),
+        notes: 'Disburse'
+      });
+
+      // - Txn 5 (Loan Given Recovery): +800.00 into Checking Bank from Alice Receivable (receivable: 3500 - 800 = 2700.00)
+      // Checking Bank balance = 10000 + (20000 + 800) - (1200 + 2500) = 27100.00
+      mockTransactions.push({
+        id: 'txn-rename-lg-rec-5',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('800.00'),
+        transaction_date: new Date('2026-11-09'),
+        description: 'Partial Recovery from Alice',
+        created_at: new Date('2026-11-09T10:00:00Z')
+      });
+      mockAllocationLines.push({
+        id: 'alloc-rename-lg-rec-5',
+        transaction_id: 'txn-rename-lg-rec-5',
+        target_account_id: loanGivenId,
+        amount: new Prisma.Decimal('800.00'),
+        notes: 'Recovery'
+      });
+
+      const txSnapshotBefore = JSON.stringify(mockTransactions);
+      const allocSnapshotBefore = JSON.stringify(mockAllocationLines);
+
+      // 2. Capture Current Balances before Rename via GET /api/accounts
+      const beforeListRes = await request(app)
+        .get('/api/accounts')
+        .set('Cookie', userACookie);
+      expect(beforeListRes.status).toBe(200);
+      const cashBefore = beforeListRes.body.data.accounts.find((a: any) => a.id === 'acc-demo-checking');
+      const ccBefore = beforeListRes.body.data.accounts.find((a: any) => a.id === 'acc-demo-cc');
+      const lgBefore = beforeListRes.body.data.accounts.find((a: any) => a.id === loanGivenId);
+
+      expect(cashBefore.opening_balance).toBe(10000.00);
+      expect(cashBefore.current_balance).toBe(27100.00);
+      expect(ccBefore.opening_balance).toBe(500.00);
+      expect(ccBefore.current_balance).toBe(2300.00);
+      expect(lgBefore.opening_balance).toBe(1000.00);
+      expect(lgBefore.current_balance).toBe(2700.00);
+
+      // 3. Rename CASH account and assert response current_balance matches pre-rename current_balance (27100.00 != opening_balance 10000.00)
+      const renameCashRes = await request(app)
         .patch('/api/accounts/acc-demo-checking')
         .set('Origin', TRUSTED_ORIGIN)
         .set('Content-Type', 'application/json')
         .set('Cookie', userACookie)
         .send({ name: '  Main   Checking  ' });
-      expect(renameRes.status).toBe(200);
-      expect(renameRes.body.data.account.name).toBe('Main Checking');
-      expect(renameRes.body.data.account.normalized_name).toBe('main checking');
+      expect(renameCashRes.status).toBe(200);
+      expect(renameCashRes.body.data.account.name).toBe('Main Checking');
+      expect(renameCashRes.body.data.account.normalized_name).toBe('main checking');
+      expect(renameCashRes.body.data.account.opening_balance).toBe(10000.00);
+      expect(renameCashRes.body.data.account.current_balance).toBe(cashBefore.current_balance);
+      expect(renameCashRes.body.data.account.current_balance).toBe(27100.00);
+
+      // 4. Rename LOAN_TAKEN account with repayment and assert current_balance (2300.00 != opening_balance 500.00)
+      const renameCcRes = await request(app)
+        .patch('/api/accounts/acc-demo-cc')
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ name: '  Primary   Visa   Card ' });
+      expect(renameCcRes.status).toBe(200);
+      expect(renameCcRes.body.data.account.name).toBe('Primary Visa Card');
+      expect(renameCcRes.body.data.account.normalized_name).toBe('primary visa card');
+      expect(renameCcRes.body.data.account.opening_balance).toBe(500.00);
+      expect(renameCcRes.body.data.account.current_balance).toBe(ccBefore.current_balance);
+      expect(renameCcRes.body.data.account.current_balance).toBe(2300.00);
+
+      // 5. Rename LOAN_GIVEN account with recovery and assert current_balance (2700.00 != opening_balance 1000.00)
+      const renameLgRes = await request(app)
+        .patch(`/api/accounts/${loanGivenId}`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', userACookie)
+        .send({ name: '  Alice   Loan   Account ' });
+      expect(renameLgRes.status).toBe(200);
+      expect(renameLgRes.body.data.account.name).toBe('Alice Loan Account');
+      expect(renameLgRes.body.data.account.normalized_name).toBe('alice loan account');
+      expect(renameLgRes.body.data.account.opening_balance).toBe(1000.00);
+      expect(renameLgRes.body.data.account.current_balance).toBe(lgBefore.current_balance);
+      expect(renameLgRes.body.data.account.current_balance).toBe(2700.00);
+
+      // 6. Verify that renaming accounts did NOT modify any Transaction or AllocationLine records
+      expect(JSON.stringify(mockTransactions)).toBe(txSnapshotBefore);
+      expect(JSON.stringify(mockAllocationLines)).toBe(allocSnapshotBefore);
 
       // (b) user_demo attempts PATCH on user_other account -> 404 NOT_FOUND
       const crossTenantRes = await request(app)
