@@ -15,12 +15,15 @@ UPDATE "accounts"
 SET "subtype" = 'CREDIT_CARD'
 WHERE "type" = 'LOAN_TAKEN' AND LOWER(BTRIM("name")) LIKE '%credit%';
 
--- Trigger to automatically populate normalized_name on INSERT/UPDATE if empty or when name changes
+-- Trigger to automatically populate normalized_name (and default LOAN_TAKEN subtype to CREDIT_CARD when omitted) on INSERT/UPDATE
 CREATE OR REPLACE FUNCTION sync_account_normalized_name()
 RETURNS TRIGGER AS $$
 BEGIN
   IF NEW."normalized_name" IS NULL OR BTRIM(NEW."normalized_name") = '' THEN
     NEW."normalized_name" := LOWER(REGEXP_REPLACE(BTRIM(NEW."name"), '\s+', ' ', 'g'));
+  END IF;
+  IF NEW."type" = 'LOAN_TAKEN' AND (NEW."subtype" IS NULL OR NEW."subtype" = 'DEFAULT') THEN
+    NEW."subtype" := 'CREDIT_CARD';
   END IF;
   RETURN NEW;
 END;

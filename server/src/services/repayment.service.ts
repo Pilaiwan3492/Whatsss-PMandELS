@@ -336,7 +336,7 @@ export async function recordRepayment(
     }
 
     const toSubtype = (toAccount as any).subtype;
-    if (toSubtype !== undefined && toSubtype !== null && toSubtype !== 'CREDIT_CARD') {
+    if (toSubtype === 'GENERAL_LOAN') {
       throw new RepaymentError(
         `Credit card repayment target must have subtype CREDIT_CARD, received: ${toSubtype}.`,
         400,
