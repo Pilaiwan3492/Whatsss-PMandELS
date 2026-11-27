@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getTransactions, HistoryTransaction } from '../api/transactionApi.js';
+import { TransactionCorrectionModal } from '../components/TransactionCorrectionModal.js';
 
 export const TransactionHistoryPage: React.FC = () => {
   const [transactions, setTransactions] = useState<HistoryTransaction[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [correctionFeedback, setCorrectionFeedback] = useState<string | null>(null);
+  const [editingTxn, setEditingTxn] = useState<HistoryTransaction | null>(null);
   const [selectedFilter, setSelectedFilter] = useState<'ALL' | 'INCOME' | 'EXPENSE' | 'REPAYMENT'>('ALL');
   const [expandedTxnIds, setExpandedTxnIds] = useState<Set<string>>(new Set());
 
@@ -117,6 +120,13 @@ export const TransactionHistoryPage: React.FC = () => {
         </button>
       </div>
 
+      {/* Correction Feedback Alert */}
+      {correctionFeedback && (
+        <div className="alert alert-success py-2 small mb-3" role="status" data-testid="correction-feedback">
+          {correctionFeedback}
+        </div>
+      )}
+
       {/* Error Alert */}
       {errorMessage && (
         <div className="alert alert-danger d-flex justify-content-between align-items-center mb-4" role="alert">
@@ -164,6 +174,7 @@ export const TransactionHistoryPage: React.FC = () => {
                   <th scope="col">Description</th>
                   <th scope="col">Split Allocations</th>
                   <th scope="col" className="text-end">Total Amount</th>
+                  <th scope="col" className="text-end">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -235,12 +246,28 @@ export const TransactionHistoryPage: React.FC = () => {
                         >
                           {kind === 'INCOME' ? '+' : '-'} {formatCurrency(tx.total_amount)}
                         </td>
+                        <td
+                          className="text-end text-nowrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() => {
+                              setCorrectionFeedback(null);
+                              setEditingTxn(tx);
+                            }}
+                            data-testid={`btn-edit-${tx.id}`}
+                          >
+                            Edit
+                          </button>
+                        </td>
                       </tr>
 
                       {/* Expanded Sub-Row for Split Allocations */}
                       {isExpanded && (
                         <tr className="table-light" data-testid={`expanded-row-${tx.id}`}>
-                          <td colSpan={7} className="p-3">
+                          <td colSpan={8} className="p-3">
                             <div className="ps-4">
                               <h6 className="fw-bold small mb-2 text-muted text-uppercase">
                                 Split Allocations ({tx.allocation_lines.length} lines):
@@ -283,6 +310,19 @@ export const TransactionHistoryPage: React.FC = () => {
           </div>
         </div>
       ) : null}
+
+      {/* Transaction Correction Modal (F-16) */}
+      {editingTxn && (
+        <TransactionCorrectionModal
+          transaction={editingTxn}
+          onClose={() => setEditingTxn(null)}
+          onSuccess={async () => {
+            setEditingTxn(null);
+            setCorrectionFeedback('Transaction corrected and audit snapshot recorded.');
+            await fetchHistory();
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -3,6 +3,7 @@ import { recordIncome, IncomeError } from '../services/income.service.js';
 import { recordExpense, ExpenseError } from '../services/expense.service.js';
 import { recordRepayment, RepaymentError } from '../services/repayment.service.js';
 import { recordTransfer, TransferError } from '../services/transfer.service.js';
+import { correctTransaction, CorrectionError } from '../services/correction.service.js';
 import { getTransactionHistory } from '../services/report.service.js';
 
 /**
@@ -218,6 +219,51 @@ export async function createTransferTransaction(
     });
   } catch (err: any) {
     if (err instanceof TransferError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * PUT /api/transactions/:id & PATCH /api/transactions/:id
+ * Atomically corrects a user-owned transaction and records an immutable TransactionAuditLog (F-16, WP-11, FR-19).
+ */
+export async function correctTransactionHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const result = await correctTransaction(userId, req.params.id, req.body);
+
+    res.status(200).json({
+      success: true,
+      data: result
+    });
+  } catch (err: any) {
+    if (err instanceof CorrectionError) {
       res.status(err.statusCode).json({
         success: false,
         error: {

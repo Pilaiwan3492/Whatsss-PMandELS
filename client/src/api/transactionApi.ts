@@ -198,10 +198,31 @@ export async function recordTransfer(payload: TransferPayload): Promise<Transfer
   return res.data.data;
 }
 
+export interface CorrectTransactionPayload {
+  total_amount: string;
+  transaction_date: string;
+  description?: string | null;
+  allocations: AllocationLinePayload[];
+}
+
 /**
  * Fetches chronological transaction history for the authenticated tenant (WP-06, F-09, FR-11, AC-09-1).
  */
 export async function getTransactions(): Promise<HistoryTransaction[]> {
   const res = await reportClient.get<TransactionsApiResponse>('/transactions');
   return res.data.data.transactions;
+}
+
+/**
+ * Atomically corrects an existing user-owned transaction (F-16, WP-11, FR-19, AC-16-1..4).
+ */
+export async function correctTransaction(
+  transactionId: string,
+  payload: CorrectTransactionPayload
+): Promise<any> {
+  const res = await axiosClient.put<{ success: boolean; data: { transaction: any } }>(
+    `/transactions/${transactionId}`,
+    payload
+  );
+  return res.data.data.transaction;
 }

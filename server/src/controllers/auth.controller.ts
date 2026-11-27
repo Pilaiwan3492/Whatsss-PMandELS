@@ -27,7 +27,7 @@ export async function login(req: Request, res: Response): Promise<void> {
     }
   });
 
-  if (!user || !user.is_active) {
+  if (!user) {
     res.status(401).json({
       success: false,
       error: {
@@ -45,6 +45,17 @@ export async function login(req: Request, res: Response): Promise<void> {
       error: {
         code: 'INVALID_CREDENTIALS',
         message: 'Invalid username or password'
+      }
+    });
+    return;
+  }
+
+  if (!user.is_active) {
+    res.status(403).json({
+      success: false,
+      error: {
+        code: 'ACCOUNT_DISABLED',
+        message: 'This user account has been disabled by an administrator.'
       }
     });
     return;

@@ -220,4 +220,48 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
       expect(screen.getByTestId('transactions-table')).toBeDefined();
     });
   });
+
+  it('TEST-UI-CORR-01: opens correction modal, submits PUT /transactions/:id, shows 422 error and refreshes on success (F-16, AC-16-1..2)', async () => {
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+    const corrSpy = vi
+      .spyOn(transactionApi, 'correctTransaction')
+      .mockRejectedValueOnce({
+        response: { data: { error: { code: 'ALLOCATION_SUM_MISMATCH', message: 'Sum of allocations does not match total' } } }
+      })
+      .mockResolvedValueOnce({ id: 'tx-purchase' });
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-edit-tx-purchase')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-edit-tx-purchase'));
+    expect(screen.getByTestId('correction-modal')).toBeDefined();
+
+    fireEvent.change(screen.getByTestId('corr-total-amount'), { target: { value: '3500.00' } });
+    fireEvent.change(screen.getByTestId('corr-alloc-amount-0'), { target: { value: '1500.00' } });
+    fireEvent.click(screen.getByTestId('btn-save-correction'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('correction-error').textContent).toContain(
+        'Sum of allocations does not match total'
+      );
+    });
+
+    fireEvent.click(screen.getByTestId('btn-save-correction'));
+    await waitFor(() => {
+      expect(corrSpy).toHaveBeenCalledWith('tx-purchase', {
+        total_amount: '3500.00',
+        transaction_date: '2026-11-03',
+        description: 'Dining & Grocery Split',
+        allocations: [
+          { target_account_id: 'acc-dining', amount: '1500.00', notes: 'Dinner' },
+          { target_account_id: 'acc-grocery', amount: '2000.00', notes: 'Grocery' }
+        ]
+      });
+      expect(screen.queryByTestId('correction-modal')).toBeNull();
+      expect(screen.getByTestId('correction-feedback').textContent).toContain('Transaction corrected');
+    });
+  });
 });
