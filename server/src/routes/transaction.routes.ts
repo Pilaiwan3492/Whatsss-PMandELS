@@ -7,6 +7,12 @@ import {
   createExpenseTransaction,
   createRepaymentTransaction,
   createTransferTransaction,
+  createLoanGivenTransaction,
+  createLoanRecoveryTransaction,
+  createLoanBorrowingTransaction,
+  createLoanRepaymentTransaction,
+  toggleFavoriteTransaction,
+  duplicateTransactionHandler,
   correctTransactionHandler
 } from '../controllers/transaction.controller.js';
 
@@ -21,6 +27,12 @@ router.post('/income', createIncomeTransaction);
 router.post('/expense', createExpenseTransaction);
 router.post('/repayment', createRepaymentTransaction);
 router.post('/transfer', createTransferTransaction);
+router.post('/loan-given', createLoanGivenTransaction);
+router.post('/loan-recovery', createLoanRecoveryTransaction);
+router.post('/loan-borrowing', createLoanBorrowingTransaction);
+router.post('/loan-repayment', createLoanRepaymentTransaction);
+router.patch('/:id/favorite', toggleFavoriteTransaction);
+router.post('/:id/duplicate', duplicateTransactionHandler);
 router.put('/:id', correctTransactionHandler);
 router.patch('/:id', correctTransactionHandler);
 

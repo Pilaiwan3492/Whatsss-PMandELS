@@ -47,6 +47,28 @@ function formatDateOnly(val: Date | string): string {
   return String(val).split('T')[0];
 }
 
+type ExplicitLoanTakenSubtype = 'CREDIT_CARD' | 'GENERAL_LOAN';
+
+/**
+ * BR-07 v1.1: LOAN_TAKEN accounts MUST be explicitly classified as either CREDIT_CARD or GENERAL_LOAN.
+ * `DEFAULT`, `undefined`, `null`, and unknown subtypes are rejected instead of being silently treated as
+ * credit cards (which would wrongly subject general loans to the credit-card floor/reserve rules or vice versa).
+ */
+function requireExplicitLoanTakenSubtype(account: {
+  name: string;
+  subtype?: unknown;
+}): ExplicitLoanTakenSubtype {
+  const subtype = account.subtype;
+  if (subtype === 'CREDIT_CARD' || subtype === 'GENERAL_LOAN') {
+    return subtype;
+  }
+  throw new CorrectionError(
+    `LOAN_TAKEN account [${account.name}] must have an explicit subtype of CREDIT_CARD or GENERAL_LOAN (received: ${String(subtype)}).`,
+    400,
+    'INVALID_ACCOUNT_SUBTYPE'
+  );
+}
+
 async function computeLockedLoanTakenDebt(
   tx: Prisma.TransactionClient,
   accountId: string,
@@ -380,6 +402,19 @@ export async function correctTransaction(
       }
     }
 
+    // Verify the primary LOAN_TAKEN account of a charge is an explicit CREDIT_CARD (BR-07 v1.1): general loans
+    // have no purchases, and DEFAULT/undefined/unknown subtypes are never silently treated as credit cards.
+    if (existing.form === 'PAYMENT_CHARGE' && primaryAccount.type === 'LOAN_TAKEN') {
+      const primarySubtype = requireExplicitLoanTakenSubtype(primaryAccount as any);
+      if (primarySubtype !== 'CREDIT_CARD') {
+        throw new CorrectionError(
+          `Charge transactions can only originate from CREDIT_CARD accounts, received GENERAL_LOAN account [${primaryAccount.name}].`,
+          400,
+          'INVALID_ACCOUNT_TYPE'
+        );
+      }
+    }
+
     // Verify target account types are valid for this transaction's form and primary account type
     const creditCardRepaymentTargets: string[] = [];
     for (const line of validatedAllocations) {
@@ -391,6 +426,17 @@ export async function correctTransaction(
             400,
             'INVALID_ACCOUNT_TYPE'
           );
+        }
+        if (targetAcc.type === 'LOAN_TAKEN') {
+          // Money can only be borrowed into an explicit GENERAL_LOAN account (F-13); credit cards cannot be borrowed from.
+          const borrowSubtype = requireExplicitLoanTakenSubtype(targetAcc as any);
+          if (borrowSubtype !== 'GENERAL_LOAN') {
+            throw new CorrectionError(
+              `Borrowed funds can only be allocated to GENERAL_LOAN accounts, received CREDIT_CARD account [${targetAcc.name}].`,
+              400,
+              'INVALID_ACCOUNT_TYPE'
+            );
+          }
         }
       } else if (existing.form === 'PAYMENT_CHARGE') {
         if (primaryAccount.type === 'LOAN_TAKEN' && targetAcc.type !== 'EXPENSE') {
@@ -415,8 +461,13 @@ export async function correctTransaction(
               'SAME_ACCOUNT_TRANSFER'
             );
           }
-          if (targetAcc.type === 'LOAN_TAKEN' && (targetAcc as any).subtype !== 'GENERAL_LOAN') {
-            creditCardRepaymentTargets.push(targetAcc.id);
+          if (targetAcc.type === 'LOAN_TAKEN') {
+            // BR-07 v1.1: only an explicit CREDIT_CARD triggers credit-card repayment rules; an explicit
+            // GENERAL_LOAN is exempt; DEFAULT/undefined/unknown subtypes are rejected (never defaulted).
+            const targetSubtype = requireExplicitLoanTakenSubtype(targetAcc as any);
+            if (targetSubtype === 'CREDIT_CARD') {
+              creditCardRepaymentTargets.push(targetAcc.id);
+            }
           }
         }
       }

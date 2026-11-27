@@ -105,6 +105,10 @@ model AllocationLine {
 
 model TransactionAuditLog {
   id                String      @id @default(uuid())
+  // Monotonic, database-allocated event order (BIGSERIAL). Allocated while the corrected Transaction row is
+  // held FOR UPDATE, so for a given transaction_id sequence_number order == lock-acquisition/commit order.
+  // MUST be used (instead of random UUID `id` or same-millisecond `created_at`) to order audit events.
+  sequence_number   BigInt      @unique @default(autoincrement())
   transaction_id    String
   transaction       Transaction @relation(fields: [transaction_id], references: [id], onDelete: Restrict)
   user_id           String
@@ -114,6 +118,7 @@ model TransactionAuditLog {
   created_at        DateTime    @default(now())
 
   @@index([transaction_id, created_at(sort: Desc), id(sort: Desc)])
+  @@index([transaction_id, sequence_number(sort: Desc)])
   @@index([user_id])
   @@map("transaction_audit_logs")
 }

@@ -290,6 +290,7 @@ vi.mock('../../src/prisma.js', () => {
         }
         const entry = {
           id: `audit-${mockAuditLogs.length + 1}`,
+          sequence_number: BigInt(mockAuditLogs.length + 1),
           ...data,
           created_at: new Date()
         };
@@ -1108,6 +1109,212 @@ describe('WP-11 Integration Suite: F-16 Transaction Corrections + F-19 Admin Gov
         ]
       });
     expect(cashExpRes.status).toBe(200);
+  });
+
+  it('TEST-CORR-SUBTYPE-01: explicitly validates LOAN_TAKEN subtypes (CREDIT_CARD, GENERAL_LOAN) and rejects DEFAULT, undefined, and unknown subtypes', async () => {
+    const bank = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+    bank.opening_balance = new Prisma.Decimal('10000.00');
+
+    // Add GENERAL_LOAN, DEFAULT, undefined, and unknown LOAN_TAKEN accounts
+    mockAccounts.push(
+      {
+        id: 'acc-demo-gl',
+        user_id: 'user-a-uuid',
+        name: 'General Loan',
+        type: 'LOAN_TAKEN',
+        subtype: 'GENERAL_LOAN',
+        opening_balance: new Prisma.Decimal('2000.00'),
+        is_opening_locked: true,
+        created_at: new Date('2026-11-01T00:00:00.000Z')
+      },
+      {
+        id: 'acc-demo-lt-default',
+        user_id: 'user-a-uuid',
+        name: 'Legacy Default Loan',
+        type: 'LOAN_TAKEN',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('2000.00'),
+        is_opening_locked: true,
+        created_at: new Date('2026-11-01T00:00:00.000Z')
+      },
+      {
+        id: 'acc-demo-lt-undef',
+        user_id: 'user-a-uuid',
+        name: 'Undefined Subtype Loan',
+        type: 'LOAN_TAKEN',
+        subtype: undefined,
+        opening_balance: new Prisma.Decimal('2000.00'),
+        is_opening_locked: true,
+        created_at: new Date('2026-11-01T00:00:00.000Z')
+      },
+      {
+        id: 'acc-demo-lt-unknown',
+        user_id: 'user-a-uuid',
+        name: 'Unknown Subtype Loan',
+        type: 'LOAN_TAKEN',
+        subtype: 'CRYPTO_LOAN' as any,
+        opening_balance: new Prisma.Decimal('2000.00'),
+        is_opening_locked: true,
+        created_at: new Date('2026-11-01T00:00:00.000Z')
+      }
+    );
+
+    mockTransactions.push({
+      id: 'txn-gl-rep-sub',
+      user_id: 'user-a-uuid',
+      primary_account_id: 'acc-demo-checking',
+      form: 'PAYMENT_CHARGE',
+      total_amount: new Prisma.Decimal('300.00'),
+      transaction_date: new Date('2026-11-04T00:00:00.000Z'),
+      description: 'GL Repay',
+      created_at: new Date('2026-11-04T08:00:00.000Z')
+    });
+    mockAllocationLines.push({
+      id: 'alloc-gl-rep-sub',
+      transaction_id: 'txn-gl-rep-sub',
+      target_account_id: 'acc-demo-gl',
+      amount: new Prisma.Decimal('300.00'),
+      notes: null
+    });
+
+    // 1. Explicit GENERAL_LOAN repayment correction < 500 THB succeeds (exempt from BR-07 v1.1)
+    const glOk = await request(app)
+      .put('/api/transactions/txn-gl-rep-sub')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '200.00',
+        transaction_date: '2026-11-04',
+        allocations: [{ target_account_id: 'acc-demo-gl', amount: '200.00' }]
+      });
+    expect(glOk.status).toBe(200);
+
+    // 2. DEFAULT, undefined, and unknown LOAN_TAKEN subtypes MUST all be rejected with 400 INVALID_ACCOUNT_SUBTYPE
+    for (const badTargetId of ['acc-demo-lt-default', 'acc-demo-lt-undef', 'acc-demo-lt-unknown']) {
+      const badRes = await request(app)
+        .put('/api/transactions/txn-gl-rep-sub')
+        .set('Origin', config.clientUrl)
+        .set('Cookie', [`token=${userDemoToken}`])
+        .send({
+          total_amount: '600.00',
+          transaction_date: '2026-11-04',
+          allocations: [{ target_account_id: badTargetId, amount: '600.00' }]
+        });
+      expect(badRes.status).toBe(400);
+      expect(badRes.body.error.code).toBe('INVALID_ACCOUNT_SUBTYPE');
+    }
+  });
+
+  it('TEST-CORR-BAL-01: recalculates balances for original, replacement, and removed allocations across CASH, LOAN_TAKEN, and LOAN_GIVEN with full rollback', async () => {
+    const bank = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+    bank.opening_balance = new Prisma.Decimal('10000.00');
+
+    mockAccounts.push(
+      {
+        id: 'acc-demo-savings',
+        user_id: 'user-a-uuid',
+        name: 'Savings Cash',
+        type: 'CASH',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false,
+        created_at: new Date('2026-11-01T00:00:00.000Z')
+      },
+      {
+        id: 'acc-demo-lg',
+        user_id: 'user-a-uuid',
+        name: 'Friend Loan',
+        type: 'LOAN_GIVEN',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false,
+        created_at: new Date('2026-11-01T00:00:00.000Z')
+      }
+    );
+
+    // 1. CASH: Transfer 1000 Checking -> Savings, then spend 800 from Savings.
+    // Reassigning transfer allocation from Savings -> Dining leaves Savings at -800 -> 422 INSUFFICIENT_FUNDS + rollback
+    mockTransactions.push(
+      {
+        id: 'txn-bal-xfer',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1000.00'),
+        transaction_date: new Date('2026-11-02T00:00:00.000Z'),
+        description: 'Fund Savings',
+        created_at: new Date('2026-11-02T08:00:00.000Z')
+      },
+      {
+        id: 'txn-bal-sav-spend',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-savings',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('800.00'),
+        transaction_date: new Date('2026-11-03T00:00:00.000Z'),
+        description: 'Spend Savings',
+        created_at: new Date('2026-11-03T08:00:00.000Z')
+      }
+    );
+    mockAllocationLines.push(
+      { id: 'al-bx-1', transaction_id: 'txn-bal-xfer', target_account_id: 'acc-demo-savings', amount: new Prisma.Decimal('1000.00'), notes: null },
+      { id: 'al-bx-2', transaction_id: 'txn-bal-sav-spend', target_account_id: 'acc-demo-dining', amount: new Prisma.Decimal('800.00'), notes: null }
+    );
+
+    const cashFail = await request(app)
+      .put('/api/transactions/txn-bal-xfer')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '1000.00',
+        transaction_date: '2026-11-02',
+        allocations: [{ target_account_id: 'acc-demo-dining', amount: '1000.00' }]
+      });
+    expect(cashFail.status).toBe(422);
+    expect(cashFail.body.error.code).toBe('INSUFFICIENT_FUNDS');
+    expect(mockAuditLogs).toHaveLength(0);
+
+    // 2. LOAN_GIVEN: Disburse 1500, recover 1000. Reducing disbursement to 500 -> 422 RECOVERY_EXCEEDS_RECEIVABLE + rollback
+    mockTransactions.push(
+      {
+        id: 'txn-bal-lg-disb',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1500.00'),
+        transaction_date: new Date('2026-11-04T00:00:00.000Z'),
+        description: 'Loan Given',
+        created_at: new Date('2026-11-04T08:00:00.000Z')
+      },
+      {
+        id: 'txn-bal-lg-rec',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('1000.00'),
+        transaction_date: new Date('2026-11-05T00:00:00.000Z'),
+        description: 'Loan Recovery',
+        created_at: new Date('2026-11-05T08:00:00.000Z')
+      }
+    );
+    mockAllocationLines.push(
+      { id: 'al-blg-1', transaction_id: 'txn-bal-lg-disb', target_account_id: 'acc-demo-lg', amount: new Prisma.Decimal('1500.00'), notes: null },
+      { id: 'al-blg-2', transaction_id: 'txn-bal-lg-rec', target_account_id: 'acc-demo-lg', amount: new Prisma.Decimal('1000.00'), notes: null }
+    );
+
+    const lgFail = await request(app)
+      .put('/api/transactions/txn-bal-lg-disb')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '500.00',
+        transaction_date: '2026-11-04',
+        allocations: [{ target_account_id: 'acc-demo-lg', amount: '500.00' }]
+      });
+    expect(lgFail.status).toBe(422);
+    expect(lgFail.body.error.code).toBe('RECOVERY_EXCEEDS_RECEIVABLE');
+    expect(mockAuditLogs).toHaveLength(0);
+    expect(mockTransactions.find((t) => t.id === 'txn-bal-lg-disb')!.total_amount.toFixed(2)).toBe('1500.00');
   });
 
   it('TEST-ADMIN-LAST-01: prevents deactivating the last active ADMIN while allowing deactivation when another active ADMIN exists (Task 8)', async () => {

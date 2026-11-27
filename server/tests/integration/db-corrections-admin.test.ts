@@ -477,22 +477,179 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
 
     const logs = await prisma.transactionAuditLog.findMany({
       where: { transaction_id: txn.id },
-      orderBy: [{ created_at: 'asc' }, { id: 'asc' }]
+      orderBy: { sequence_number: 'asc' }
     });
     expect(logs).toHaveLength(2);
-    // Strict sequential chaining proved by PostgreSQL row locks: 20000 -> X, then X -> Y.
-    // Identify first/second by snapshot chain because two serialized commits can share the same millisecond
-    // and random UUIDv4 tie-breaking on `id` does not encode commit order.
-    const firstLog = logs.find((l) => (l.previous_snapshot as any).total_amount === '20000.00');
-    expect(firstLog).toBeDefined();
-    const secondLog = logs.find((l) => l.id !== firstLog!.id);
-    expect(secondLog).toBeDefined();
-    expect((secondLog!.previous_snapshot as any).total_amount).toBe(
-      (firstLog!.new_snapshot as any).total_amount
-    );
+    // Deterministic ordering via monotonic database-allocated BIGSERIAL sequence_number (never UUID `id`).
+    // Because each correction holds FOR UPDATE on the Transaction row while inserting its audit log,
+    // sequence_number ascending order strictly matches commit order: 20000 -> X, then X -> Y.
+    expect(logs[1].sequence_number > logs[0].sequence_number).toBe(true);
+    expect((logs[0].previous_snapshot as any).total_amount).toBe('20000.00');
+    expect(logs[1].previous_snapshot).toEqual(logs[0].new_snapshot);
     expect(
-      [(firstLog!.new_snapshot as any).total_amount, (secondLog!.new_snapshot as any).total_amount].sort()
+      [(logs[0].new_snapshot as any).total_amount, (logs[1].new_snapshot as any).total_amount].sort()
     ).toEqual(['22000.00', '25000.00']);
+  });
+
+  it('TEST-CORR-LIVE-04: enforces explicit LOAN_TAKEN subtypes and recalculates all affected CASH/LOAN_TAKEN/LOAN_GIVEN accounts (original, replacement, removed) with full rollback', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    const tenant = await createIsolatedUserTenant('corr_bal_sub', { preserveAuditLoggedRows: true });
+    const savings = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Savings Cash',
+        normalized_name: 'savings cash',
+        type: 'CASH',
+        subtype: 'DEFAULT',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false,
+        is_archived: false
+      }
+    });
+    const generalLoan = await prisma.account.create({
+      data: {
+        user_id: tenant.user.id,
+        name: 'Personal Loan',
+        normalized_name: 'personal loan',
+        type: 'LOAN_TAKEN',
+        subtype: 'GENERAL_LOAN',
+        opening_balance: new Prisma.Decimal('0.00'),
+        is_opening_locked: false,
+        is_archived: false
+      }
+    });
+
+    // 1. GENERAL_LOAN repayment correction below 500 THB floor succeeds (exempt from BR-07 v1.1)
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.user.id,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('2000.00'),
+        transaction_date: new Date('2026-11-01T00:00:00.000Z'),
+        description: 'GL Borrow',
+        allocation_lines: {
+          create: [{ target_account_id: generalLoan.id, amount: new Prisma.Decimal('2000.00') }]
+        }
+      }
+    });
+    const glRepay = await prisma.transaction.create({
+      data: {
+        user_id: tenant.user.id,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('400.00'),
+        transaction_date: new Date('2026-11-02T00:00:00.000Z'),
+        description: 'GL Repay',
+        allocation_lines: {
+          create: [{ target_account_id: generalLoan.id, amount: new Prisma.Decimal('400.00') }]
+        }
+      }
+    });
+    const glCorrRes = await request(app)
+      .put(`/api/transactions/${glRepay.id}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '250.00',
+        transaction_date: '2026-11-02',
+        description: 'GL Repay 250',
+        allocations: [{ target_account_id: generalLoan.id, amount: '250.00' }]
+      });
+    expect(glCorrRes.status).toBe(200);
+
+    // 2. Removed/reassigned CASH transfer leaving original destination CASH negative -> 422 INSUFFICIENT_FUNDS + rollback
+    const transferToSavings = await prisma.transaction.create({
+      data: {
+        user_id: tenant.user.id,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1000.00'),
+        transaction_date: new Date('2026-11-03T00:00:00.000Z'),
+        description: 'Fund Savings',
+        allocation_lines: {
+          create: [{ target_account_id: savings.id, amount: new Prisma.Decimal('1000.00') }]
+        }
+      }
+    });
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.user.id,
+        primary_account_id: savings.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('800.00'),
+        transaction_date: new Date('2026-11-04T00:00:00.000Z'),
+        description: 'Spend from Savings',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.dining.id, amount: new Prisma.Decimal('800.00') }]
+        }
+      }
+    });
+    // Reassigning Fund Savings allocation from `savings` -> `dining` leaves `savings` at -800.00 -> 422 INSUFFICIENT_FUNDS
+    const negCashReassign = await request(app)
+      .put(`/api/transactions/${transferToSavings.id}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '1000.00',
+        transaction_date: '2026-11-03',
+        description: 'Reassigned to Dining',
+        allocations: [{ target_account_id: tenant.accounts.dining.id, amount: '1000.00' }]
+      });
+    expect(negCashReassign.status).toBe(422);
+    expect(negCashReassign.body.error.code).toBe('INSUFFICIENT_FUNDS');
+    expect(
+      await prisma.transactionAuditLog.count({ where: { transaction_id: transferToSavings.id } })
+    ).toBe(0);
+
+    // 3. Reducing LOAN_GIVEN disbursement below already-recovered amount -> 422 RECOVERY_EXCEEDS_RECEIVABLE + rollback
+    const loanDisb = await prisma.transaction.create({
+      data: {
+        user_id: tenant.user.id,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1500.00'),
+        transaction_date: new Date('2026-11-05T00:00:00.000Z'),
+        description: 'Lent to Friend',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.loanGiven.id, amount: new Prisma.Decimal('1500.00') }]
+        }
+      }
+    });
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.user.id,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('1000.00'),
+        transaction_date: new Date('2026-11-06T00:00:00.000Z'),
+        description: 'Friend Repaid',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.loanGiven.id, amount: new Prisma.Decimal('1000.00') }]
+        }
+      }
+    });
+    const negRecvRes = await request(app)
+      .put(`/api/transactions/${loanDisb.id}`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        total_amount: '500.00',
+        transaction_date: '2026-11-05',
+        allocations: [{ target_account_id: tenant.accounts.loanGiven.id, amount: '500.00' }]
+      });
+    expect(negRecvRes.status).toBe(422);
+    expect(negRecvRes.body.error.code).toBe('RECOVERY_EXCEEDS_RECEIVABLE');
+    expect(await prisma.transactionAuditLog.count({ where: { transaction_id: loanDisb.id } })).toBe(0);
+    const persistedDisb = await prisma.transaction.findUnique({ where: { id: loanDisb.id } });
+    expect(persistedDisb!.total_amount.toFixed(2)).toBe('1500.00');
   });
 
   // ============================================================================
@@ -588,21 +745,24 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
       return;
     }
 
-    // Snapshot & temporarily deactivate any pre-existing active ADMIN rows so unrelated
-    // seeded admins cannot cause a false-positive pass; always restored in finally.
-    const preExistingActiveAdmins = await prisma.user.findMany({
-      where: { role: 'ADMIN', is_active: true },
-      select: { id: true }
+    // Snapshot EVERY pre-existing ADMIN's exact `is_active` state (both active and inactive)
+    // before creating temporary test fixtures; always restore exact snapshot & delete temp admins in finally.
+    const preExistingAdmins = await prisma.user.findMany({
+      where: { role: 'ADMIN' },
+      select: { id: true, is_active: true }
     });
-    const preExistingIds = preExistingActiveAdmins.map((u) => u.id);
-
-    const admin1 = await createIsolatedAdmin('last1');
-    const admin2 = await createIsolatedAdmin('last2');
+    const preExistingActiveIds = preExistingAdmins.filter((u) => u.is_active).map((u) => u.id);
+    const tempAdminIds: string[] = [];
 
     try {
-      if (preExistingIds.length > 0) {
+      const admin1 = await createIsolatedAdmin('last1');
+      tempAdminIds.push(admin1.admin.id);
+      const admin2 = await createIsolatedAdmin('last2');
+      tempAdminIds.push(admin2.admin.id);
+
+      if (preExistingActiveIds.length > 0) {
         await prisma.user.updateMany({
-          where: { id: { in: preExistingIds } },
+          where: { id: { in: preExistingActiveIds } },
           data: { is_active: false }
         });
       }
@@ -655,11 +815,16 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
       });
       expect(stillActive?.is_active).toBe(true);
     } finally {
-      if (preExistingIds.length > 0) {
+      // Restore every pre-existing admin to their exact original `is_active` snapshot
+      for (const snap of preExistingAdmins) {
         await prisma.user.updateMany({
-          where: { id: { in: preExistingIds } },
-          data: { is_active: true }
+          where: { id: snap.id },
+          data: { is_active: snap.is_active }
         });
+      }
+      // Always delete temporary test admins
+      if (tempAdminIds.length > 0) {
+        await prisma.user.deleteMany({ where: { id: { in: tempAdminIds } } });
       }
     }
   });
