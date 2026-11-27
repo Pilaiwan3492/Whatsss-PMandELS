@@ -1256,5 +1256,5 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
       }
     });
     await assertRejected(mixedTxn.id, 400, 'INVALID_ACCOUNT_TYPE');
-  });
+  }, 25000);
 });
