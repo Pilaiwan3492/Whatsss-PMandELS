@@ -135,6 +135,92 @@ describe('Integration Test: PostgreSQL Live Database Internal Cash Transfer & Ro
     };
   }
 
+  it('TEST-XFER-01 (Live PostgreSQL): transfers 3000.00 THB from Checking Bank (10000.00) to Savings Bank (2000.00), updates persisted balances to 7000.00 and 5000.00, and locks opening balances on both CASH accounts (AC-11-1, FR-13)', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    // Checking = 10000.00 THB (unlocked), Savings = 2000.00 THB (unlocked)
+    const tenant = await createIsolatedTransferTenant('10000.00', '2000.00');
+
+    const xferRes = await request(app)
+      .post('/api/transactions/transfer')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.checkingId,
+        to_account_id: tenant.savingsId,
+        amount: 3000.00,
+        transaction_date: '2026-11-10',
+        description: 'Monthly Savings Transfer (Live PG16)'
+      });
+
+    expect(xferRes.status).toBe(201);
+    expect(xferRes.body.success).toBe(true);
+    expect(xferRes.body.data.updated_from_cash_balance).toBe('7000.00');
+    expect(xferRes.body.data.updated_to_cash_balance).toBe('5000.00');
+
+    // Verify in live PostgreSQL via GET /api/accounts and direct Prisma query
+    const accRes = await request(app)
+      .get('/api/accounts')
+      .set('Cookie', tenant.cookie);
+    expect(accRes.status).toBe(200);
+
+    const checkingAcc = accRes.body.data.accounts.find((a: any) => a.id === tenant.checkingId);
+    const savingsAcc = accRes.body.data.accounts.find((a: any) => a.id === tenant.savingsId);
+    expect(checkingAcc.current_balance).toBe(7000.00);
+    expect(savingsAcc.current_balance).toBe(5000.00);
+    expect(checkingAcc.is_opening_locked).toBe(true);
+    expect(savingsAcc.is_opening_locked).toBe(true);
+  });
+
+  it('TEST-XFER-02 (Live PostgreSQL): preserves total_income and total_expense unchanged (0.00 THB delta per BR-02) in GET /api/reports/summary before and after an internal cash transfer while conserving aggregate bank_balance', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    // Checking = 10000.00 THB, Savings = 2000.00 THB (Aggregate Cash = 12000.00 THB)
+    const tenant = await createIsolatedTransferTenant('10000.00', '2000.00');
+
+    // 1. Query GET /api/reports/summary BEFORE internal cash transfer
+    const beforeSummaryRes = await request(app)
+      .get('/api/reports/summary')
+      .set('Cookie', tenant.cookie);
+    expect(beforeSummaryRes.status).toBe(200);
+    expect(beforeSummaryRes.body.data.bank_balance).toBe(12000.00);
+    expect(beforeSummaryRes.body.data.total_income).toBe(0.00);
+    expect(beforeSummaryRes.body.data.total_expense).toBe(0.00);
+
+    // 2. Execute 3000.00 THB internal cash transfer from Checking Bank to Savings Bank
+    const xferRes = await request(app)
+      .post('/api/transactions/transfer')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.checkingId,
+        to_account_id: tenant.savingsId,
+        amount: 3000.00,
+        transaction_date: '2026-11-10',
+        description: 'TEST-XFER-02 BR-02 Summary Verification'
+      });
+    expect(xferRes.status).toBe(201);
+
+    // 3. Query GET /api/reports/summary AFTER internal cash transfer
+    const afterSummaryRes = await request(app)
+      .get('/api/reports/summary')
+      .set('Cookie', tenant.cookie);
+    expect(afterSummaryRes.status).toBe(200);
+    expect(afterSummaryRes.body.data.bank_balance).toBe(12000.00);
+    expect(afterSummaryRes.body.data.total_income).toBe(beforeSummaryRes.body.data.total_income);
+    expect(afterSummaryRes.body.data.total_expense).toBe(beforeSummaryRes.body.data.total_expense);
+    expect(afterSummaryRes.body.data.total_income).toBe(0.00);
+    expect(afterSummaryRes.body.data.total_expense).toBe(0.00);
+  });
+
   it('TEST-XFER-06 (Live PostgreSQL): serializes concurrent transfers from the same CASH account under SELECT ... FOR UPDATE row locks so only 1 succeeds when funds are insufficient and balance never becomes negative', async (ctx) => {
     if (!isCI && !allowLiveDb) {
       ctx.skip();

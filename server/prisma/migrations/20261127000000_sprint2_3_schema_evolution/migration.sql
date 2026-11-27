@@ -40,18 +40,27 @@ UPDATE "accounts"
 SET "normalized_name" = LOWER(REGEXP_REPLACE(BTRIM("name"), '\s+', ' ', 'g'));
 
 -- Deterministic LOAN_TAKEN Subtype Backfill (ARCH-S2-01 / BR-07 v1.1 Prerequisite):
--- 1. All Sprint 1 LOAN_TAKEN accounts that are seeded credit cards or have recorded credit-card purchase charges
---    (Transaction with primary_account_id = account.id and form = 'PAYMENT_CHARGE') or no general-loan borrowing allocations
---    are classified as CREDIT_CARD.
--- 2. Any LOAN_TAKEN account that has general-loan borrowing inflow allocations (Transaction with form = 'RECEIVE_MONEY'
---    on a CASH primary_account targeting this LOAN_TAKEN account) and zero credit-card purchase charges is classified as GENERAL_LOAN.
+-- Evaluates legacy LOAN_TAKEN rows whose subtype is still 'DEFAULT' across 5 deterministic cases:
+--   Case 1 (Credit Card Purchase History): LOAN_TAKEN account with direct PAYMENT_CHARGE transactions
+--          (primary_account_id = account.id AND form = 'PAYMENT_CHARGE') -> classified as CREDIT_CARD.
+--   Case 2 (General Loan Borrowing History): LOAN_TAKEN account with RECEIVE_MONEY borrowing allocations
+--          from a CASH primary account and zero direct PAYMENT_CHARGE purchases -> classified as GENERAL_LOAN.
+--   Case 3 (No Transaction History on Legacy Account): LOAN_TAKEN account with subtype = 'DEFAULT' and zero
+--          transactions (e.g., seeded Visa Credit Card) -> classified to default legacy subtype CREDIT_CARD.
+--   Case 4 (Already Explicitly Assigned Subtype): LOAN_TAKEN account where subtype is already 'CREDIT_CARD'
+--          or 'GENERAL_LOAN' -> preserved untouched (never overwritten).
+--   Case 5 (Mixed Transaction History): LOAN_TAKEN account with both direct PAYMENT_CHARGE purchase charges
+--          and RECEIVE_MONEY borrowing allocations -> deterministically classified as CREDIT_CARD so credit-card
+--          BR-07 v1.1 repayment rules remain enforced on any account with direct credit card purchase charges.
 CREATE OR REPLACE FUNCTION backfill_loan_taken_subtypes()
 RETURNS VOID AS $$
 BEGIN
-  -- Classify LOAN_TAKEN accounts with general borrowing inflows and no direct purchase charges as GENERAL_LOAN
+  -- Case 2: Classify legacy (subtype = 'DEFAULT') LOAN_TAKEN accounts with general borrowing inflows
+  -- and zero direct purchase charges as GENERAL_LOAN (Case 4 explicit subtypes and Case 5 mixed history are excluded)
   UPDATE "accounts" a
   SET "subtype" = 'GENERAL_LOAN'
   WHERE a."type" = 'LOAN_TAKEN'
+    AND a."subtype" = 'DEFAULT'
     AND EXISTS (
       SELECT 1
       FROM "allocation_lines" al
@@ -68,7 +77,8 @@ BEGIN
         AND t2."form" = 'PAYMENT_CHARGE'
     );
 
-  -- All remaining Sprint 1 LOAN_TAKEN accounts (including seeded Visa Credit Card) are CREDIT_CARD
+  -- Cases 1, 3, and 5: All remaining legacy (subtype = 'DEFAULT') LOAN_TAKEN accounts
+  -- (credit card purchase history, mixed history, or zero-transaction legacy accounts) become CREDIT_CARD
   UPDATE "accounts" a
   SET "subtype" = 'CREDIT_CARD'
   WHERE a."type" = 'LOAN_TAKEN'
