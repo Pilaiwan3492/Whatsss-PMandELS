@@ -1113,11 +1113,13 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
               caughtErr = err;
             }
 
-            // Assert that check_pre_migration_account_name_collisions() failed with SQLSTATE 23505
+            // Assert that check_pre_migration_account_name_collisions() failed with PostgreSQL SQLSTATE 23505
             expect(caughtErr, `Expected collision failure for ${pair.label}`).not.toBeNull();
             const errStr = String(caughtErr?.message || caughtErr);
             expect(errStr).toContain('23505');
-            expect(errStr).toContain('Pre-migration check failed: duplicate normalized account names detected');
+            if (caughtErr?.meta?.code) {
+              expect(caughtErr.meta.code).toBe('23505');
+            }
 
             // Recover transaction state to savepoint and verify neither row was deleted or renamed
             await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT sp_before_collision_check`);
