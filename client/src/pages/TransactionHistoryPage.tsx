@@ -63,6 +63,15 @@ export function getTransactionKind(tx: HistoryTransaction): SemanticKind {
   return tx.form === 'RECEIVE_MONEY' ? 'INCOME' : 'EXPENSE';
 }
 
+/**
+ * Determines the cash-flow amount sign ('+' or '-') from the actual transaction direction:
+ * - RECEIVE_MONEY (Income, Loan Recovery, General Loan Borrowing) => '+' (inflow)
+ * - PAYMENT_CHARGE (Expense, Credit Card Repayment, Internal Cash Transfer, Loan Given, General Loan Repayment) => '-' (outflow / charge)
+ */
+export function getTransactionAmountSign(tx: HistoryTransaction): '+' | '-' {
+  return tx.form === 'RECEIVE_MONEY' ? '+' : '-';
+}
+
 export const TransactionHistoryPage: React.FC = () => {
   const [transactions, setTransactions] = useState<HistoryTransaction[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -248,6 +257,7 @@ export const TransactionHistoryPage: React.FC = () => {
               <tbody>
                 {filteredTransactions.map((tx) => {
                   const kind = getTransactionKind(tx);
+                  const amountSign = getTransactionAmountSign(tx);
                   const isExpanded = expandedTxnIds.has(tx.id);
                   const hasMultipleAllocations = tx.allocation_lines && tx.allocation_lines.length > 1;
 
@@ -320,11 +330,11 @@ export const TransactionHistoryPage: React.FC = () => {
                         </td>
                         <td
                           className={`text-end fw-bold small text-nowrap ${
-                            kind === 'INCOME' ? 'text-success' : 'text-danger'
+                            amountSign === '+' ? 'text-success' : 'text-danger'
                           }`}
                           data-testid={`amount-${tx.id}`}
                         >
-                          {kind === 'INCOME' ? '+' : '-'} {formatCurrency(tx.total_amount)}
+                          {amountSign} {formatCurrency(tx.total_amount)}
                         </td>
                         <td
                           className="text-end text-nowrap"

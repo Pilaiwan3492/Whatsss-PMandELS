@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext.js';
-import { TransactionHistoryPage, getTransactionKind } from './TransactionHistoryPage.js';
+import {
+  TransactionHistoryPage,
+  getTransactionKind,
+  getTransactionAmountSign
+} from './TransactionHistoryPage.js';
 import { axiosClient } from '../api/axiosClient.js';
 import * as transactionApi from '../api/transactionApi.js';
 
@@ -265,8 +269,9 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
     });
   });
 
-  it('TEST-UI-CLASS-01: accurately classifies all 5 transaction types and prevents CASH expenses from being misclassified as REPAYMENT (Task 5)', async () => {
-    const allFive: transactionApi.HistoryTransaction[] = [
+  it('TEST-UI-CLASS-01: accurately classifies all 5 transaction types and renders exact +/- amount signs for all 8 cashflow scenarios (Finding 1 & Task 5)', async () => {
+    const allEight: transactionApi.HistoryTransaction[] = [
+      // 1. Income (+)
       {
         id: 'tx-c-inc',
         user_id: 'u1-uuid',
@@ -288,6 +293,7 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
           }
         ]
       },
+      // 2. Expense (CASH primary, -)
       {
         id: 'tx-c-cash-exp',
         user_id: 'u1-uuid',
@@ -309,6 +315,7 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
           }
         ]
       },
+      // 3. Credit Card Repayment (-)
       {
         id: 'tx-c-repay',
         user_id: 'u1-uuid',
@@ -330,6 +337,7 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
           }
         ]
       },
+      // 4. Internal Cash Transfer (-)
       {
         id: 'tx-c-xfer',
         user_id: 'u1-uuid',
@@ -351,20 +359,87 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
           }
         ]
       },
+      // 5. Loan Given (-)
       {
-        id: 'tx-c-loan',
+        id: 'tx-c-loan-given',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 1200,
+        transaction_date: '2026-11-05',
+        description: 'Lent to Friend',
+        created_at: '2026-11-05T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-5',
+            transaction_id: 'tx-c-loan-given',
+            target_account_id: 'acc-friend',
+            target_account: { id: 'acc-friend', name: 'Friend Loan', type: 'LOAN_GIVEN', subtype: 'DEFAULT' },
+            amount: 1200,
+            notes: null
+          }
+        ]
+      },
+      // 6. Loan Recovery (+)
+      {
+        id: 'tx-c-loan-recovery',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'RECEIVE_MONEY',
+        total_amount: 600,
+        transaction_date: '2026-11-06',
+        description: 'Friend Repaid Loan',
+        created_at: '2026-11-06T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-6',
+            transaction_id: 'tx-c-loan-recovery',
+            target_account_id: 'acc-friend',
+            target_account: { id: 'acc-friend', name: 'Friend Loan', type: 'LOAN_GIVEN', subtype: 'DEFAULT' },
+            amount: 600,
+            notes: null
+          }
+        ]
+      },
+      // 7. General Loan Borrowing (+)
+      {
+        id: 'tx-c-loan-borrow',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'RECEIVE_MONEY',
+        total_amount: 5000,
+        transaction_date: '2026-11-07',
+        description: 'Car Loan Disbursement',
+        created_at: '2026-11-07T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-7',
+            transaction_id: 'tx-c-loan-borrow',
+            target_account_id: 'acc-car',
+            target_account: { id: 'acc-car', name: 'Car Loan', type: 'LOAN_TAKEN', subtype: 'GENERAL_LOAN' },
+            amount: 5000,
+            notes: null
+          }
+        ]
+      },
+      // 8. General Loan Repayment (-)
+      {
+        id: 'tx-c-loan-repay',
         user_id: 'u1-uuid',
         primary_account_id: 'acc-bank',
         primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
         form: 'PAYMENT_CHARGE',
         total_amount: 1000,
-        transaction_date: '2026-11-05',
-        description: 'Car Loan',
-        created_at: '2026-11-05T12:00:00.000Z',
+        transaction_date: '2026-11-08',
+        description: 'Car Loan Installment',
+        created_at: '2026-11-08T12:00:00.000Z',
         allocation_lines: [
           {
-            id: 'l-5',
-            transaction_id: 'tx-c-loan',
+            id: 'l-8',
+            transaction_id: 'tx-c-loan-repay',
             target_account_id: 'acc-car',
             target_account: { id: 'acc-car', name: 'Car Loan', type: 'LOAN_TAKEN', subtype: 'GENERAL_LOAN' },
             amount: 1000,
@@ -374,20 +449,51 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
       }
     ];
 
-    expect(getTransactionKind(allFive[0])).toBe('INCOME');
-    expect(getTransactionKind(allFive[1])).toBe('EXPENSE');
-    expect(getTransactionKind(allFive[2])).toBe('REPAYMENT');
-    expect(getTransactionKind(allFive[3])).toBe('TRANSFER');
-    expect(getTransactionKind(allFive[4])).toBe('LOAN');
+    expect(getTransactionKind(allEight[0])).toBe('INCOME');
+    expect(getTransactionAmountSign(allEight[0])).toBe('+');
+    expect(getTransactionKind(allEight[1])).toBe('EXPENSE');
+    expect(getTransactionAmountSign(allEight[1])).toBe('-');
+    expect(getTransactionKind(allEight[2])).toBe('REPAYMENT');
+    expect(getTransactionAmountSign(allEight[2])).toBe('-');
+    expect(getTransactionKind(allEight[3])).toBe('TRANSFER');
+    expect(getTransactionAmountSign(allEight[3])).toBe('-');
+    expect(getTransactionKind(allEight[4])).toBe('LOAN');
+    expect(getTransactionAmountSign(allEight[4])).toBe('-');
+    expect(getTransactionKind(allEight[5])).toBe('LOAN');
+    expect(getTransactionAmountSign(allEight[5])).toBe('+');
+    expect(getTransactionKind(allEight[6])).toBe('LOAN');
+    expect(getTransactionAmountSign(allEight[6])).toBe('+');
+    expect(getTransactionKind(allEight[7])).toBe('LOAN');
+    expect(getTransactionAmountSign(allEight[7])).toBe('-');
 
-    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(allFive);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(allEight);
     renderHistory();
 
     await waitFor(() => {
+      // Verify actual rendered badges AND rendered +/- signs & formatted amounts for all 8 cases
+      expect(screen.getByTestId('badge-tx-c-inc').textContent).toBe('Income');
+      expect(screen.getByTestId('amount-tx-c-inc').textContent).toBe('+ 20,000.00 THB');
+
       expect(screen.getByTestId('badge-tx-c-cash-exp').textContent).toBe('Expense');
+      expect(screen.getByTestId('amount-tx-c-cash-exp').textContent).toBe('- 350.00 THB');
+
       expect(screen.getByTestId('badge-tx-c-repay').textContent).toBe('Repayment');
+      expect(screen.getByTestId('amount-tx-c-repay').textContent).toBe('- 1,500.00 THB');
+
       expect(screen.getByTestId('badge-tx-c-xfer').textContent).toBe('Transfer');
-      expect(screen.getByTestId('badge-tx-c-loan').textContent).toBe('Loan');
+      expect(screen.getByTestId('amount-tx-c-xfer').textContent).toBe('- 2,000.00 THB');
+
+      expect(screen.getByTestId('badge-tx-c-loan-given').textContent).toBe('Loan');
+      expect(screen.getByTestId('amount-tx-c-loan-given').textContent).toBe('- 1,200.00 THB');
+
+      expect(screen.getByTestId('badge-tx-c-loan-recovery').textContent).toBe('Loan');
+      expect(screen.getByTestId('amount-tx-c-loan-recovery').textContent).toBe('+ 600.00 THB');
+
+      expect(screen.getByTestId('badge-tx-c-loan-borrow').textContent).toBe('Loan');
+      expect(screen.getByTestId('amount-tx-c-loan-borrow').textContent).toBe('+ 5,000.00 THB');
+
+      expect(screen.getByTestId('badge-tx-c-loan-repay').textContent).toBe('Loan');
+      expect(screen.getByTestId('amount-tx-c-loan-repay').textContent).toBe('- 1,000.00 THB');
     });
   });
 });

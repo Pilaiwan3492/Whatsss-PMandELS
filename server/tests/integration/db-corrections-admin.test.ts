@@ -572,27 +572,85 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
     expect(restoredLogin.status).toBe(200);
   });
 
-  it('TEST-ADMIN-LIVE-03: protects against concurrent deactivation of the last active ADMIN in PostgreSQL (Task 8)', async (ctx) => {
+  it('TEST-ADMIN-LIVE-03: isolates exactly 2 controlled active ADMINs, proves concurrent cross-deactivation rejects the 2nd with 422 CANNOT_DEACTIVATE_LAST_ADMIN, and persists exactly 1 active test admin (Finding 3 & Task 8)', async (ctx) => {
     if (!isCI && !allowLiveDb) {
       ctx.skip();
       return;
     }
 
+    // Snapshot & temporarily deactivate any pre-existing active ADMIN rows so unrelated
+    // seeded admins cannot cause a false-positive pass; always restored in finally.
+    const preExistingActiveAdmins = await prisma.user.findMany({
+      where: { role: 'ADMIN', is_active: true },
+      select: { id: true }
+    });
+    const preExistingIds = preExistingActiveAdmins.map((u) => u.id);
+
     const admin1 = await createIsolatedAdmin('last1');
     const admin2 = await createIsolatedAdmin('last2');
 
-    // Ensure any other active admins in whatsss_test are accounted for;
-    // verify that deactivating admin2 succeeds when admin1 is active, and verify
-    // concurrent cross-deactivation never leaves 0 active admins in PostgreSQL.
-    const results = await Promise.allSettled([
-      updateUserAccessStatus(admin1.admin.id, admin2.admin.id, { is_active: false }, prisma),
-      updateUserAccessStatus(admin2.admin.id, admin1.admin.id, { is_active: false }, prisma)
-    ]);
+    try {
+      if (preExistingIds.length > 0) {
+        await prisma.user.updateMany({
+          where: { id: { in: preExistingIds } },
+          data: { is_active: false }
+        });
+      }
 
-    const activeAdminsRemaining = await prisma.user.count({
-      where: { role: 'ADMIN', is_active: true }
-    });
-    expect(activeAdminsRemaining).toBeGreaterThanOrEqual(1);
-    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+      // Confirm controlled state: ONLY admin1 and admin2 are active ADMINs in PostgreSQL
+      const activeBefore = await prisma.user.findMany({
+        where: { role: 'ADMIN', is_active: true },
+        select: { id: true }
+      });
+      expect(activeBefore.map((u) => u.id).sort()).toEqual([admin1.admin.id, admin2.admin.id].sort());
+
+      // Concurrently attempt to deactivate BOTH controlled admins
+      const results = await Promise.allSettled([
+        updateUserAccessStatus(admin1.admin.id, admin2.admin.id, { is_active: false }, prisma),
+        updateUserAccessStatus(admin2.admin.id, admin1.admin.id, { is_active: false }, prisma)
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+
+      // Exactly 1 succeeds and 1 is rejected with 422 CANNOT_DEACTIVATE_LAST_ADMIN
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0].reason).toMatchObject({
+        statusCode: 422,
+        code: 'CANNOT_DEACTIVATE_LAST_ADMIN'
+      });
+
+      // Verify persisted PostgreSQL state for our 2 controlled test admins
+      const persistedControlled = await prisma.user.findMany({
+        where: { id: { in: [admin1.admin.id, admin2.admin.id] } },
+        select: { id: true, is_active: true }
+      });
+      const remainingActive = persistedControlled.filter((u) => u.is_active);
+      const deactivated = persistedControlled.filter((u) => !u.is_active);
+      expect(remainingActive).toHaveLength(1);
+      expect(deactivated).toHaveLength(1);
+
+      // Sequential attempt to deactivate the sole remaining active test admin MUST also fail with 422 CANNOT_DEACTIVATE_LAST_ADMIN
+      await expect(
+        updateUserAccessStatus('external-admin-caller', remainingActive[0].id, { is_active: false }, prisma)
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'CANNOT_DEACTIVATE_LAST_ADMIN'
+      });
+
+      const stillActive = await prisma.user.findUnique({
+        where: { id: remainingActive[0].id },
+        select: { is_active: true }
+      });
+      expect(stillActive?.is_active).toBe(true);
+    } finally {
+      if (preExistingIds.length > 0) {
+        await prisma.user.updateMany({
+          where: { id: { in: preExistingIds } },
+          data: { is_active: true }
+        });
+      }
+    }
   });
 });
