@@ -12,6 +12,7 @@ import { recordTransfer } from '../api/transactionApi.js';
 import { IncomeForm } from '../components/IncomeForm.js';
 import { ExpenseForm } from '../components/ExpenseForm.js';
 import { RepaymentForm } from '../components/RepaymentForm.js';
+import { LoanForm, LoanOperationMode } from '../components/LoanForm.js';
 
 interface AccountGroupConfig {
   type: AccountType;
@@ -73,6 +74,11 @@ export const AccountListPage: React.FC = () => {
   // Repayment form modal state (WP-05)
   const [isRepaymentModalOpen, setIsRepaymentModalOpen] = useState<boolean>(false);
   const [repaymentInitialCCId, setRepaymentInitialCCId] = useState<string | undefined>(undefined);
+
+  // Loan form modal state (F-12, F-13, WP-09)
+  const [isLoanModalOpen, setIsLoanModalOpen] = useState<boolean>(false);
+  const [loanInitialMode, setLoanInitialMode] = useState<LoanOperationMode>('LOAN_GIVEN');
+  const [loanInitialAccountId, setLoanInitialAccountId] = useState<string | undefined>(undefined);
 
   // Create Account modal state (F-10, WP-08)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
@@ -136,6 +142,15 @@ export const AccountListPage: React.FC = () => {
   const handleOpenRepayment = (creditCardId?: string) => {
     setRepaymentInitialCCId(creditCardId);
     setIsRepaymentModalOpen(true);
+  };
+
+  const handleOpenLoanModal = (
+    mode: LoanOperationMode = 'LOAN_GIVEN',
+    accountId?: string
+  ) => {
+    setLoanInitialMode(mode);
+    setLoanInitialAccountId(accountId);
+    setIsLoanModalOpen(true);
   };
 
   const handleOpenCreateModal = () => {
@@ -382,6 +397,13 @@ export const AccountListPage: React.FC = () => {
           >
             Pay Credit Card
           </button>
+          <button
+            type="button"
+            className="btn btn-outline-warning text-dark fw-semibold shadow-sm"
+            onClick={() => handleOpenLoanModal('LOAN_GIVEN')}
+          >
+            Manage Loans
+          </button>
         </div>
       </div>
 
@@ -462,6 +484,16 @@ export const AccountListPage: React.FC = () => {
                                   Opening: {formatCurrency(acc.opening_balance)}
                                 </small>
                               </>
+                            ) : acc.type === 'LOAN_GIVEN' && acc.current_balance !== undefined ? (
+                              <>
+                                <span className="text-muted small d-block">Current Receivable</span>
+                                <span className="fs-4 fw-bold text-warning text-dark">
+                                  {formatCurrency(acc.current_balance)}
+                                </span>
+                                <small className="text-muted d-block mt-1">
+                                  Opening: {formatCurrency(acc.opening_balance)}
+                                </small>
+                              </>
                             ) : (
                               <>
                                 <span className="text-muted small d-block">Opening Balance</span>
@@ -493,11 +525,28 @@ export const AccountListPage: React.FC = () => {
                             </div>
 
                             {acc.type === 'LOAN_TAKEN' && Number(acc.current_balance ?? 0) > 0 && (
+                              acc.subtype === 'GENERAL_LOAN' ? (
+                                <button
+                                  className="btn btn-sm btn-outline-danger"
+                                  onClick={() => handleOpenLoanModal('LOAN_REPAYMENT', acc.id)}
+                                >
+                                  Repay Loan
+                                </button>
+                              ) : (
+                                <button
+                                  className="btn btn-sm btn-outline-danger"
+                                  onClick={() => handleOpenRepayment(acc.id)}
+                                >
+                                  Pay Debt
+                                </button>
+                              )
+                            )}
+                            {acc.type === 'LOAN_GIVEN' && Number(acc.current_balance ?? 0) > 0 && (
                               <button
-                                className="btn btn-sm btn-outline-danger"
-                                onClick={() => handleOpenRepayment(acc.id)}
+                                className="btn btn-sm btn-outline-warning text-dark"
+                                onClick={() => handleOpenLoanModal('LOAN_RECOVERY', acc.id)}
                               >
-                                Pay Debt
+                                Recover Loan
                               </button>
                             )}
                           </div>
@@ -538,6 +587,18 @@ export const AccountListPage: React.FC = () => {
         isOpen={isRepaymentModalOpen}
         initialCreditCardId={repaymentInitialCCId}
         onClose={() => setIsRepaymentModalOpen(false)}
+        onSuccess={() => {
+          fetchAccounts();
+        }}
+      />
+
+      {/* Peer Lending & General Loan Modal (F-12, F-13, WP-09) */}
+      <LoanForm
+        accounts={accounts}
+        isOpen={isLoanModalOpen}
+        initialMode={loanInitialMode}
+        initialLoanAccountId={loanInitialAccountId}
+        onClose={() => setIsLoanModalOpen(false)}
         onSuccess={() => {
           fetchAccounts();
         }}
