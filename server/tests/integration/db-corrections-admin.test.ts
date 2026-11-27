@@ -740,7 +740,7 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
       });
     expect(decRes.status).toBe(200);
 
-    // 2b. Decrease below minimum (600 -> 400) -> 422 MIN_REPAYMENT_NOT_MET
+    // 2b. Decrease below minimum (600 -> 400) -> 422 MIN_REPAYMENT_NOT_MET (0 new audit logs)
     const minFail = await request(app)
       .put(`/api/transactions/${repayTxn.id}`)
       .set('Origin', TRUSTED_ORIGIN)
@@ -753,8 +753,9 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
       });
     expect(minFail.status).toBe(422);
     expect(minFail.body.error.code).toBe('MIN_REPAYMENT_NOT_MET');
+    expect(await prisma.transactionAuditLog.count({ where: { transaction_id: repayTxn.id } })).toBe(2);
 
-    // 3. Exceed outstanding debt (3100 > 3000) -> 422 REPAYMENT_EXCEEDS_DEBT
+    // 3. Exceed outstanding debt (3100 > 3000) -> 422 REPAYMENT_EXCEEDS_DEBT (0 new audit logs)
     const exceedFail = await request(app)
       .put(`/api/transactions/${repayTxn.id}`)
       .set('Origin', TRUSTED_ORIGIN)
@@ -767,8 +768,9 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
       });
     expect(exceedFail.status).toBe(422);
     expect(exceedFail.body.error.code).toBe('REPAYMENT_EXCEEDS_DEBT');
+    expect(await prisma.transactionAuditLog.count({ where: { transaction_id: repayTxn.id } })).toBe(2);
 
-    // 4. Below cash reserve (1450 leaves 50 < 100 reserve) -> 422 MINIMUM_CASH_RESERVE_VIOLATION
+    // 4. Below cash reserve (1450 leaves 50 < 100 reserve) -> 422 MINIMUM_CASH_RESERVE_VIOLATION (0 new audit logs)
     const reserveFail = await request(app)
       .put(`/api/transactions/${repayTxn.id}`)
       .set('Origin', TRUSTED_ORIGIN)
@@ -781,6 +783,7 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
       });
     expect(reserveFail.status).toBe(422);
     expect(reserveFail.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+    expect(await prisma.transactionAuditLog.count({ where: { transaction_id: repayTxn.id } })).toBe(2);
 
     // 5. Change target from Card A -> Card B (amount 1000) -> 200 OK
     const swapRes = await request(app)
@@ -822,10 +825,40 @@ describe('Integration Test: PostgreSQL 16 Live Database Corrections (F-16) & Adm
       orderBy: { sequence_number: 'asc' }
     });
     expect(logs).toHaveLength(3);
-    expect((logs[0].previous_snapshot as any).total_amount).toBe('800.00');
+    expect(logs[1].sequence_number > logs[0].sequence_number).toBe(true);
+    expect(logs[2].sequence_number > logs[1].sequence_number).toBe(true);
+
+    // Event 0 (Increase 800 -> 1200)
+    expect(logs[0].previous_snapshot).toEqual({
+      total_amount: '800.00',
+      transaction_date: '2026-11-02',
+      description: 'Repay Card A',
+      allocations: [{ target_account_id: tenant.accounts.cc.id, amount: '800.00', notes: 'Initial' }]
+    });
+    expect(logs[0].new_snapshot).toEqual({
+      total_amount: '1200.00',
+      transaction_date: '2026-11-02',
+      description: 'Repay Card A Increased',
+      allocations: [{ target_account_id: tenant.accounts.cc.id, amount: '1200.00', notes: 'Increased' }]
+    });
+
+    // Event 1 (Decrease 1200 -> 600)
     expect(logs[1].previous_snapshot).toEqual(logs[0].new_snapshot);
+    expect(logs[1].new_snapshot).toEqual({
+      total_amount: '600.00',
+      transaction_date: '2026-11-02',
+      description: 'Repay Card A Decreased',
+      allocations: [{ target_account_id: tenant.accounts.cc.id, amount: '600.00', notes: 'Decreased' }]
+    });
+
+    // Event 2 (Target swap Card A -> Card B, 600 -> 1000)
     expect(logs[2].previous_snapshot).toEqual(logs[1].new_snapshot);
-    expect((logs[2].new_snapshot as any).allocations[0].target_account_id).toBe(cardB.id);
+    expect(logs[2].new_snapshot).toEqual({
+      total_amount: '1000.00',
+      transaction_date: '2026-11-02',
+      description: 'Repay Card B Instead',
+      allocations: [{ target_account_id: cardB.id, amount: '1000.00', notes: 'Swapped to Card B' }]
+    });
   });
 
   // ============================================================================
