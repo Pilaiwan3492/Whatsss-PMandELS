@@ -466,7 +466,7 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
           }
         ]
       },
-      // 5c. LOAN (LOAN_GIVEN recovery via RECEIVE_MONEY — must be LOAN, NOT INCOME)
+      // 5c. LOAN (LOAN_GIVEN recovery via RECEIVE_MONEY — must be LOAN, NOT INCOME, sign '+')
       {
         id: 'tx-cls-loan-recovery',
         user_id: 'u1-uuid',
@@ -484,6 +484,28 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
             target_account_id: 'acc-friend',
             target_account: { id: 'acc-friend', name: 'Friend Loan', type: 'LOAN_GIVEN', subtype: 'DEFAULT' },
             amount: 400,
+            notes: null
+          }
+        ]
+      },
+      // 5d. LOAN (GENERAL_LOAN borrowing via RECEIVE_MONEY — must be LOAN, NOT INCOME, sign '+')
+      {
+        id: 'tx-cls-general-loan-borrow',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'RECEIVE_MONEY',
+        total_amount: 5000,
+        transaction_date: '2026-11-08',
+        description: 'Personal Loan Disbursement',
+        created_at: '2026-11-08T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-gl-borrow',
+            transaction_id: 'tx-cls-general-loan-borrow',
+            target_account_id: 'acc-car-loan',
+            target_account: { id: 'acc-car-loan', name: 'Car Loan', type: 'LOAN_TAKEN', subtype: 'GENERAL_LOAN' },
+            amount: 5000,
             notes: null
           }
         ]
@@ -512,6 +534,9 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
     expect(getTransactionKind(allFiveTransactions[6])).toBe('LOAN'); // Loan Recovery -> '+'
     expect(getTransactionAmountSign(allFiveTransactions[6])).toBe('+');
 
+    expect(getTransactionKind(allFiveTransactions[7])).toBe('LOAN'); // General Loan Borrowing -> '+'
+    expect(getTransactionAmountSign(allFiveTransactions[7])).toBe('+');
+
     // Render UI and verify both badges AND displayed +/- amount signs
     vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(allFiveTransactions);
     renderHistory();
@@ -537,6 +562,9 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
 
       expect(screen.getByTestId('badge-tx-cls-loan-recovery').textContent).toBe('Loan');
       expect(screen.getByTestId('amount-tx-cls-loan-recovery').textContent).toBe('+ 400.00 THB');
+
+      expect(screen.getByTestId('badge-tx-cls-general-loan-borrow').textContent).toBe('Loan');
+      expect(screen.getByTestId('amount-tx-cls-general-loan-borrow').textContent).toBe('+ 5,000.00 THB');
     });
 
     // Clicking Repayments tab must exclude CASH expense and GENERAL_LOAN repayment
@@ -550,11 +578,12 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
     expect(screen.getByTestId('txn-row-tx-cls-transfer')).toBeDefined();
     expect(screen.queryByTestId('txn-row-tx-cls-repayment')).toBeNull();
 
-    // Clicking Loans tab shows all 3 loan transactions
+    // Clicking Loans tab shows all 4 loan transactions
     fireEvent.click(screen.getByTestId('filter-loan'));
     expect(screen.getByTestId('txn-row-tx-cls-loan-given')).toBeDefined();
     expect(screen.getByTestId('txn-row-tx-cls-general-loan-repay')).toBeDefined();
     expect(screen.getByTestId('txn-row-tx-cls-loan-recovery')).toBeDefined();
+    expect(screen.getByTestId('txn-row-tx-cls-general-loan-borrow')).toBeDefined();
     expect(screen.queryByTestId('txn-row-tx-cls-income')).toBeNull();
   });
 });

@@ -980,6 +980,42 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
     expect(sumAfterXfer.total_income).toBe(0);
     expect(sumAfterXfer.total_expense).toBe(0);
 
+    // Helper to assert zero DB writes (Transaction + AllocationLine) and unchanged summary on rejected duplicate
+    const assertRejectedCashLoanDuplicate = async (
+      callerCookie: string,
+      ownerUserId: string,
+      ownerCookie: string,
+      txnId: string,
+      expectedStatus: number,
+      expectedCode: string
+    ) => {
+      const txBefore = await prisma.transaction.count({ where: { user_id: ownerUserId } });
+      const allocBefore = await prisma.allocationLine.count({
+        where: { transaction: { user_id: ownerUserId } }
+      });
+      const sumBefore = (
+        await request(app).get('/api/reports/summary').set('Cookie', ownerCookie)
+      ).body.data;
+
+      const res = await request(app)
+        .post(`/api/transactions/${txnId}/duplicate`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', callerCookie)
+        .send({});
+
+      expect(res.status).toBe(expectedStatus);
+      expect(res.body.error.code).toBe(expectedCode);
+      expect(await prisma.transaction.count({ where: { user_id: ownerUserId } })).toBe(txBefore);
+      expect(
+        await prisma.allocationLine.count({ where: { transaction: { user_id: ownerUserId } } })
+      ).toBe(allocBefore);
+      const sumAfter = (
+        await request(app).get('/api/reports/summary').set('Cookie', ownerCookie)
+      ).body.data;
+      expect(sumAfter).toEqual(sumBefore);
+    };
+
     // 2. INSUFFICIENT_FUNDS on outgoing cash transfer (Checking now has 6000.00; transfer 5000.00 leaves 1000.00 -> duplicating 5000.00 fails)
     const bigXfer = await prisma.transaction.create({
       data: {
@@ -994,16 +1030,14 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
         }
       }
     });
-    const txCountBeforeInsuff = await prisma.transaction.count({ where: { user_id: tenantA.userId } });
-    const insuffRes = await request(app)
-      .post(`/api/transactions/${bigXfer.id}/duplicate`)
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Content-Type', 'application/json')
-      .set('Cookie', tenantA.cookie)
-      .send({});
-    expect(insuffRes.status).toBe(422);
-    expect(insuffRes.body.error.code).toBe('INSUFFICIENT_FUNDS');
-    expect(await prisma.transaction.count({ where: { user_id: tenantA.userId } })).toBe(txCountBeforeInsuff);
+    await assertRejectedCashLoanDuplicate(
+      tenantA.cookie,
+      tenantA.userId,
+      tenantA.cookie,
+      bigXfer.id,
+      422,
+      'INSUFFICIENT_FUNDS'
+    );
 
     // 3. RECOVERY_EXCEEDS_RECEIVABLE on LOAN_GIVEN recovery
     // Disburse 1000.00 loan given, recover 700.00 (remaining receivable = 300.00) -> duplicating 700.00 recovery fails
@@ -1033,48 +1067,46 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
         }
       }
     });
-    const txCountBeforeRec = await prisma.transaction.count({ where: { user_id: tenantA.userId } });
-    const exceedRecRes = await request(app)
-      .post(`/api/transactions/${recovery700.id}/duplicate`)
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Content-Type', 'application/json')
-      .set('Cookie', tenantA.cookie)
-      .send({});
-    expect(exceedRecRes.status).toBe(422);
-    expect(exceedRecRes.body.error.code).toBe('RECOVERY_EXCEEDS_RECEIVABLE');
-    expect(await prisma.transaction.count({ where: { user_id: tenantA.userId } })).toBe(txCountBeforeRec);
+    await assertRejectedCashLoanDuplicate(
+      tenantA.cookie,
+      tenantA.userId,
+      tenantA.cookie,
+      recovery700.id,
+      422,
+      'RECOVERY_EXCEEDS_RECEIVABLE'
+    );
 
-    // 4. ACCOUNT_ARCHIVED blocks duplicate
+    // 4. ACCOUNT_ARCHIVED blocks duplicate with zero DB writes & unchanged summary
     await prisma.account.update({
       where: { id: tenantA.accounts.wallet.id },
       data: { is_archived: true }
     });
-    const archRes = await request(app)
-      .post(`/api/transactions/${xfer.id}/duplicate`)
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Content-Type', 'application/json')
-      .set('Cookie', tenantA.cookie)
-      .send({});
-    expect(archRes.status).toBe(422);
-    expect(archRes.body.error.code).toBe('ACCOUNT_ARCHIVED');
+    await assertRejectedCashLoanDuplicate(
+      tenantA.cookie,
+      tenantA.userId,
+      tenantA.cookie,
+      xfer.id,
+      422,
+      'ACCOUNT_ARCHIVED'
+    );
 
-    // 5. Nonexistent & foreign-user source transaction -> 404 NOT_FOUND (BR-01)
-    const missingRes = await request(app)
-      .post('/api/transactions/00000000-0000-0000-0000-000000000000/duplicate')
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Content-Type', 'application/json')
-      .set('Cookie', tenantA.cookie)
-      .send({});
-    expect(missingRes.status).toBe(404);
-    expect(missingRes.body.error.code).toBe('NOT_FOUND');
+    // 5. Nonexistent & foreign-user source transaction -> 404 NOT_FOUND (BR-01) with zero writes
+    await assertRejectedCashLoanDuplicate(
+      tenantA.cookie,
+      tenantA.userId,
+      tenantA.cookie,
+      '00000000-0000-0000-0000-000000000000',
+      404,
+      'NOT_FOUND'
+    );
 
-    const crossRes = await request(app)
-      .post(`/api/transactions/${xfer.id}/duplicate`)
-      .set('Origin', TRUSTED_ORIGIN)
-      .set('Content-Type', 'application/json')
-      .set('Cookie', tenantB.cookie)
-      .send({});
-    expect(crossRes.status).toBe(404);
-    expect(crossRes.body.error.code).toBe('NOT_FOUND');
+    await assertRejectedCashLoanDuplicate(
+      tenantB.cookie,
+      tenantA.userId,
+      tenantA.cookie,
+      xfer.id,
+      404,
+      'NOT_FOUND'
+    );
   });
 });
