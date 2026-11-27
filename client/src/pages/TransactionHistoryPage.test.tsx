@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext.js';
-import { TransactionHistoryPage } from './TransactionHistoryPage.js';
+import { TransactionHistoryPage, getTransactionKind } from './TransactionHistoryPage.js';
 import { axiosClient } from '../api/axiosClient.js';
 import * as transactionApi from '../api/transactionApi.js';
 
@@ -262,6 +262,132 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
       });
       expect(screen.queryByTestId('correction-modal')).toBeNull();
       expect(screen.getByTestId('correction-feedback').textContent).toContain('Transaction corrected');
+    });
+  });
+
+  it('TEST-UI-CLASS-01: accurately classifies all 5 transaction types and prevents CASH expenses from being misclassified as REPAYMENT (Task 5)', async () => {
+    const allFive: transactionApi.HistoryTransaction[] = [
+      {
+        id: 'tx-c-inc',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'RECEIVE_MONEY',
+        total_amount: 20000,
+        transaction_date: '2026-11-01',
+        description: 'Salary',
+        created_at: '2026-11-01T08:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-1',
+            transaction_id: 'tx-c-inc',
+            target_account_id: 'acc-sal',
+            target_account: { id: 'acc-sal', name: 'Salary', type: 'INCOME', subtype: 'DEFAULT' },
+            amount: 20000,
+            notes: null
+          }
+        ]
+      },
+      {
+        id: 'tx-c-cash-exp',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 350,
+        transaction_date: '2026-11-02',
+        description: 'Cash Lunch',
+        created_at: '2026-11-02T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-2',
+            transaction_id: 'tx-c-cash-exp',
+            target_account_id: 'acc-dining',
+            target_account: { id: 'acc-dining', name: 'Dining', type: 'EXPENSE', subtype: 'DEFAULT' },
+            amount: 350,
+            notes: null
+          }
+        ]
+      },
+      {
+        id: 'tx-c-repay',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 1500,
+        transaction_date: '2026-11-03',
+        description: 'CC Repay',
+        created_at: '2026-11-03T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-3',
+            transaction_id: 'tx-c-repay',
+            target_account_id: 'acc-cc',
+            target_account: { id: 'acc-cc', name: 'Visa CC', type: 'LOAN_TAKEN', subtype: 'CREDIT_CARD' },
+            amount: 1500,
+            notes: null
+          }
+        ]
+      },
+      {
+        id: 'tx-c-xfer',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 2000,
+        transaction_date: '2026-11-04',
+        description: 'Cash Transfer',
+        created_at: '2026-11-04T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-4',
+            transaction_id: 'tx-c-xfer',
+            target_account_id: 'acc-wallet',
+            target_account: { id: 'acc-wallet', name: 'Wallet', type: 'CASH', subtype: 'DEFAULT' },
+            amount: 2000,
+            notes: null
+          }
+        ]
+      },
+      {
+        id: 'tx-c-loan',
+        user_id: 'u1-uuid',
+        primary_account_id: 'acc-bank',
+        primary_account: { id: 'acc-bank', name: 'Checking Bank', type: 'CASH', subtype: 'DEFAULT' },
+        form: 'PAYMENT_CHARGE',
+        total_amount: 1000,
+        transaction_date: '2026-11-05',
+        description: 'Car Loan',
+        created_at: '2026-11-05T12:00:00.000Z',
+        allocation_lines: [
+          {
+            id: 'l-5',
+            transaction_id: 'tx-c-loan',
+            target_account_id: 'acc-car',
+            target_account: { id: 'acc-car', name: 'Car Loan', type: 'LOAN_TAKEN', subtype: 'GENERAL_LOAN' },
+            amount: 1000,
+            notes: null
+          }
+        ]
+      }
+    ];
+
+    expect(getTransactionKind(allFive[0])).toBe('INCOME');
+    expect(getTransactionKind(allFive[1])).toBe('EXPENSE');
+    expect(getTransactionKind(allFive[2])).toBe('REPAYMENT');
+    expect(getTransactionKind(allFive[3])).toBe('TRANSFER');
+    expect(getTransactionKind(allFive[4])).toBe('LOAN');
+
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(allFive);
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('badge-tx-c-cash-exp').textContent).toBe('Expense');
+      expect(screen.getByTestId('badge-tx-c-repay').textContent).toBe('Repayment');
+      expect(screen.getByTestId('badge-tx-c-xfer').textContent).toBe('Transfer');
+      expect(screen.getByTestId('badge-tx-c-loan').textContent).toBe('Loan');
     });
   });
 });

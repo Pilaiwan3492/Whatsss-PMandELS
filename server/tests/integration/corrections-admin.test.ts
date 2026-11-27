@@ -32,6 +32,7 @@ vi.mock('../../src/prisma.js', () => {
         amount: new Prisma.Decimal(l.amount.toString())
       }));
       const auditSnapshot = mockAuditLogs.map((a) => ({ ...a }));
+      const accLockSnapshot = mockAccounts.map((a) => ({ id: a.id, is_opening_locked: a.is_opening_locked }));
       try {
         return await callback(mockPrismaObj);
       } catch (err) {
@@ -41,6 +42,10 @@ vi.mock('../../src/prisma.js', () => {
         mockAllocationLines.push(...allocSnapshot);
         mockAuditLogs.length = 0;
         mockAuditLogs.push(...auditSnapshot);
+        for (const snap of accLockSnapshot) {
+          const acc = mockAccounts.find((a) => a.id === snap.id);
+          if (acc) acc.is_opening_locked = snap.is_opening_locked;
+        }
         throw err;
       }
     }),
@@ -71,18 +76,29 @@ vi.mock('../../src/prisma.js', () => {
         }
         return findMockUser(where);
       }),
-      findMany: vi.fn(async ({ select }) => {
-        const sorted = [...mockUsers].sort(
-          (a, b) => a.created_at.getTime() - b.created_at.getTime()
-        );
-        if (!select) return sorted;
-        return sorted.map((u: any) => {
+      findMany: vi.fn(async ({ where, select }) => {
+        const filtered = mockUsers
+          .filter((u) => {
+            if (where?.role && u.role !== where.role) return false;
+            if (where?.is_active !== undefined && u.is_active !== where.is_active) return false;
+            return true;
+          })
+          .sort((a, b) => a.created_at.getTime() - b.created_at.getTime());
+        if (!select) return filtered;
+        return filtered.map((u: any) => {
           const out: any = {};
           for (const [k, v] of Object.entries(select)) {
             if (v) out[k] = u[k];
           }
           return out;
         });
+      }),
+      count: vi.fn(async ({ where }) => {
+        return mockUsers.filter((u) => {
+          if (where?.role && u.role !== where.role) return false;
+          if (where?.is_active !== undefined && u.is_active !== where.is_active) return false;
+          return true;
+        }).length;
       }),
       update: vi.fn(async ({ where, data, select }) => {
         const u: any = mockUsers.find((usr) => usr.id === where.id);
@@ -113,6 +129,24 @@ vi.mock('../../src/prisma.js', () => {
             return true;
           }) || null
         );
+      }),
+      updateMany: vi.fn(async ({ where, data }) => {
+        let count = 0;
+        for (const a of mockAccounts) {
+          if (typeof where?.id === 'string' && a.id !== where.id) continue;
+          if (where?.id?.in && !where.id.in.includes(a.id)) continue;
+          if (where?.user_id && a.user_id !== where.user_id) continue;
+          if (
+            where?.is_opening_locked !== undefined &&
+            a.is_opening_locked !== where.is_opening_locked
+          ) {
+            continue;
+          }
+          if (data.is_opening_locked !== undefined) a.is_opening_locked = data.is_opening_locked;
+          if (data.updated_at) a.updated_at = data.updated_at;
+          count++;
+        }
+        return { count };
       })
     },
     transaction: {
@@ -741,13 +775,16 @@ describe('WP-11 Integration Suite: F-16 Transaction Corrections + F-19 Admin Gov
     expect(res.body.data.users.length).toBeGreaterThanOrEqual(3);
 
     for (const u of res.body.data.users) {
-      expect(u.id).toBeDefined();
-      expect(u.username).toBeDefined();
-      expect(u.email).toBeDefined();
-      expect(u.role).toBeDefined();
-      expect(typeof u.is_active).toBe('boolean');
-      expect(u.created_at).toBeDefined();
+      expect(Object.keys(u).sort()).toEqual([
+        'created_at',
+        'email',
+        'id',
+        'is_active',
+        'role',
+        'username'
+      ]);
       expect(u.password_hash).toBeUndefined();
+      expect(u.updated_at).toBeUndefined();
       expect(u.accounts).toBeUndefined();
       expect(u.transactions).toBeUndefined();
       expect(u.balance).toBeUndefined();
@@ -865,5 +902,225 @@ describe('WP-11 Integration Suite: F-16 Transaction Corrections + F-19 Admin Gov
     expect(res.status).toBe(503);
     expect(res.body.success).toBe(false);
     expect(res.body.error.code).toBe('AUTH_STATE_UNVERIFIABLE');
+  });
+
+  // ============================================================================
+  // ADDITIONAL REVIEW FIX TESTS (Tasks 1, 2, 8)
+  // ============================================================================
+
+  it('TEST-CORR-LOCK-01: locks opening balance of newly referenced account on correction and rolls back lock on failure (Task 1)', async () => {
+    const grocery = mockAccounts.find((a) => a.id === 'acc-demo-grocery')!;
+    grocery.is_opening_locked = false;
+
+    mockTransactions.push({
+      id: 'txn-lock-test',
+      user_id: 'user-a-uuid',
+      primary_account_id: 'acc-demo-cc',
+      form: 'PAYMENT_CHARGE',
+      total_amount: new Prisma.Decimal('1000.00'),
+      transaction_date: new Date('2026-11-05T00:00:00.000Z'),
+      description: 'Dining only',
+      created_at: new Date('2026-11-05T08:00:00.000Z')
+    });
+    mockAllocationLines.push({
+      id: 'alloc-lock-1',
+      transaction_id: 'txn-lock-test',
+      target_account_id: 'acc-demo-dining',
+      amount: new Prisma.Decimal('1000.00'),
+      notes: null
+    });
+
+    // Failed correction (audit insert failure) must NOT leave grocery locked
+    failNextAuditInsert = true;
+    const failRes = await request(app)
+      .put('/api/transactions/txn-lock-test')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '1000.00',
+        transaction_date: '2026-11-05',
+        allocations: [{ target_account_id: 'acc-demo-grocery', amount: '1000.00' }]
+      });
+    expect(failRes.status).toBe(500);
+    expect(grocery.is_opening_locked).toBe(false);
+
+    // Valid correction introducing grocery locks grocery's opening balance
+    const okRes = await request(app)
+      .put('/api/transactions/txn-lock-test')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '1000.00',
+        transaction_date: '2026-11-05',
+        allocations: [{ target_account_id: 'acc-demo-grocery', amount: '1000.00' }]
+      });
+    expect(okRes.status).toBe(200);
+    expect(grocery.is_opening_locked).toBe(true);
+  });
+
+  it('TEST-CORR-BR07-01: prevents multi-allocation BR-07 v1.1 bypass, enforces exact floor/reserve/debt rules, and allows ordinary multi-allocation CASH expenses (Task 2)', async () => {
+    const bank = mockAccounts.find((a) => a.id === 'acc-demo-checking')!;
+    bank.opening_balance = new Prisma.Decimal('5000.00');
+
+    // Seed CC charge 3000.00 and CC repayment 1000.00
+    mockTransactions.push(
+      {
+        id: 'txn-cc-chg-br07',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-cc',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('3000.00'),
+        transaction_date: new Date('2026-11-03T00:00:00.000Z'),
+        description: 'CC Charge',
+        created_at: new Date('2026-11-03T08:00:00.000Z')
+      },
+      {
+        id: 'txn-cc-rep-br07',
+        user_id: 'user-a-uuid',
+        primary_account_id: 'acc-demo-checking',
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1000.00'),
+        transaction_date: new Date('2026-11-04T00:00:00.000Z'),
+        description: 'CC Repay',
+        created_at: new Date('2026-11-04T08:00:00.000Z')
+      }
+    );
+    mockAllocationLines.push(
+      {
+        id: 'alloc-cc-chg-br07',
+        transaction_id: 'txn-cc-chg-br07',
+        target_account_id: 'acc-demo-grocery',
+        amount: new Prisma.Decimal('3000.00'),
+        notes: null
+      },
+      {
+        id: 'alloc-cc-rep-br07',
+        transaction_id: 'txn-cc-rep-br07',
+        target_account_id: 'acc-demo-cc',
+        amount: new Prisma.Decimal('1000.00'),
+        notes: null
+      }
+    );
+
+    // 1. Multi-allocation mixing Credit Card Repayment (100.00) + Expense (500.00) MUST be rejected (400 INVALID_ACCOUNT_TYPE)
+    const mixRes = await request(app)
+      .put('/api/transactions/txn-cc-rep-br07')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '600.00',
+        transaction_date: '2026-11-04',
+        allocations: [
+          { target_account_id: 'acc-demo-cc', amount: '100.00' },
+          { target_account_id: 'acc-demo-dining', amount: '500.00' }
+        ]
+      });
+    expect(mixRes.status).toBe(400);
+    expect(mixRes.body.error.code).toBe('INVALID_ACCOUNT_TYPE');
+
+    // 2. Repayment exceeding debt (3500 > 3000) -> 422 REPAYMENT_EXCEEDS_DEBT
+    const exceedRes = await request(app)
+      .put('/api/transactions/txn-cc-rep-br07')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '3500.00',
+        transaction_date: '2026-11-04',
+        allocations: [{ target_account_id: 'acc-demo-cc', amount: '3500.00' }]
+      });
+    expect(exceedRes.status).toBe(422);
+    expect(exceedRes.body.error.code).toBe('REPAYMENT_EXCEEDS_DEBT');
+
+    // 3. Partial repayment leaving < 100.00 cash reserve -> 422 MINIMUM_CASH_RESERVE_VIOLATION
+    bank.opening_balance = new Prisma.Decimal('1050.00');
+    const reserveRes = await request(app)
+      .put('/api/transactions/txn-cc-rep-br07')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '1000.00',
+        transaction_date: '2026-11-04',
+        allocations: [{ target_account_id: 'acc-demo-cc', amount: '1000.00' }]
+      });
+    expect(reserveRes.status).toBe(422);
+    expect(reserveRes.body.error.code).toBe('MINIMUM_CASH_RESERVE_VIOLATION');
+
+    // 4. Repayment equal to exact minimum floor (500.00 on 3000.00 debt, cash = 1050.00 -> leaves 550.00 >= 100.00) succeeds
+    const minOkRes = await request(app)
+      .put('/api/transactions/txn-cc-rep-br07')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '500.00',
+        transaction_date: '2026-11-04',
+        allocations: [{ target_account_id: 'acc-demo-cc', amount: '500.00' }]
+      });
+    expect(minOkRes.status).toBe(200);
+
+    // 5. Ordinary multi-allocation CASH expense (Dining 200 + Grocery 100 = 300) is NOT treated as repayment and succeeds
+    mockTransactions.push({
+      id: 'txn-cash-exp-br07',
+      user_id: 'user-a-uuid',
+      primary_account_id: 'acc-demo-checking',
+      form: 'PAYMENT_CHARGE',
+      total_amount: new Prisma.Decimal('200.00'),
+      transaction_date: new Date('2026-11-05T00:00:00.000Z'),
+      description: 'Cash lunch',
+      created_at: new Date('2026-11-05T08:00:00.000Z')
+    });
+    mockAllocationLines.push({
+      id: 'alloc-cash-exp-br07',
+      transaction_id: 'txn-cash-exp-br07',
+      target_account_id: 'acc-demo-dining',
+      amount: new Prisma.Decimal('200.00'),
+      notes: null
+    });
+
+    const cashExpRes = await request(app)
+      .put('/api/transactions/txn-cash-exp-br07')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${userDemoToken}`])
+      .send({
+        total_amount: '300.00',
+        transaction_date: '2026-11-05',
+        allocations: [
+          { target_account_id: 'acc-demo-dining', amount: '200.00' },
+          { target_account_id: 'acc-demo-grocery', amount: '100.00' }
+        ]
+      });
+    expect(cashExpRes.status).toBe(200);
+  });
+
+  it('TEST-ADMIN-LAST-01: prevents deactivating the last active ADMIN while allowing deactivation when another active ADMIN exists (Task 8)', async () => {
+    // Add a second active admin
+    mockUsers.push({
+      id: 'admin-2-uuid',
+      username: 'admin_second',
+      email: 'admin_second@whatsss.local',
+      password_hash: mockUsers[2].password_hash,
+      role: 'ADMIN',
+      is_active: true,
+      created_at: new Date('2026-11-02T00:00:00.000Z'),
+      updated_at: new Date('2026-11-02T00:00:00.000Z')
+    });
+
+    // Deactivating admin-2 while admin-uuid is active succeeds (2 -> 1 active admins)
+    const okDisable = await request(app)
+      .patch('/api/admin/users/admin-2-uuid/status')
+      .set('Origin', config.clientUrl)
+      .set('Cookie', [`token=${adminToken}`])
+      .send({ is_active: false });
+    expect(okDisable.status).toBe(200);
+    expect(okDisable.body.data.user.is_active).toBe(false);
+
+    // Calling service directly simulating another caller trying to disable the last remaining active admin
+    const { updateUserAccessStatus } = await import('../../src/services/admin.service.js');
+    const { prisma } = await import('../../src/prisma.js');
+    await expect(
+      updateUserAccessStatus('system-other-admin', 'admin-uuid', { is_active: false }, prisma)
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'CANNOT_DEACTIVATE_LAST_ADMIN'
+    });
   });
 });

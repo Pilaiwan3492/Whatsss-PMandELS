@@ -20,7 +20,8 @@ export class AdminError extends Error {
 }
 
 /**
- * Lists all platform users with strictly non-financial governance metadata (F-19, FR-03, BR-10, NFR-SEC-01).
+ * Lists all platform users with strictly contract-approved non-financial governance metadata
+ * (F-19, FR-03, BR-10, NFR-SEC-01): id, username, email, role, is_active, created_at.
  * Never selects or returns password_hash, accounts, transactions, or financial summaries.
  */
 export async function listPlatformUsers(prismaClient = defaultPrisma) {
@@ -31,8 +32,7 @@ export async function listPlatformUsers(prismaClient = defaultPrisma) {
       email: true,
       role: true,
       is_active: true,
-      created_at: true,
-      updated_at: true
+      created_at: true
     },
     orderBy: { created_at: 'asc' }
   });
@@ -43,14 +43,16 @@ export async function listPlatformUsers(prismaClient = defaultPrisma) {
     email: u.email,
     role: u.role,
     is_active: Boolean(u.is_active),
-    created_at: u.created_at instanceof Date ? u.created_at.toISOString() : String(u.created_at),
-    updated_at: u.updated_at instanceof Date ? u.updated_at.toISOString() : String(u.updated_at)
+    created_at: u.created_at instanceof Date ? u.created_at.toISOString() : String(u.created_at)
   }));
 }
 
 /**
  * Toggles a user's is_active status (F-19, FR-04, AC-19-2, AC-19-4).
- * Prevents an ADMIN from deactivating their own account (422 CANNOT_DEACTIVATE_SELF).
+ * - Prevents an ADMIN from deactivating their own account (422 CANNOT_DEACTIVATE_SELF).
+ * - Compatible Safeguard (Task 8): Prevents deactivating the last remaining active ADMIN
+ *   account (422 CANNOT_DEACTIVATE_LAST_ADMIN) inside a serialized database transaction
+ *   using SELECT ... FOR UPDATE on active ADMIN rows to prevent concurrent lockout races.
  */
 export async function updateUserAccessStatus(
   adminUserId: string,
@@ -74,35 +76,77 @@ export async function updateUserAccessStatus(
     );
   }
 
-  const existing = await prismaClient.user.findUnique({
-    where: { id: targetUserId },
-    select: { id: true }
-  });
-
-  if (!existing) {
-    throw new AdminError(`User [${targetUserId}] was not found.`, 404, 'NOT_FOUND');
-  }
-
-  const updated: any = await prismaClient.user.update({
-    where: { id: targetUserId },
-    data: { is_active: input.is_active },
-    select: {
-      id: true,
-      username: true,
-      email: true,
-      role: true,
-      is_active: true,
-      updated_at: true
+  const executeUpdate = async (tx: any) => {
+    // When deactivating, lock all active ADMIN rows in canonical ID order to prevent
+    // concurrent admin deactivations from leaving the platform with zero active admins.
+    if (input.is_active === false && typeof tx.$queryRaw === 'function') {
+      await tx.$queryRaw`
+        SELECT id FROM "users"
+        WHERE role = 'ADMIN'
+          AND is_active = true
+        ORDER BY id ASC
+        FOR UPDATE
+      `;
     }
-  });
 
-  return {
-    id: updated.id,
-    username: updated.username,
-    email: updated.email,
-    role: updated.role,
-    is_active: Boolean(updated.is_active),
-    updated_at:
-      updated.updated_at instanceof Date ? updated.updated_at.toISOString() : String(updated.updated_at)
+    const existing = await tx.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, role: true, is_active: true }
+    });
+
+    if (!existing) {
+      throw new AdminError(`User [${targetUserId}] was not found.`, 404, 'NOT_FOUND');
+    }
+
+    if (input.is_active === false && existing.role === 'ADMIN' && existing.is_active === true) {
+      let activeAdminCount = 0;
+      if (typeof tx.user.count === 'function') {
+        activeAdminCount = await tx.user.count({
+          where: { role: 'ADMIN', is_active: true }
+        });
+      } else if (typeof tx.user.findMany === 'function') {
+        const activeAdmins = await tx.user.findMany({
+          where: { role: 'ADMIN', is_active: true },
+          select: { id: true }
+        });
+        activeAdminCount = activeAdmins.filter((a: any) => a.role === 'ADMIN' ? a.is_active !== false : true).length;
+      }
+
+      if (activeAdminCount <= 1) {
+        throw new AdminError(
+          'Cannot deactivate the last active platform administrator.',
+          422,
+          'CANNOT_DEACTIVATE_LAST_ADMIN'
+        );
+      }
+    }
+
+    const updated: any = await tx.user.update({
+      where: { id: targetUserId },
+      data: { is_active: input.is_active },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        is_active: true,
+        updated_at: true
+      }
+    });
+
+    return {
+      id: updated.id,
+      username: updated.username,
+      email: updated.email,
+      role: updated.role,
+      is_active: Boolean(updated.is_active),
+      updated_at:
+        updated.updated_at instanceof Date ? updated.updated_at.toISOString() : String(updated.updated_at)
+    };
   };
+
+  if (typeof (prismaClient as any).$transaction === 'function') {
+    return await (prismaClient as any).$transaction(executeUpdate);
+  }
+  return await executeUpdate(prismaClient);
 }

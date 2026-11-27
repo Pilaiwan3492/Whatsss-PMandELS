@@ -132,6 +132,7 @@ export interface HistoryAllocationLine {
     id: string;
     name: string;
     type: string;
+    subtype?: string;
   };
   amount: number;
   notes: string | null;
@@ -145,6 +146,7 @@ export interface HistoryTransaction {
     id: string;
     name: string;
     type: string;
+    subtype?: string;
   };
   form: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
   total_amount: number;

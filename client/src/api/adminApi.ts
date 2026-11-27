@@ -7,7 +7,6 @@ export interface PlatformUser {
   role: 'USER' | 'ADMIN';
   is_active: boolean;
   created_at: string;
-  updated_at?: string;
 }
 
 export async function getAdminUsers(): Promise<PlatformUser[]> {

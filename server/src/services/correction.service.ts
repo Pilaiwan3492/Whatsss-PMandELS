@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma as defaultPrisma } from '../prisma.js';
-import { acquireAccountRowLocks } from './accountLock.service.js';
+import { acquireAccountRowLocks, lockAccounts } from './accountLock.service.js';
 import {
   calculateMinimumRepayment,
   MIN_CASH_RESERVE,
@@ -381,6 +381,7 @@ export async function correctTransaction(
     }
 
     // Verify target account types are valid for this transaction's form and primary account type
+    const creditCardRepaymentTargets: string[] = [];
     for (const line of validatedAllocations) {
       const targetAcc = accountMap.get(line.target_account_id)!;
       if (existing.form === 'RECEIVE_MONEY') {
@@ -414,8 +415,26 @@ export async function correctTransaction(
               'SAME_ACCOUNT_TRANSFER'
             );
           }
+          if (targetAcc.type === 'LOAN_TAKEN' && (targetAcc as any).subtype !== 'GENERAL_LOAN') {
+            creditCardRepaymentTargets.push(targetAcc.id);
+          }
         }
       }
+    }
+
+    // Prevent BR-07 v1.1 bypass: Credit Card Debt Repayment (F-07) cannot be mixed with other
+    // allocation lines in a multi-allocation PAYMENT_CHARGE from CASH.
+    if (
+      existing.form === 'PAYMENT_CHARGE' &&
+      primaryAccount.type === 'CASH' &&
+      creditCardRepaymentTargets.length > 0 &&
+      validatedAllocations.length > 1
+    ) {
+      throw new CorrectionError(
+        'Credit card debt repayments cannot be combined with other allocation lines in a single transaction.',
+        400,
+        'INVALID_ACCOUNT_TYPE'
+      );
     }
 
     // E. Apply Update & Replace Allocation Lines
@@ -465,23 +484,9 @@ export async function correctTransaction(
           userId
         );
         resultingCashMap.set(acc.id, cashBal);
-        if (cashBal.lessThan(zero)) {
-          throw new CorrectionError(
-            `Correction would leave cash account [${acc.name}] with a negative balance (${cashBal.toFixed(2)}).`,
-            422,
-            'INSUFFICIENT_FUNDS'
-          );
-        }
       } else if (acc.type === 'LOAN_TAKEN') {
         const debtBal = await computeLockedLoanTakenDebt(tx, acc.id, acc.opening_balance, userId);
         resultingDebtMap.set(acc.id, debtBal);
-        if (debtBal.lessThan(zero)) {
-          throw new CorrectionError(
-            `Correction would result in negative debt on [${acc.name}] (${debtBal.toFixed(2)}).`,
-            422,
-            'REPAYMENT_EXCEEDS_DEBT'
-          );
-        }
       } else if (acc.type === 'LOAN_GIVEN') {
         const recvBal = await computeLockedLoanGivenReceivable(
           tx,
@@ -499,39 +504,95 @@ export async function correctTransaction(
       }
     }
 
-    // G. Re-verify BR-07 v1.1 if this transaction is a Credit Card Repayment (F-07)
-    if (
+    // G. Enforce BR-07 v1.1 strictly for Credit Card Repayments (exact precedence:
+    //    ZERO_OUTSTANDING_DEBT -> REPAYMENT_EXCEEDS_DEBT -> INSUFFICIENT_FUNDS -> MIN_REPAYMENT_NOT_MET -> MINIMUM_CASH_RESERVE_VIOLATION)
+    const isCreditCardRepayment =
       existing.form === 'PAYMENT_CHARGE' &&
       primaryAccount.type === 'CASH' &&
-      validatedAllocations.length === 1
-    ) {
-      const targetAcc = accountMap.get(validatedAllocations[0].target_account_id)!;
-      if (targetAcc.type === 'LOAN_TAKEN' && (targetAcc as any).subtype !== 'GENERAL_LOAN') {
-        const resultingDebt = resultingDebtMap.get(targetAcc.id)!;
-        const resultingCash = resultingCashMap.get(primaryAccount.id)!;
-        const preRepaymentDebt = resultingDebt.add(totalDecimal);
+      creditCardRepaymentTargets.length === 1 &&
+      validatedAllocations.length === 1;
 
-        const minRepayment = calculateMinimumRepayment(preRepaymentDebt);
-        if (totalDecimal.lessThan(minRepayment)) {
-          throw new CorrectionError(
-            `Corrected repayment amount of ${totalDecimal.toFixed(2)} is below the minimum required repayment of ${minRepayment.toFixed(2)}.`,
-            422,
-            'MIN_REPAYMENT_NOT_MET'
-          );
-        }
+    if (isCreditCardRepayment) {
+      const ccTargetId = creditCardRepaymentTargets[0];
+      const resultingDebt = resultingDebtMap.get(ccTargetId)!;
+      const resultingCash = resultingCashMap.get(primaryAccount.id)!;
+      const preRepaymentDebt = resultingDebt.add(totalDecimal);
 
-        const isFullSettlement = totalDecimal.equals(preRepaymentDebt);
-        if (!isFullSettlement && resultingCash.lessThan(MIN_CASH_RESERVE)) {
-          throw new CorrectionError(
-            `Partial repayment must leave at least ${MIN_CASH_RESERVE.toFixed(2)} in the source cash account.`,
-            422,
-            'MINIMUM_CASH_RESERVE_VIOLATION'
-          );
-        }
+      if (preRepaymentDebt.lessThanOrEqualTo(zero)) {
+        throw new CorrectionError(
+          'Outstanding repayment debt is 0.00; no repayment is required.',
+          422,
+          'ZERO_OUTSTANDING_DEBT'
+        );
+      }
+
+      if (totalDecimal.greaterThan(preRepaymentDebt)) {
+        throw new CorrectionError(
+          `Corrected repayment amount of ${totalDecimal.toFixed(2)} exceeds outstanding debt of ${preRepaymentDebt.toFixed(2)}.`,
+          422,
+          'REPAYMENT_EXCEEDS_DEBT'
+        );
+      }
+
+      if (resultingCash.lessThan(zero)) {
+        throw new CorrectionError(
+          `Correction would leave cash account [${primaryAccount.name}] with a negative balance (${resultingCash.toFixed(2)}).`,
+          422,
+          'INSUFFICIENT_FUNDS'
+        );
+      }
+
+      const minRepayment = calculateMinimumRepayment(preRepaymentDebt);
+      if (totalDecimal.lessThan(minRepayment)) {
+        throw new CorrectionError(
+          `Corrected repayment amount of ${totalDecimal.toFixed(2)} is below the minimum required repayment of ${minRepayment.toFixed(2)}.`,
+          422,
+          'MIN_REPAYMENT_NOT_MET'
+        );
+      }
+
+      const isFullSettlement = totalDecimal.equals(preRepaymentDebt);
+      if (!isFullSettlement && resultingCash.lessThan(MIN_CASH_RESERVE)) {
+        throw new CorrectionError(
+          `Partial repayment must leave at least ${MIN_CASH_RESERVE.toFixed(2)} in the source cash account.`,
+          422,
+          'MINIMUM_CASH_RESERVE_VIOLATION'
+        );
       }
     }
 
-    // H. Atomic TransactionAuditLog insertion (mutual all-or-nothing atomicity)
+    // Verify all affected CASH and LOAN_TAKEN accounts remain non-negative
+    for (const [accId, cashBal] of resultingCashMap.entries()) {
+      if (cashBal.lessThan(zero)) {
+        const acc = accountMap.get(accId)!;
+        throw new CorrectionError(
+          `Correction would leave cash account [${acc.name}] with a negative balance (${cashBal.toFixed(2)}).`,
+          422,
+          'INSUFFICIENT_FUNDS'
+        );
+      }
+    }
+    for (const [accId, debtBal] of resultingDebtMap.entries()) {
+      if (debtBal.lessThan(zero)) {
+        const acc = accountMap.get(accId)!;
+        throw new CorrectionError(
+          `Correction would result in negative debt on [${acc.name}] (${debtBal.toFixed(2)}).`,
+          422,
+          'REPAYMENT_EXCEEDS_DEBT'
+        );
+      }
+    }
+
+    // H. Atomically lock opening balances on all accounts referenced by the corrected transaction (F-03 / Task 1)
+    const referencedAfterCorrection = Array.from(
+      new Set<string>([
+        existing.primary_account_id,
+        ...validatedAllocations.map((a) => a.target_account_id)
+      ])
+    );
+    await lockAccounts(tx, referencedAfterCorrection, userId);
+
+    // I. Atomic TransactionAuditLog insertion (mutual all-or-nothing atomicity)
     const newSnapshot = {
       total_amount: totalDecimal.toFixed(2),
       transaction_date: dateStr,
