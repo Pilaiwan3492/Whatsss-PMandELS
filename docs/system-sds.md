@@ -469,9 +469,15 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
    * **Account Name Normalization & Uniqueness Policy (`F-10`):**
      * Before persisting on `POST /api/accounts` or `PATCH /api/accounts/:id`, the display `name` is normalized by trimming leading/trailing whitespace and collapsing internal whitespace runs (`displayName = rawName.trim().replace(/\s+/g, ' ')`), and `normalized_name = displayName.toLowerCase()` is stored in `accounts.normalized_name`.
      * Both application-level pre-checks and database-level unique constraints (`@@unique([user_id, normalized_name])` / Prisma `P2002` unique constraint violation inside `prisma.$transaction`) map deterministically to **`HTTP 409 Conflict` (`DUPLICATE_ACCOUNT_NAME`)**. Concurrent requests attempting to create `"Checking Bank"`, `"checking bank"`, or `"  Checking   Bank  "` for the same user are serialized by the database unique index so at most **1** account record is created.
-   * **Domain Separation Rule (`F-07` vs. `F-13`):**
+   * **Domain Separation & Migration Backfill Rule (`F-07` vs. `F-13`, `backfill_loan_taken_subtypes()`):**
      * Seeded `Visa Credit Card` and user-created credit card accounts have `type = LOAN_TAKEN` and `subtype = CREDIT_CARD`.
      * User-created general borrowing accounts (`F-13`, `FR-15`) have `type = LOAN_TAKEN` and `subtype = GENERAL_LOAN`.
+     * The `WP-08` SQL migration function `backfill_loan_taken_subtypes()` deterministically classifies pre-migration `LOAN_TAKEN` accounts across 5 cases:
+       1. **Credit Card Purchase History:** Legacy `LOAN_TAKEN` (`subtype = 'DEFAULT'`) with direct `PAYMENT_CHARGE` transactions (`primary_account_id = account.id`) $\rightarrow$ `CREDIT_CARD`.
+       2. **General Loan Borrowing History:** Legacy `LOAN_TAKEN` (`subtype = 'DEFAULT'`) with `RECEIVE_MONEY` borrowing allocations from a `CASH` primary account and zero direct `PAYMENT_CHARGE` purchase charges $\rightarrow$ `GENERAL_LOAN`.
+       3. **No Transaction History:** Legacy `LOAN_TAKEN` (`subtype = 'DEFAULT'`) with zero transactions $\rightarrow$ `CREDIT_CARD` (the documented default for Sprint 1 `LOAN_TAKEN` accounts).
+       4. **Already Explicitly Assigned Subtype:** `LOAN_TAKEN` accounts that already have `subtype = 'CREDIT_CARD'` or `subtype = 'GENERAL_LOAN'` $\rightarrow$ preserved unchanged (never overwritten).
+       5. **Mixed Transaction History:** Legacy `LOAN_TAKEN` (`subtype = 'DEFAULT'`) with both direct `PAYMENT_CHARGE` purchase charges and `RECEIVE_MONEY` borrowing allocations $\rightarrow$ deterministically classified as `CREDIT_CARD` so credit-card `BR-07 v1.1` repayment rules remain enforced on any account with direct credit card purchase charges.
      * `POST /api/transactions/repayment` (`F-07`) requires `toAccount.type === 'LOAN_TAKEN' && toAccount.subtype === 'CREDIT_CARD'` (enforcing `BR-07 v1.1` minimum repayment floor `max(500.00, 10%)` and `100.00 THB` partial cash reserve exclusively on credit cards).
      * `POST /api/transactions/loan-borrowing` and `POST /api/transactions/loan-repayment` (`F-13`) require `type === 'LOAN_TAKEN' && subtype === 'GENERAL_LOAN'`.
 
@@ -536,7 +542,7 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
 | **General Loan Borrowing (`F-13`, `FR-15`)** | `POST /api/transactions/loan-borrowing` | `RECEIVE_MONEY` | Destination `CASH` ($+\text{amount}$) | `LOAN_TAKEN` (`GENERAL_LOAN`, $+\text{amount}$ debt) | `CASH` increases; General `LOAN_TAKEN` debt increases; **`total_income` unchanged (`BR-08`)**. |
 | **General Loan Repayment (`F-13`, `FR-15`)** | `POST /api/transactions/loan-repayment` | `PAYMENT_CHARGE` | Source `CASH` ($-\text{amount}$) | `LOAN_TAKEN` (`GENERAL_LOAN`, $-\text{amount}$ debt) | `CASH` decreases; General `LOAN_TAKEN` debt decreases; **`total_expense` unchanged (`BR-08`)**. |
 
-### 11.4 Extended Deterministic Balance Equations (`balance.service.ts`)
+### 11.4 Extended Deterministic Balance Equations (`server/src/services/report.service.ts` & `server/src/controllers/account.controller.ts`)
 
 1. **Cash Account Balance (`type === 'CASH'`):**
    $$\text{Cash Balance}(A) = A.\text{opening\_balance} + \sum_{\substack{T.\text{primary} = A \\ T.\text{form} = \text{RECEIVE\_MONEY}}} T.\text{total\_amount} + \sum_{\substack{L.\text{target} = A \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} L.\text{amount} - \sum_{\substack{T.\text{primary} = A \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} T.\text{total\_amount}$$

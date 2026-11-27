@@ -160,6 +160,24 @@ export function computeFinancialBalances(input: {
         ) {
           creditDebtDecimal = creditDebtDecimal.sub(lineAmount);
         }
+
+        // General Loan Borrowing: RECEIVE_MONEY on CASH targeting LOAN_TAKEN increases debt (F-13, BR-08)
+        if (
+          tx.form === 'RECEIVE_MONEY' &&
+          cashAccountIds.has(tx.primary_account_id) &&
+          (targetType === 'LOAN_TAKEN' || loanTakenAccountIds.has(line.target_account_id))
+        ) {
+          creditDebtDecimal = creditDebtDecimal.add(lineAmount);
+        }
+
+        // Internal Cash Transfer: PAYMENT_CHARGE from CASH targeting CASH increases destination CASH balance (F-11, BR-02)
+        if (
+          tx.form === 'PAYMENT_CHARGE' &&
+          cashAccountIds.has(tx.primary_account_id) &&
+          (targetType === 'CASH' || cashAccountIds.has(line.target_account_id))
+        ) {
+          bankBalanceDecimal = bankBalanceDecimal.add(lineAmount);
+        }
       }
     }
   }
@@ -214,6 +232,7 @@ export async function getFinancialSummary(
 
   // Compute dynamic Cash transactions (Inflows and Outflows)
   let bankReceiveTotal = zero;
+  let bankIncomingTransferTotal = zero;
   let bankPaymentTotal = zero;
   if (typeof prismaClient.transaction?.aggregate === 'function' && cashAccounts.length > 0) {
     const cashIds = cashAccounts.map((a) => a.id);
@@ -242,7 +261,36 @@ export async function getFinancialSummary(
     }
   }
 
-  const finalBankBalance = bankOpeningDecimal.add(bankReceiveTotal).sub(bankPaymentTotal);
+  // Incoming internal cash transfers (PAYMENT_CHARGE from CASH targeting CASH) restore destination cash (F-11, BR-02)
+  if (typeof prismaClient.allocationLine?.aggregate === 'function' && cashAccounts.length > 0) {
+    const cashIds = cashAccounts.map((a) => a.id);
+    const transferAgg = await prismaClient.allocationLine.aggregate({
+      where: {
+        target_account_id: { in: cashIds },
+        target_account: {
+          type: 'CASH',
+          user_id: userId
+        },
+        transaction: {
+          user_id: userId,
+          form: 'PAYMENT_CHARGE',
+          primary_account: {
+            type: 'CASH',
+            user_id: userId
+          }
+        }
+      },
+      _sum: { amount: true }
+    });
+    if (transferAgg._sum?.amount) {
+      bankIncomingTransferTotal = new Prisma.Decimal(transferAgg._sum.amount.toString());
+    }
+  }
+
+  const finalBankBalance = bankOpeningDecimal
+    .add(bankReceiveTotal)
+    .add(bankIncomingTransferTotal)
+    .sub(bankPaymentTotal);
 
   // Compute dynamic Credit Card Debt (Charges on LOAN_TAKEN accounts minus repayments) (BR-04, BR-07)
   if (typeof prismaClient.transaction?.aggregate === 'function' && loanTakenAccounts.length > 0) {

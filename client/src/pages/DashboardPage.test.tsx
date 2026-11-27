@@ -184,6 +184,7 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
     expect(screen.getByRole('link', { name: /\+ Record Income/i }).getAttribute('href')).toBe('/accounts');
     expect(screen.getByRole('link', { name: /- Record Expense/i }).getAttribute('href')).toBe('/accounts');
     expect(screen.getByRole('link', { name: /Pay Debt/i }).getAttribute('href')).toBe('/accounts');
+    expect(screen.getByRole('link', { name: /Transfer Cash/i }).getAttribute('href')).toBe('/accounts');
     expect(screen.getByRole('link', { name: /^History$/i }).getAttribute('href')).toBe('/transactions');
   });
 
