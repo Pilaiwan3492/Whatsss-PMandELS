@@ -1038,10 +1038,10 @@ describe('Integration Test: PostgreSQL Live Database Account Foundation & Live A
 
       // 4. Verify Pre-Migration Collision Check Function and Backfill Function execute cleanly on existing data (P2 Item 6 & 7)
       await expect(
-        prisma.$queryRaw`SELECT check_pre_migration_account_name_collisions()`
+        prisma.$executeRaw`SELECT check_pre_migration_account_name_collisions()`
       ).resolves.toBeDefined();
       await expect(
-        prisma.$queryRaw`SELECT backfill_loan_taken_subtypes()`
+        prisma.$executeRaw`SELECT backfill_loan_taken_subtypes()`
       ).resolves.toBeDefined();
     });
   });
