@@ -302,7 +302,7 @@ describe('Feature F-01: Authentication Behavior (Mocked Prisma)', () => {
       expect(res.body.error.code).toBe('UNAUTHORIZED');
     });
 
-    it('rejects request with 401 when user is deactivated in database after login', async () => {
+    it('rejects request with 403 ACCOUNT_DISABLED when user is deactivated in database after login (F-19 / AC-19-3)', async () => {
       // 1. Valid user logs in
       const validToken = jwt.sign(
         { userId: 'user-a-uuid', username: 'user_demo', role: 'USER' },
@@ -319,13 +319,13 @@ describe('Feature F-01: Authentication Behavior (Mocked Prisma)', () => {
       // 2. Administrator deactivates user in database
       mockUsers[0].is_active = false;
 
-      // 3. Subsequent request with the same token MUST be rejected
+      // 3. Subsequent request with the same token MUST be rejected with 403 ACCOUNT_DISABLED (F-19 / AC-19-3)
       const nextRes = await request(app)
         .get('/api/auth/me')
         .set('Cookie', `token=${validToken}`);
 
-      expect(nextRes.status).toBe(401);
-      expect(nextRes.body.error.code).toBe('UNAUTHORIZED');
+      expect(nextRes.status).toBe(403);
+      expect(nextRes.body.error.code).toBe('ACCOUNT_DISABLED');
     });
 
     it('immediately reflects role changes from database and ignores stale role in JWT', async () => {

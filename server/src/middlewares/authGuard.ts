@@ -39,17 +39,42 @@ export async function authGuard(req: Request, res: Response, next: NextFunction)
   }
 
   try {
-    // Verify user existence and active status against current database state
+    // Verify user existence and active status against current database state (fail-closed per F-19 / AC-19-3)
     const user = await prisma.user.findUnique({
-      where: { id: decoded.userId }
+      where: { id: decoded.userId },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        is_active: true
+      }
     });
 
-    if (!user || !user.is_active) {
+    if (!user) {
+      res.clearCookie('token', {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: config.isProduction,
+        maxAge: 0
+      });
       res.status(401).json({
         success: false,
         error: {
           code: 'UNAUTHORIZED',
           message: 'Authentication required'
+        }
+      });
+      return;
+    }
+
+    if (!user.is_active) {
+      res.status(403).json({
+        success: false,
+        error: {
+          code: 'ACCOUNT_DISABLED',
+          message: 'This user account has been disabled by an administrator.'
         }
       });
       return;
@@ -64,7 +89,14 @@ export async function authGuard(req: Request, res: Response, next: NextFunction)
     };
 
     next();
-  } catch (error) {
-    next(error);
+  } catch {
+    // Fail-closed: never fall back to trusting stateless JWT claims when DB state is unverifiable
+    res.status(503).json({
+      success: false,
+      error: {
+        code: 'AUTH_STATE_UNVERIFIABLE',
+        message: 'Authentication state cannot be verified due to a database error.'
+      }
+    });
   }
 }

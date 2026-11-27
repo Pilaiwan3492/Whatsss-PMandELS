@@ -8,6 +8,7 @@ import {
   TransactionFilterParams
 } from '../api/transactionApi.js';
 import { getAccounts, Account } from '../api/accountApi.js';
+import { TransactionCorrectionModal } from '../components/TransactionCorrectionModal.js';
 
 export type SemanticKind = 'INCOME' | 'EXPENSE' | 'REPAYMENT' | 'TRANSFER' | 'LOAN';
 
@@ -83,6 +84,8 @@ export const TransactionHistoryPage: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [correctionFeedback, setCorrectionFeedback] = useState<string | null>(null);
+  const [editingTxn, setEditingTxn] = useState<HistoryTransaction | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -455,6 +458,13 @@ export const TransactionHistoryPage: React.FC = () => {
         </button>
       </div>
 
+      {/* Correction Feedback Alert */}
+      {correctionFeedback && (
+        <div className="alert alert-success py-2 small mb-3" role="status" data-testid="correction-feedback">
+          {correctionFeedback}
+        </div>
+      )}
+
       {/* Feedback / Action Error Alerts */}
       {feedbackMessage && (
         <div className="alert alert-success py-2 small mb-3" role="status" data-testid="history-feedback">
@@ -638,11 +648,22 @@ export const TransactionHistoryPage: React.FC = () => {
                           </button>
                           <button
                             type="button"
-                            className="btn btn-sm btn-outline-primary"
+                            className="btn btn-sm btn-outline-primary me-1"
                             onClick={() => openDuplicateModal(tx)}
                             data-testid={`btn-duplicate-${tx.id}`}
                           >
                             Duplicate
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() => {
+                              setCorrectionFeedback(null);
+                              setEditingTxn(tx);
+                            }}
+                            data-testid={`btn-edit-${tx.id}`}
+                          >
+                            Edit
                           </button>
                         </td>
                       </tr>
@@ -693,6 +714,19 @@ export const TransactionHistoryPage: React.FC = () => {
           </div>
         </div>
       ) : null}
+
+      {/* Transaction Correction Modal (F-16) */}
+      {editingTxn && (
+        <TransactionCorrectionModal
+          transaction={editingTxn}
+          onClose={() => setEditingTxn(null)}
+          onSuccess={async () => {
+            setEditingTxn(null);
+            setCorrectionFeedback('Transaction corrected and audit snapshot recorded.');
+            await fetchHistory();
+          }}
+        />
+      )}
 
       {/* Duplicate Transaction Modal (F-14) */}
       {duplicateTarget && (

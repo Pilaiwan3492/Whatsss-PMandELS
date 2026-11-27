@@ -12,7 +12,8 @@ import {
   createLoanBorrowingTransaction,
   createLoanRepaymentTransaction,
   toggleFavoriteTransaction,
-  duplicateTransactionHandler
+  duplicateTransactionHandler,
+  correctTransactionHandler
 } from '../controllers/transaction.controller.js';
 
 const router = Router();
@@ -32,5 +33,7 @@ router.post('/loan-borrowing', createLoanBorrowingTransaction);
 router.post('/loan-repayment', createLoanRepaymentTransaction);
 router.patch('/:id/favorite', toggleFavoriteTransaction);
 router.post('/:id/duplicate', duplicateTransactionHandler);
+router.put('/:id', correctTransactionHandler);
+router.patch('/:id', correctTransactionHandler);
 
 export default router;

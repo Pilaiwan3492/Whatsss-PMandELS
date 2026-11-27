@@ -20,7 +20,11 @@ export const Navbar: React.FC = () => {
         <div className="d-flex align-items-center ms-auto">
           {isAuthenticated && user ? (
             <div className="d-flex align-items-center gap-3">
-              {user.role !== 'ADMIN' && (
+              {user.role === 'ADMIN' ? (
+                <Link className="btn btn-outline-light btn-sm" to="/admin/users">
+                  User Directory
+                </Link>
+              ) : (
                 <>
                   <Link className="btn btn-outline-light btn-sm" to="/dashboard">
                     Dashboard

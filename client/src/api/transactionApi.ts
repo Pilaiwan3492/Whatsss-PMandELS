@@ -257,6 +257,13 @@ export async function recordTransfer(payload: TransferPayload): Promise<Transfer
   return res.data.data;
 }
 
+export interface CorrectTransactionPayload {
+  total_amount: string;
+  transaction_date: string;
+  description?: string | null;
+  allocations: AllocationLinePayload[];
+}
+
 /**
  * Disburses funds from a CASH account to a LOAN_GIVEN account (F-12, WP-09, FR-14, BR-08).
  */
@@ -312,6 +319,20 @@ export async function getTransactions(
   }
   const res = await reportClient.get<TransactionsApiResponse>('/transactions');
   return res.data.data.transactions;
+}
+
+/**
+ * Atomically corrects an existing user-owned transaction (F-16, WP-11, FR-19, AC-16-1..4).
+ */
+export async function correctTransaction(
+  transactionId: string,
+  payload: CorrectTransactionPayload
+): Promise<any> {
+  const res = await axiosClient.put<{ success: boolean; data: { transaction: any } }>(
+    `/transactions/${transactionId}`,
+    payload
+  );
+  return res.data.data.transaction;
 }
 
 /**

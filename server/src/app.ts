@@ -12,6 +12,7 @@ import authRoutes from './routes/auth.routes.js';
 import accountRoutes from './routes/account.routes.js';
 import transactionRoutes from './routes/transaction.routes.js';
 import financialRoutes from './routes/financial.routes.js';
+import adminRoutes from './routes/admin.routes.js';
 
 export const app = express();
 
@@ -142,6 +143,7 @@ app.get('/api/ready', readyHandler);
 
 // 7. Domain API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api', financialRoutes);
