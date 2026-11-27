@@ -50,7 +50,7 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
       }
     });
 
-    await seedStandardAccountsForUser(prisma, user.id);
+    await seedStandardAccountsForUser(prisma, user);
     const accountsList = await prisma.account.findMany({ where: { user_id: user.id } });
     const byName = (n: string) => accountsList.find((a) => a.name === n)!;
 
