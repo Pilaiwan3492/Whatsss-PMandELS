@@ -722,5 +722,359 @@ describe('Integration Test: PostgreSQL 16 Live Database Favorite, Duplicate, Sea
     expect(summaryRes.status).toBe(200);
     expect(summaryRes.body.data.credit_debt).toBe(9000);
     expect(summaryRes.body.data.total_expense).toBe(9000);
+
+    // Case B: If concurrent Correction fails and ROLLS BACK, HTTP POST /api/transactions/:id/duplicate
+    // unblocks and duplicates the intact committed state (4500.00), never seeing uncommitted rolled-back data (9999.00)
+    let signalRbLock!: () => void;
+    const rbLockBarrier = new Promise<void>((resolve) => {
+      signalRbLock = resolve;
+    });
+
+    const rollingBackCorrection = prisma
+      .$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT id FROM "transactions"
+          WHERE id = ${sourceTxn.id}
+            AND user_id = ${tenant.userId}
+          FOR UPDATE
+        `;
+        signalRbLock();
+        await new Promise((r) => setTimeout(r, 120));
+        await tx.transaction.update({
+          where: { id: sourceTxn.id },
+          data: { total_amount: new Prisma.Decimal('9999.00'), description: 'Rolled Back Draft' }
+        });
+        throw new Error('INTENTIONAL_CORRECTION_ROLLBACK');
+      })
+      .catch(() => 'ROLLED_BACK');
+
+    await rbLockBarrier;
+    const dupHttpRes = await request(app)
+      .post(`/api/transactions/${sourceTxn.id}/duplicate`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({ transaction_date: '2026-11-17' });
+
+    const rbOutcome = await rollingBackCorrection;
+    expect(rbOutcome).toBe('ROLLED_BACK');
+    expect(dupHttpRes.status).toBe(201);
+    expect(dupHttpRes.body.data.transaction.total_amount).toBe('4500.00');
+    expect(dupHttpRes.body.data.transaction.description).toBe('Post-Correction Purchase');
+    expect(dupHttpRes.body.data.transaction.allocations).toHaveLength(2);
+  });
+
+  it('TEST-FAV-03-LIVE-CC (Live PG16): enforces BR-07 v1.1 Credit Card Repayment rules (ZERO_OUTSTANDING_DEBT, REPAYMENT_EXCEEDS_DEBT, MIN_REPAYMENT_NOT_MET, MINIMUM_CASH_RESERVE_VIOLATION) and valid repayment duplication against PostgreSQL', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    const tenant = await createIsolatedTenant('dup_cc_rules');
+
+    // Helper to assert zero DB writes and unchanged summary on rejected duplicate
+    const assertRejectedDuplicate = async (
+      txnId: string,
+      expectedStatus: number,
+      expectedCode: string
+    ) => {
+      const txBefore = await prisma.transaction.count({ where: { user_id: tenant.userId } });
+      const allocBefore = await prisma.allocationLine.count({
+        where: { transaction: { user_id: tenant.userId } }
+      });
+      const sumBefore = (
+        await request(app).get('/api/reports/summary').set('Cookie', tenant.cookie)
+      ).body.data;
+
+      const res = await request(app)
+        .post(`/api/transactions/${txnId}/duplicate`)
+        .set('Origin', TRUSTED_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .set('Cookie', tenant.cookie)
+        .send({});
+
+      expect(res.status).toBe(expectedStatus);
+      expect(res.body.error.code).toBe(expectedCode);
+      expect(await prisma.transaction.count({ where: { user_id: tenant.userId } })).toBe(txBefore);
+      expect(
+        await prisma.allocationLine.count({ where: { transaction: { user_id: tenant.userId } } })
+      ).toBe(allocBefore);
+      const sumAfter = (
+        await request(app).get('/api/reports/summary').set('Cookie', tenant.cookie)
+      ).body.data;
+      expect(sumAfter).toEqual(sumBefore);
+    };
+
+    // 1. Seed 3000.00 CC charge + 3000.00 full CC repayment => debt is now 0.00
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.cc.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('3000.00'),
+        transaction_date: new Date('2026-11-01T00:00:00.000Z'),
+        description: 'CC Charge',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.dining.id, amount: new Prisma.Decimal('3000.00') }]
+        }
+      }
+    });
+    const fullRepay = await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('3000.00'),
+        transaction_date: new Date('2026-11-02T00:00:00.000Z'),
+        description: 'Full CC Repay',
+        is_favorite: true,
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.cc.id, amount: new Prisma.Decimal('3000.00') }]
+        }
+      }
+    });
+
+    // (a) ZERO_OUTSTANDING_DEBT
+    await assertRejectedDuplicate(fullRepay.id, 422, 'ZERO_OUTSTANDING_DEBT');
+
+    // 2. Add 1000.00 CC charge => debt = 1000.00; duplicating 3000.00 repayment => REPAYMENT_EXCEEDS_DEBT
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.cc.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1000.00'),
+        transaction_date: new Date('2026-11-03T00:00:00.000Z'),
+        description: 'Small Charge',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.grocery.id, amount: new Prisma.Decimal('1000.00') }]
+        }
+      }
+    });
+    await assertRejectedDuplicate(fullRepay.id, 422, 'REPAYMENT_EXCEEDS_DEBT');
+
+    // 3. Add 7500.00 charge + 500.00 repay => debt = 8000.00 (min = 800.00); duplicating 500.00 => MIN_REPAYMENT_NOT_MET
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.cc.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('7500.00'),
+        transaction_date: new Date('2026-11-04T00:00:00.000Z'),
+        description: 'Big Charge',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.grocery.id, amount: new Prisma.Decimal('7500.00') }]
+        }
+      }
+    });
+    const repay500 = await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('500.00'),
+        transaction_date: new Date('2026-11-04T00:00:00.000Z'),
+        description: 'Repay 500',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.cc.id, amount: new Prisma.Decimal('500.00') }]
+        }
+      }
+    });
+    await assertRejectedDuplicate(repay500.id, 422, 'MIN_REPAYMENT_NOT_MET');
+
+    // 4. Valid repayment duplication (1000.00 on 8000.00 debt; checking = 6500.00 -> leaves 5500.00 >= 100.00)
+    const repay1000 = await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1000.00'),
+        transaction_date: new Date('2026-11-05T00:00:00.000Z'),
+        description: 'Valid Partial Repay',
+        is_favorite: true,
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.cc.id, amount: new Prisma.Decimal('1000.00') }]
+        }
+      },
+      include: { allocation_lines: true }
+    });
+    // Now debt = 7000.00 (min 700.00), checking = 5500.00. Duplicating 1000.00 succeeds -> debt = 6000.00, checking = 4500.00
+    const validDupRes = await request(app)
+      .post(`/api/transactions/${repay1000.id}/duplicate`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenant.cookie)
+      .send({ transaction_date: '2026-11-06' });
+
+    expect(validDupRes.status).toBe(201);
+    const newRepayId = validDupRes.body.data.transaction.id;
+    expect(newRepayId).not.toBe(repay1000.id);
+    expect(validDupRes.body.data.transaction.is_favorite).toBe(false);
+    expect(validDupRes.body.data.transaction.allocations[0].id).not.toBe(repay1000.allocation_lines[0].id);
+
+    const sumAfterValid = (
+      await request(app).get('/api/reports/summary').set('Cookie', tenant.cookie)
+    ).body.data;
+    expect(sumAfterValid.credit_debt).toBe(6000);
+    expect(sumAfterValid.bank_balance).toBe(5500); // 4500 checking + 1000 wallet
+
+    // 5. Drain checking down to 1050.00 (transfer 3450.00 to wallet) -> duplicating 1000.00 partial repayment leaves 50.00 < 100.00 -> MINIMUM_CASH_RESERVE_VIOLATION
+    await prisma.transaction.create({
+      data: {
+        user_id: tenant.userId,
+        primary_account_id: tenant.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('3450.00'),
+        transaction_date: new Date('2026-11-07T00:00:00.000Z'),
+        description: 'Drain Checking',
+        allocation_lines: {
+          create: [{ target_account_id: tenant.accounts.wallet.id, amount: new Prisma.Decimal('3450.00') }]
+        }
+      }
+    });
+    await assertRejectedDuplicate(repay1000.id, 422, 'MINIMUM_CASH_RESERVE_VIOLATION');
+  });
+
+  it('TEST-FAV-03-LIVE-CASH-LOAN (Live PG16): verifies INSUFFICIENT_FUNDS, valid cash transfer duplication, ACCOUNT_ARCHIVED, RECOVERY_EXCEEDS_RECEIVABLE, and 404 cross-tenant/invalid source in PostgreSQL', async (ctx) => {
+    if (!isCI && !allowLiveDb) {
+      ctx.skip();
+      return;
+    }
+
+    const tenantA = await createIsolatedTenant('dup_cash_loan_a');
+    const tenantB = await createIsolatedTenant('dup_cash_loan_b');
+
+    // 1. Valid cash transfer duplication (2000.00 from Checking 10000 -> Wallet 1000)
+    const xfer = await prisma.transaction.create({
+      data: {
+        user_id: tenantA.userId,
+        primary_account_id: tenantA.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('2000.00'),
+        transaction_date: new Date('2026-11-05T00:00:00.000Z'),
+        description: 'Move to Wallet',
+        is_favorite: true,
+        allocation_lines: {
+          create: [{ target_account_id: tenantA.accounts.wallet.id, amount: new Prisma.Decimal('2000.00') }]
+        }
+      },
+      include: { allocation_lines: true }
+    });
+
+    const dupXferRes = await request(app)
+      .post(`/api/transactions/${xfer.id}/duplicate`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenantA.cookie)
+      .send({ transaction_date: '2026-11-06' });
+    expect(dupXferRes.status).toBe(201);
+    expect(dupXferRes.body.data.transaction.id).not.toBe(xfer.id);
+    expect(dupXferRes.body.data.transaction.is_favorite).toBe(false);
+    expect(dupXferRes.body.data.transaction.allocations[0].id).not.toBe(xfer.allocation_lines[0].id);
+
+    // Aggregate cash balance conserved (11000.00), total_income & total_expense remain 0.00 (BR-02)
+    const sumAfterXfer = (
+      await request(app).get('/api/reports/summary').set('Cookie', tenantA.cookie)
+    ).body.data;
+    expect(sumAfterXfer.bank_balance).toBe(11000);
+    expect(sumAfterXfer.total_income).toBe(0);
+    expect(sumAfterXfer.total_expense).toBe(0);
+
+    // 2. INSUFFICIENT_FUNDS on outgoing cash transfer (Checking now has 6000.00; transfer 5000.00 leaves 1000.00 -> duplicating 5000.00 fails)
+    const bigXfer = await prisma.transaction.create({
+      data: {
+        user_id: tenantA.userId,
+        primary_account_id: tenantA.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('5000.00'),
+        transaction_date: new Date('2026-11-07T00:00:00.000Z'),
+        description: 'Big Transfer',
+        allocation_lines: {
+          create: [{ target_account_id: tenantA.accounts.wallet.id, amount: new Prisma.Decimal('5000.00') }]
+        }
+      }
+    });
+    const txCountBeforeInsuff = await prisma.transaction.count({ where: { user_id: tenantA.userId } });
+    const insuffRes = await request(app)
+      .post(`/api/transactions/${bigXfer.id}/duplicate`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenantA.cookie)
+      .send({});
+    expect(insuffRes.status).toBe(422);
+    expect(insuffRes.body.error.code).toBe('INSUFFICIENT_FUNDS');
+    expect(await prisma.transaction.count({ where: { user_id: tenantA.userId } })).toBe(txCountBeforeInsuff);
+
+    // 3. RECOVERY_EXCEEDS_RECEIVABLE on LOAN_GIVEN recovery
+    // Disburse 1000.00 loan given, recover 700.00 (remaining receivable = 300.00) -> duplicating 700.00 recovery fails
+    await prisma.transaction.create({
+      data: {
+        user_id: tenantA.userId,
+        primary_account_id: tenantA.accounts.checking.id,
+        form: 'PAYMENT_CHARGE',
+        total_amount: new Prisma.Decimal('1000.00'),
+        transaction_date: new Date('2026-11-08T00:00:00.000Z'),
+        description: 'Loan to Friend',
+        allocation_lines: {
+          create: [{ target_account_id: tenantA.accounts.loanGiven.id, amount: new Prisma.Decimal('1000.00') }]
+        }
+      }
+    });
+    const recovery700 = await prisma.transaction.create({
+      data: {
+        user_id: tenantA.userId,
+        primary_account_id: tenantA.accounts.checking.id,
+        form: 'RECEIVE_MONEY',
+        total_amount: new Prisma.Decimal('700.00'),
+        transaction_date: new Date('2026-11-09T00:00:00.000Z'),
+        description: 'Partial Recovery',
+        allocation_lines: {
+          create: [{ target_account_id: tenantA.accounts.loanGiven.id, amount: new Prisma.Decimal('700.00') }]
+        }
+      }
+    });
+    const txCountBeforeRec = await prisma.transaction.count({ where: { user_id: tenantA.userId } });
+    const exceedRecRes = await request(app)
+      .post(`/api/transactions/${recovery700.id}/duplicate`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenantA.cookie)
+      .send({});
+    expect(exceedRecRes.status).toBe(422);
+    expect(exceedRecRes.body.error.code).toBe('RECOVERY_EXCEEDS_RECEIVABLE');
+    expect(await prisma.transaction.count({ where: { user_id: tenantA.userId } })).toBe(txCountBeforeRec);
+
+    // 4. ACCOUNT_ARCHIVED blocks duplicate
+    await prisma.account.update({
+      where: { id: tenantA.accounts.wallet.id },
+      data: { is_archived: true }
+    });
+    const archRes = await request(app)
+      .post(`/api/transactions/${xfer.id}/duplicate`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenantA.cookie)
+      .send({});
+    expect(archRes.status).toBe(422);
+    expect(archRes.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // 5. Nonexistent & foreign-user source transaction -> 404 NOT_FOUND (BR-01)
+    const missingRes = await request(app)
+      .post('/api/transactions/00000000-0000-0000-0000-000000000000/duplicate')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenantA.cookie)
+      .send({});
+    expect(missingRes.status).toBe(404);
+    expect(missingRes.body.error.code).toBe('NOT_FOUND');
+
+    const crossRes = await request(app)
+      .post(`/api/transactions/${xfer.id}/duplicate`)
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set('Cookie', tenantB.cookie)
+      .send({});
+    expect(crossRes.status).toBe(404);
+    expect(crossRes.body.error.code).toBe('NOT_FOUND');
   });
 });

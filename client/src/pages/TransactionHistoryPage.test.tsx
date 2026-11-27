@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext.js';
-import { TransactionHistoryPage, getTransactionKind } from './TransactionHistoryPage.js';
+import {
+  TransactionHistoryPage,
+  getTransactionKind,
+  getTransactionAmountSign
+} from './TransactionHistoryPage.js';
 import { axiosClient } from '../api/axiosClient.js';
 import * as transactionApi from '../api/transactionApi.js';
 
@@ -486,26 +490,53 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
       }
     ];
 
-    // Direct semantic classification assertions
+    // Direct semantic classification & amount-sign assertions
     expect(getTransactionKind(allFiveTransactions[0])).toBe('INCOME');
-    expect(getTransactionKind(allFiveTransactions[1])).toBe('EXPENSE');
-    expect(getTransactionKind(allFiveTransactions[2])).toBe('REPAYMENT');
-    expect(getTransactionKind(allFiveTransactions[3])).toBe('TRANSFER');
-    expect(getTransactionKind(allFiveTransactions[4])).toBe('LOAN');
-    expect(getTransactionKind(allFiveTransactions[5])).toBe('LOAN');
-    expect(getTransactionKind(allFiveTransactions[6])).toBe('LOAN');
+    expect(getTransactionAmountSign(allFiveTransactions[0])).toBe('+');
 
-    // Render UI and verify badges & tab filtering
+    expect(getTransactionKind(allFiveTransactions[1])).toBe('EXPENSE');
+    expect(getTransactionAmountSign(allFiveTransactions[1])).toBe('-');
+
+    expect(getTransactionKind(allFiveTransactions[2])).toBe('REPAYMENT');
+    expect(getTransactionAmountSign(allFiveTransactions[2])).toBe('-');
+
+    expect(getTransactionKind(allFiveTransactions[3])).toBe('TRANSFER');
+    expect(getTransactionAmountSign(allFiveTransactions[3])).toBe('-');
+
+    expect(getTransactionKind(allFiveTransactions[4])).toBe('LOAN'); // Loan Given -> '-'
+    expect(getTransactionAmountSign(allFiveTransactions[4])).toBe('-');
+
+    expect(getTransactionKind(allFiveTransactions[5])).toBe('LOAN'); // General Loan Repayment -> '-'
+    expect(getTransactionAmountSign(allFiveTransactions[5])).toBe('-');
+
+    expect(getTransactionKind(allFiveTransactions[6])).toBe('LOAN'); // Loan Recovery -> '+'
+    expect(getTransactionAmountSign(allFiveTransactions[6])).toBe('+');
+
+    // Render UI and verify both badges AND displayed +/- amount signs
     vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(allFiveTransactions);
     renderHistory();
 
     await waitFor(() => {
+      expect(screen.getByTestId('badge-tx-cls-income').textContent).toBe('Income');
+      expect(screen.getByTestId('amount-tx-cls-income').textContent).toBe('+ 20,000.00 THB');
+
       expect(screen.getByTestId('badge-tx-cls-cash-expense').textContent).toBe('Expense');
+      expect(screen.getByTestId('amount-tx-cls-cash-expense').textContent).toBe('- 450.00 THB');
+
       expect(screen.getByTestId('badge-tx-cls-repayment').textContent).toBe('Repayment');
+      expect(screen.getByTestId('amount-tx-cls-repayment').textContent).toBe('- 1,500.00 THB');
+
       expect(screen.getByTestId('badge-tx-cls-transfer').textContent).toBe('Transfer');
+      expect(screen.getByTestId('amount-tx-cls-transfer').textContent).toBe('- 2,000.00 THB');
+
       expect(screen.getByTestId('badge-tx-cls-loan-given').textContent).toBe('Loan');
+      expect(screen.getByTestId('amount-tx-cls-loan-given').textContent).toBe('- 1,000.00 THB');
+
       expect(screen.getByTestId('badge-tx-cls-general-loan-repay').textContent).toBe('Loan');
+      expect(screen.getByTestId('amount-tx-cls-general-loan-repay').textContent).toBe('- 500.00 THB');
+
       expect(screen.getByTestId('badge-tx-cls-loan-recovery').textContent).toBe('Loan');
+      expect(screen.getByTestId('amount-tx-cls-loan-recovery').textContent).toBe('+ 400.00 THB');
     });
 
     // Clicking Repayments tab must exclude CASH expense and GENERAL_LOAN repayment
