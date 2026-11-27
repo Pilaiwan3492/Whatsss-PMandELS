@@ -3,6 +3,13 @@ import { recordIncome, IncomeError } from '../services/income.service.js';
 import { recordExpense, ExpenseError } from '../services/expense.service.js';
 import { recordRepayment, RepaymentError } from '../services/repayment.service.js';
 import { recordTransfer, TransferError } from '../services/transfer.service.js';
+import {
+  recordLoanGiven,
+  recordLoanRecovery,
+  recordLoanBorrowing,
+  recordLoanRepayment,
+  LoanError
+} from '../services/loan.service.js';
 import { getTransactionHistory } from '../services/report.service.js';
 
 /**
@@ -218,6 +225,186 @@ export async function createTransferTransaction(
     });
   } catch (err: any) {
     if (err instanceof TransferError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * POST /api/transactions/loan-given
+ * Disburses funds from an owned CASH account to an owned LOAN_GIVEN account (F-12, WP-09, FR-14, BR-08).
+ */
+export async function createLoanGivenTransaction(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const result = await recordLoanGiven(userId, req.body);
+
+    res.status(201).json({
+      success: true,
+      data: result
+    });
+  } catch (err: any) {
+    if (err instanceof LoanError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * POST /api/transactions/loan-recovery
+ * Recovers loan principal from an owned LOAN_GIVEN account into an owned CASH account (F-12, WP-09, FR-14, BR-08).
+ */
+export async function createLoanRecoveryTransaction(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const result = await recordLoanRecovery(userId, req.body);
+
+    res.status(201).json({
+      success: true,
+      data: result
+    });
+  } catch (err: any) {
+    if (err instanceof LoanError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * POST /api/transactions/loan-borrowing
+ * Records money borrowed from an owned general LOAN_TAKEN account (subtype GENERAL_LOAN) into a CASH account (F-13, WP-09, FR-15, BR-08).
+ */
+export async function createLoanBorrowingTransaction(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const result = await recordLoanBorrowing(userId, req.body);
+
+    res.status(201).json({
+      success: true,
+      data: result
+    });
+  } catch (err: any) {
+    if (err instanceof LoanError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
+    next(err);
+  }
+}
+
+/**
+ * POST /api/transactions/loan-repayment
+ * Repays general loan principal from an owned CASH account to an owned general LOAN_TAKEN account (subtype GENERAL_LOAN) (F-13, WP-09, FR-15, BR-08).
+ */
+export async function createLoanRepaymentTransaction(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const result = await recordLoanRepayment(userId, req.body);
+
+    res.status(201).json({
+      success: true,
+      data: result
+    });
+  } catch (err: any) {
+    if (err instanceof LoanError) {
       res.status(err.statusCode).json({
         success: false,
         error: {

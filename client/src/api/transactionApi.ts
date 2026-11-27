@@ -124,6 +124,46 @@ export interface TransferApiResponse {
   data: TransferResponseData;
 }
 
+export interface LoanFlowPayload {
+  from_account_id: string;
+  to_account_id: string;
+  amount: string;
+  transaction_date: string;
+  description?: string | null;
+}
+
+export interface LoanTransaction {
+  id: string;
+  primary_account_id: string;
+  form: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
+  total_amount: string;
+  transaction_date: string;
+  description: string | null;
+  allocations: AllocationItem[];
+}
+
+export interface LoanGivenResponseData {
+  transaction: LoanTransaction;
+  updated_cash_balance: string;
+  updated_receivable: string;
+}
+
+export interface LoanGivenApiResponse {
+  success: boolean;
+  data: LoanGivenResponseData;
+}
+
+export interface GeneralLoanResponseData {
+  transaction: LoanTransaction;
+  updated_cash_balance: string;
+  updated_debt: string;
+}
+
+export interface GeneralLoanApiResponse {
+  success: boolean;
+  data: GeneralLoanResponseData;
+}
+
 export interface HistoryAllocationLine {
   id: string;
   transaction_id: string;
@@ -195,6 +235,38 @@ export async function recordRepayment(payload: RepaymentPayload): Promise<Repaym
  */
 export async function recordTransfer(payload: TransferPayload): Promise<TransferResponseData> {
   const res = await axiosClient.post<TransferApiResponse>('/transactions/transfer', payload);
+  return res.data.data;
+}
+
+/**
+ * Disburses funds from a CASH account to a LOAN_GIVEN account (F-12, WP-09, FR-14, BR-08).
+ */
+export async function recordLoanGiven(payload: LoanFlowPayload): Promise<LoanGivenResponseData> {
+  const res = await axiosClient.post<LoanGivenApiResponse>('/transactions/loan-given', payload);
+  return res.data.data;
+}
+
+/**
+ * Recovers principal from a LOAN_GIVEN account into a CASH account (F-12, WP-09, FR-14, BR-08).
+ */
+export async function recordLoanRecovery(payload: LoanFlowPayload): Promise<LoanGivenResponseData> {
+  const res = await axiosClient.post<LoanGivenApiResponse>('/transactions/loan-recovery', payload);
+  return res.data.data;
+}
+
+/**
+ * Records money borrowed from a general LOAN_TAKEN account (subtype GENERAL_LOAN) into a CASH account (F-13, WP-09, FR-15, BR-08).
+ */
+export async function recordLoanBorrowing(payload: LoanFlowPayload): Promise<GeneralLoanResponseData> {
+  const res = await axiosClient.post<GeneralLoanApiResponse>('/transactions/loan-borrowing', payload);
+  return res.data.data;
+}
+
+/**
+ * Repays general loan principal from a CASH account to a general LOAN_TAKEN account (subtype GENERAL_LOAN) (F-13, WP-09, FR-15, BR-08).
+ */
+export async function recordLoanRepayment(payload: LoanFlowPayload): Promise<GeneralLoanResponseData> {
+  const res = await axiosClient.post<GeneralLoanApiResponse>('/transactions/loan-repayment', payload);
   return res.data.data;
 }
 
