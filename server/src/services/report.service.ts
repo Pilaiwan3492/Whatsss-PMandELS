@@ -311,7 +311,7 @@ export async function getFinancialSummary(
     }
   }
 
-  // Settlements/repayments targeting LOAN_TAKEN accounts decrease debt (BR-07, WP-05)
+  // Settlements/repayments targeting LOAN_TAKEN accounts decrease debt (BR-07, WP-05, F-13)
   if (typeof prismaClient.allocationLine?.aggregate === 'function' && loanTakenAccounts.length > 0) {
     const loanTakenIds = loanTakenAccounts.map((a) => a.id);
     const settlementAgg = await prismaClient.allocationLine.aggregate({
@@ -334,6 +334,29 @@ export async function getFinancialSummary(
     });
     if (settlementAgg._sum?.amount) {
       creditDebtDecimal = creditDebtDecimal.sub(new Prisma.Decimal(settlementAgg._sum.amount.toString()));
+    }
+
+    // General Loan Borrowings (RECEIVE_MONEY on CASH targeting LOAN_TAKEN) increase liability debt (F-13, BR-08)
+    const borrowingAgg = await prismaClient.allocationLine.aggregate({
+      where: {
+        transaction: {
+          user_id: userId,
+          form: 'RECEIVE_MONEY',
+          primary_account: {
+            type: 'CASH',
+            user_id: userId
+          }
+        },
+        target_account_id: { in: loanTakenIds },
+        target_account: {
+          type: 'LOAN_TAKEN',
+          user_id: userId
+        }
+      },
+      _sum: { amount: true }
+    });
+    if (borrowingAgg._sum?.amount) {
+      creditDebtDecimal = creditDebtDecimal.add(new Prisma.Decimal(borrowingAgg._sum.amount.toString()));
     }
   }
 
