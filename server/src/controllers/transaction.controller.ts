@@ -638,7 +638,7 @@ export async function getTransactionAuditHistory(
           id: log.id,
           sequence_number:
             log.sequence_number !== undefined && log.sequence_number !== null
-              ? Number(log.sequence_number)
+              ? log.sequence_number.toString()
               : undefined,
           transaction_id: log.transaction_id,
           user_id: log.user_id,

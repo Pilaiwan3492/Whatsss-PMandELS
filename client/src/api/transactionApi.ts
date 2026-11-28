@@ -367,8 +367,9 @@ export interface TransactionAuditSnapshot {
   total_amount: string;
   transaction_date: string;
   description: string | null;
-  allocations: Array<{
+  allocations?: Array<{
     target_account_id: string;
+    target_account_name?: string;
     amount: string;
     notes: string | null;
   }>;
@@ -376,7 +377,7 @@ export interface TransactionAuditSnapshot {
 
 export interface TransactionAuditLogEntry {
   id: string;
-  sequence_number?: number;
+  sequence_number?: string;
   transaction_id: string;
   user_id: string;
   action: string;

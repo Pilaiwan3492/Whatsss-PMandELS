@@ -432,4 +432,58 @@ describe('Integration Test: Category Spending Reports (F-17, TEST-REP-CAT-01..04
     expect(adminRes.status).toBe(403);
     expect(adminRes.body.error.code).toBe('ADMIN_FINANCIAL_ACCESS_FORBIDDEN');
   });
+
+  it('TEST-REP-CAT-01B: applies exact Decimal ROUND_HALF_UP for half-cent percentage ties (1/32 = 3.125% -> 3.13, 31/32 = 96.875% -> 96.88)', async () => {
+    resetMockTransactions();
+    mockTransactions.push({
+      id: 'tx-half-up',
+      user_id: 'user-a-uuid',
+      primary_account_id: 'acc-demo-checking',
+      form: 'PAYMENT_CHARGE',
+      total_amount: new Prisma.Decimal('32.00'),
+      transaction_date: new Date('2026-11-10'),
+      description: 'Exact half-up tie check',
+      created_at: new Date('2026-11-10T10:00:00Z')
+    });
+    mockAllocationLines.push(
+      {
+        id: 'line-half-up-major',
+        transaction_id: 'tx-half-up',
+        target_account_id: 'acc-demo-grocery',
+        amount: new Prisma.Decimal('31.00'),
+        notes: null
+      },
+      {
+        id: 'line-half-up-minor',
+        transaction_id: 'tx-half-up',
+        target_account_id: 'acc-demo-dining',
+        amount: new Prisma.Decimal('1.00'),
+        notes: null
+      }
+    );
+
+    const res = await request(app)
+      .get('/api/reports/categories')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', userDemoCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.total_expense).toBe('32.00');
+    expect(res.body.data.categories).toEqual([
+      {
+        category_id: 'acc-demo-grocery',
+        category_name: 'Grocery',
+        total_amount: '31.00',
+        percentage: '96.88',
+        transaction_count: 1
+      },
+      {
+        category_id: 'acc-demo-dining',
+        category_name: 'Dining',
+        total_amount: '1.00',
+        percentage: '3.13',
+        transaction_count: 1
+      }
+    ]);
+  });
 });

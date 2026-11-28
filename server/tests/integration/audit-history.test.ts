@@ -37,8 +37,9 @@ vi.mock('../../src/prisma.js', () => {
               return true;
             })
             .sort((a, b) => {
-              const seqDiff = Number(b.sequence_number) - Number(a.sequence_number);
-              if (seqDiff !== 0) return seqDiff;
+              const seqA = BigInt(a.sequence_number ?? 0);
+              const seqB = BigInt(b.sequence_number ?? 0);
+              if (seqB !== seqA) return seqB > seqA ? 1 : -1;
               const timeDiff = b.created_at.getTime() - a.created_at.getTime();
               if (timeDiff !== 0) return timeDiff;
               return b.id.localeCompare(a.id);
@@ -130,9 +131,9 @@ describe('Integration Test: Transaction Audit History (F-18, TEST-AUDIT-01, TEST
     expect(res.body.success).toBe(true);
     expect(res.body.data.transaction_id).toBe('txn-audit-1');
     expect(res.body.data.audit_logs).toHaveLength(2);
-    expect(res.body.data.audit_logs[0].sequence_number).toBe(2);
+    expect(res.body.data.audit_logs[0].sequence_number).toBe('2');
     expect(res.body.data.audit_logs[0].new_snapshot.total_amount).toBe('25000.00');
-    expect(res.body.data.audit_logs[1].sequence_number).toBe(1);
+    expect(res.body.data.audit_logs[1].sequence_number).toBe('1');
     expect(res.body.data.audit_logs[1].new_snapshot.total_amount).toBe('22000.00');
   });
 
@@ -187,5 +188,44 @@ describe('Integration Test: Transaction Audit History (F-18, TEST-AUDIT-01, TEST
       .set('Cookie', userDemoCookie);
     expect(verifyRes.status).toBe(200);
     expect(verifyRes.body.data.audit_logs).toHaveLength(2);
+  });
+
+  it('TEST-AUDIT-01B: preserves exact BIGINT sequence_number precision above Number.MAX_SAFE_INTEGER as strings in descending order', async () => {
+    mockAuditLogs.length = 0;
+    const sameTimestamp = new Date('2026-11-05T12:00:00.000Z');
+    mockAuditLogs.push(
+      {
+        id: 'log-safe-1',
+        sequence_number: BigInt('9007199254740992'), // Number.MAX_SAFE_INTEGER + 1
+        transaction_id: 'txn-audit-1',
+        user_id: 'user-a-uuid',
+        action: 'CORRECTED',
+        previous_snapshot: { total_amount: '100.00', transaction_date: '2026-11-02', description: 'First', allocations: [] },
+        new_snapshot: { total_amount: '200.00', transaction_date: '2026-11-02', description: 'Second', allocations: [] },
+        created_at: sameTimestamp
+      },
+      {
+        id: 'log-safe-2',
+        sequence_number: BigInt('9007199254740993'), // Number.MAX_SAFE_INTEGER + 2 (collapses in Number())
+        transaction_id: 'txn-audit-1',
+        user_id: 'user-a-uuid',
+        action: 'CORRECTED',
+        previous_snapshot: { total_amount: '200.00', transaction_date: '2026-11-02', description: 'Second', allocations: [] },
+        new_snapshot: { total_amount: '300.00', transaction_date: '2026-11-02', description: 'Third', allocations: [] },
+        created_at: sameTimestamp
+      }
+    );
+
+    const res = await request(app)
+      .get('/api/transactions/txn-audit-1/audit-history')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', userDemoCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.audit_logs).toHaveLength(2);
+    expect(res.body.data.audit_logs[0].sequence_number).toBe('9007199254740993');
+    expect(res.body.data.audit_logs[1].sequence_number).toBe('9007199254740992');
+    expect(typeof res.body.data.audit_logs[0].sequence_number).toBe('string');
+    expect(typeof res.body.data.audit_logs[1].sequence_number).toBe('string');
   });
 });

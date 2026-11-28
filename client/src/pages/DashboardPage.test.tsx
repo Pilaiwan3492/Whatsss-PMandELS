@@ -113,6 +113,8 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
       }
       throw new Error(`Unhandled url: ${url}`);
     });
+
+    vi.spyOn(reportApi, 'getCategorySpendingReport').mockResolvedValue(null as any);
   });
 
   const renderDashboard = () => {
@@ -319,5 +321,158 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
       expect(screen.getByTestId('category-report-total').textContent).toContain('1,000.00 THB');
       expect(screen.getByTestId('category-row-Dining').textContent).toContain('100.00%');
     });
+  });
+
+  it('TEST-UI-REP-CAT-02: displays HTTP 400, 403, 500, network failure errors, empty state, and recovers on retry', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+
+    const catSpy = vi
+      .spyOn(reportApi, 'getCategorySpendingReport')
+      // 1. Initial load: empty state
+      .mockResolvedValueOnce({
+        period: { start_date: null, end_date: null },
+        total_expense: '0.00',
+        categories: []
+      })
+      // 2. HTTP 400 INVALID_DATE_RANGE
+      .mockRejectedValueOnce({
+        response: { status: 400, data: { error: { code: 'INVALID_DATE_RANGE', message: 'startDate must be <= endDate' } } }
+      })
+      // 3. HTTP 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN
+      .mockRejectedValueOnce({
+        response: { status: 403, data: { error: { code: 'ADMIN_FINANCIAL_ACCESS_FORBIDDEN', message: 'Admin cannot access financial reports' } } }
+      })
+      // 4. HTTP 500
+      .mockRejectedValueOnce({
+        response: { status: 500, data: { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } } }
+      })
+      // 5. Network failure (no response)
+      .mockRejectedValueOnce(new Error('Network Error'))
+      // 6. Retry / Apply succeeds
+      .mockResolvedValueOnce({
+        period: { start_date: '2026-11-01', end_date: '2026-11-10' },
+        total_expense: '1500.00',
+        categories: [
+          {
+            category_id: 'cat-dining',
+            category_name: 'Dining',
+            total_amount: '1500.00',
+            percentage: '100.00',
+            transaction_count: 2
+          }
+        ]
+      });
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-breakdown-section').textContent).toContain('No expense allocations recorded for this period.');
+    });
+
+    // HTTP 400
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('startDate must be <= endDate');
+    });
+
+    // HTTP 403
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('Admin cannot access financial reports');
+    });
+
+    // HTTP 500
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('Internal server error');
+    });
+
+    // Network Error
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('Network Error');
+    });
+
+    // Retry succeeds and clears error
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('category-report-error')).toBeNull();
+      expect(screen.getByTestId('category-row-Dining').textContent).toContain('1,500.00 THB (100.00%)');
+    });
+    expect(catSpy).toHaveBeenCalledTimes(6);
+  });
+
+  it('TEST-UI-REP-CAT-03: prevents stale category report response from overwriting newer date-range results and handles unmount safely', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+
+    let resolveFirst!: (val: reportApi.CategorySpendingReportData) => void;
+    let resolveSecond!: (val: reportApi.CategorySpendingReportData) => void;
+
+    const firstPromise = new Promise<reportApi.CategorySpendingReportData>((res) => {
+      resolveFirst = res;
+    });
+    const secondPromise = new Promise<reportApi.CategorySpendingReportData>((res) => {
+      resolveSecond = res;
+    });
+
+    vi.spyOn(reportApi, 'getCategorySpendingReport')
+      .mockReturnValueOnce(firstPromise)
+      .mockReturnValueOnce(secondPromise);
+
+    const { unmount } = renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('metric-bank-balance')).toBeDefined();
+    });
+
+    // Trigger newer request before older request resolves
+    fireEvent.change(screen.getByLabelText('Start Date'), { target: { value: '2026-11-05' } });
+    fireEvent.change(screen.getByLabelText('End Date'), { target: { value: '2026-11-06' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    // Newer request resolves first
+    resolveSecond({
+      period: { start_date: '2026-11-05', end_date: '2026-11-06' },
+      total_expense: '500.00',
+      categories: [
+        {
+          category_id: 'cat-coffee',
+          category_name: 'Coffee',
+          total_amount: '500.00',
+          percentage: '100.00',
+          transaction_count: 1
+        }
+      ]
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-row-Coffee').textContent).toContain('500.00 THB');
+    });
+
+    // Older request resolves AFTER newer request — must be ignored
+    resolveFirst({
+      period: { start_date: null, end_date: null },
+      total_expense: '9999.00',
+      categories: [
+        {
+          category_id: 'cat-stale',
+          category_name: 'StaleCategory',
+          total_amount: '9999.00',
+          percentage: '100.00',
+          transaction_count: 9
+        }
+      ]
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-row-Coffee')).toBeDefined();
+      expect(screen.queryByTestId('category-row-StaleCategory')).toBeNull();
+      expect(screen.getByTestId('category-report-total').textContent).toContain('500.00 THB');
+    });
+
+    // Unmount cleanly without errors
+    unmount();
   });
 });

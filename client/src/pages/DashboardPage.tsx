@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.js';
 import {
@@ -26,8 +26,14 @@ export const DashboardPage: React.FC = () => {
   const [categoryLoading, setCategoryLoading] = useState<boolean>(false);
   const [categoryError, setCategoryError] = useState<string | null>(null);
 
+  const isMountedRef = useRef<boolean>(true);
+  const categoryRequestIdRef = useRef<number>(0);
+  const summaryRequestIdRef = useRef<number>(0);
+  const historyRequestIdRef = useRef<number>(0);
+
   const loadCategoryReport = async (sDate?: string, eDate?: string) => {
     if (typeof getCategorySpendingReport !== 'function') return;
+    const requestId = ++categoryRequestIdRef.current;
     setCategoryLoading(true);
     setCategoryError(null);
     try {
@@ -35,48 +41,55 @@ export const DashboardPage: React.FC = () => {
         startDate: sDate || undefined,
         endDate: eDate || undefined
       });
+      if (!isMountedRef.current || requestId !== categoryRequestIdRef.current) return;
       if (data && Array.isArray(data.categories)) {
         setCategoryReport(data);
       }
     } catch (err: any) {
+      if (!isMountedRef.current || requestId !== categoryRequestIdRef.current) return;
       const msg = err?.response?.data?.error?.message || err?.message || 'Failed to load category spending';
-      if (!msg.includes('Unhandled url')) {
-        setCategoryError(msg);
-      }
+      setCategoryError(msg);
     } finally {
-      setCategoryLoading(false);
+      if (isMountedRef.current && requestId === categoryRequestIdRef.current) {
+        setCategoryLoading(false);
+      }
     }
   };
 
   const loadSummary = async () => {
+    const requestId = ++summaryRequestIdRef.current;
     setSummaryLoading(true);
     setSummaryError(null);
     try {
       const summaryData = await getFinancialSummary();
+      if (!isMountedRef.current || requestId !== summaryRequestIdRef.current) return;
       setSummary(summaryData);
     } catch (err: any) {
+      if (!isMountedRef.current || requestId !== summaryRequestIdRef.current) return;
       const msg = err?.response?.data?.error?.message || err?.message || 'Failed to load financial summary';
-      if (!msg.includes('Unhandled url')) {
-        setSummaryError(msg);
-      }
+      setSummaryError(msg);
     } finally {
-      setSummaryLoading(false);
+      if (isMountedRef.current && requestId === summaryRequestIdRef.current) {
+        setSummaryLoading(false);
+      }
     }
   };
 
   const loadRecentTransactions = async () => {
+    const requestId = ++historyRequestIdRef.current;
     setHistoryLoading(true);
     setHistoryError(null);
     try {
       const txns = await getTransactions();
+      if (!isMountedRef.current || requestId !== historyRequestIdRef.current) return;
       setRecentTransactions(Array.isArray(txns) ? txns.slice(0, 5) : []);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error?.message || err?.message || 'Unable to load recent transactions.';
-      if (!msg.includes('Unhandled url')) {
-        setHistoryError('Unable to load recent transactions.');
-      }
+    } catch {
+      if (!isMountedRef.current || requestId !== historyRequestIdRef.current) return;
+      setHistoryError('Unable to load recent transactions.');
     } finally {
-      setHistoryLoading(false);
+      if (isMountedRef.current && requestId === historyRequestIdRef.current) {
+        setHistoryLoading(false);
+      }
     }
   };
 
@@ -85,7 +98,14 @@ export const DashboardPage: React.FC = () => {
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
     fetchDashboardData();
+    return () => {
+      isMountedRef.current = false;
+      categoryRequestIdRef.current += 1;
+      summaryRequestIdRef.current += 1;
+      historyRequestIdRef.current += 1;
+    };
   }, []);
 
   const formatCurrency = (amount: number | undefined): string => {
@@ -248,7 +268,6 @@ export const DashboardPage: React.FC = () => {
                       type="button"
                       className="btn btn-sm btn-outline-primary"
                       onClick={() => loadCategoryReport(startDate, endDate)}
-                      disabled={categoryLoading}
                     >
                       Apply
                     </button>
@@ -261,7 +280,6 @@ export const DashboardPage: React.FC = () => {
                           setEndDate('');
                           loadCategoryReport('', '');
                         }}
-                        disabled={categoryLoading}
                       >
                         Reset
                       </button>

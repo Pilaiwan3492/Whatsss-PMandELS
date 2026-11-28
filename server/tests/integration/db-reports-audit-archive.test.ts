@@ -278,9 +278,12 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
     expect(histRes.body.data.audit_logs).toHaveLength(2);
     expect(histRes.body.data.audit_logs[0].new_snapshot.total_amount).toBe('25000.00');
     expect(histRes.body.data.audit_logs[1].new_snapshot.total_amount).toBe('22000.00');
-    expect(histRes.body.data.audit_logs[0].sequence_number).toBeGreaterThan(
-      histRes.body.data.audit_logs[1].sequence_number
-    );
+    expect(typeof histRes.body.data.audit_logs[0].sequence_number).toBe('string');
+    expect(typeof histRes.body.data.audit_logs[1].sequence_number).toBe('string');
+    expect(
+      BigInt(histRes.body.data.audit_logs[0].sequence_number) >
+        BigInt(histRes.body.data.audit_logs[1].sequence_number)
+    ).toBe(true);
 
     // Parent transaction delete blocked by onDelete: Restrict
     await expect(prisma.transaction.delete({ where: { id: txnId } })).rejects.toThrow();
