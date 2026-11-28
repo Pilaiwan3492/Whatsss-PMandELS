@@ -395,6 +395,9 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
     });
 
     const initialTxnCount = await prisma.transaction.count({ where: { user_id: tenant.user.id } });
+    const initialAllocCount = await prisma.allocationLine.count({
+      where: { transaction: { user_id: tenant.user.id } }
+    });
 
     // 1. Income with archived CASH
     const incArch = await request(app)
@@ -469,7 +472,21 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
     expect(lgArch.status).toBe(422);
     expect(lgArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
 
-    // 6. General Loan Borrowing with archived GENERAL_LOAN
+    // 5b. Loan Recovery with archived LOAN_GIVEN
+    const lrArch = await request(app)
+      .post('/api/transactions/loan-recovery')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: archivedLoanGiven.id,
+        to_account_id: tenant.accounts.checking.id,
+        amount: '500.00',
+        transaction_date: '2026-11-05'
+      });
+    expect(lrArch.status).toBe(422);
+    expect(lrArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    // 6. General Loan Borrowing & Repayment with archived GENERAL_LOAN
     const glArch = await request(app)
       .post('/api/transactions/loan-borrowing')
       .set('Origin', TRUSTED_ORIGIN)
@@ -482,6 +499,19 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
       });
     expect(glArch.status).toBe(422);
     expect(glArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
+
+    const glRepayArch = await request(app)
+      .post('/api/transactions/loan-repayment')
+      .set('Origin', TRUSTED_ORIGIN)
+      .set('Cookie', tenant.cookie)
+      .send({
+        from_account_id: tenant.accounts.checking.id,
+        to_account_id: archivedGenLoan.id,
+        amount: '500.00',
+        transaction_date: '2026-11-05'
+      });
+    expect(glRepayArch.status).toBe(422);
+    expect(glRepayArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
 
     // 7. Correction referencing archived INCOME account
     const corrArch = await request(app)
@@ -511,8 +541,11 @@ describe('Integration Test: PostgreSQL 16 Live Database Category Reports, Audit 
     expect(dupArch.status).toBe(422);
     expect(dupArch.body.error.code).toBe('ACCOUNT_ARCHIVED');
 
-    // Zero new transactions written & historical summary still readable
+    // Zero new transactions or allocation lines written & historical summary still readable
     expect(await prisma.transaction.count({ where: { user_id: tenant.user.id } })).toBe(initialTxnCount);
+    expect(
+      await prisma.allocationLine.count({ where: { transaction: { user_id: tenant.user.id } } })
+    ).toBe(initialAllocCount);
     const sumRes = await request(app).get('/api/reports/summary').set('Cookie', tenant.cookie);
     expect(sumRes.status).toBe(200);
     expect(sumRes.body.data.bank_balance).toBe(10000);
