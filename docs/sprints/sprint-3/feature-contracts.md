@@ -104,7 +104,7 @@ In accordance with `docs/features.md`, `docs/srs.md`, and `docs/sprints/plan.md`
   1. **Inspect Transaction Audit History (`GET /api/transactions/:id/audit-history`):**
      * Backend verifies transaction `:id` belongs to `req.user.id` (`404 NOT_FOUND` if missing or owned by another user per `BR-01`).
      * Queries `transaction_audit_logs` where `transaction_id = :id` and `user_id = req.user.id`, ordered in **reverse chronological order (newest correction first): `ORDER BY sequence_number DESC, created_at DESC, id DESC`** (using database-allocated monotonic `BIGSERIAL` `sequence_number` because timestamp/UUID ordering alone is insufficient when rapid or concurrent corrections share identical timestamps).
-     * Returns immutable audit entries showing `id`, `sequence_number`, `transaction_id`, `action` (`'CORRECTED'`), `previous_snapshot` (`total_amount`, `transaction_date`, `description`, `allocations`), `new_snapshot`, and `created_at`.
+     * Returns immutable audit entries showing `id`, `sequence_number` (decimal string preserving `BIGINT` precision beyond `Number.MAX_SAFE_INTEGER`), `transaction_id`, `action` (`'CORRECTED'`), `previous_snapshot` (`total_amount`, `transaction_date`, `description`, `allocations`), `new_snapshot`, and `created_at`. Snapshot allocation account/category names are resolved in the UI from the tenant's account list with safe `target_account_id` fallback; persisting denormalized historical category names at write time is a separate future enhancement.
   2. **Audit Log Retention, Immutability & Multi-Layer Deletion Protection (`onDelete: Restrict` + PostgreSQL Trigger):**
      * `TransactionAuditLog` is strictly **append-only** and retained permanently.
      * **Layer 1 — Application API Boundary:** The application API exposes **no** update (`PUT`/`PATCH`) or delete (`DELETE`) endpoints on `/api/transactions/:id/audit-history` or `/api/transactions/:id/audit-history/:logId` (any `PUT`, `PATCH`, or `DELETE` request to audit-history routes is rejected with `405 Method Not Allowed` / `404`).
@@ -136,6 +136,7 @@ In accordance with `docs/features.md`, `docs/srs.md`, and `docs/sprints/plan.md`
         "audit_logs": [
           {
             "id": "log-02",
+            "sequence_number": "2",
             "transaction_id": "txn-1",
             "action": "CORRECTED",
             "previous_snapshot": {

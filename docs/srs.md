@@ -4,7 +4,7 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part A: SRS and Product Scope) & Deliverable 2 (Part D: Updated SRS Baseline)  
-> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 Maintenance Amendment (`BR-07 v1.1`, `9054b45`) + Sprint 2 (`WP-08`..`WP-11`) Merged on `staging-lab5` (`f3cd70bfeb34dca10057d7dedd9859d6262fcaf8`) + Sprint 3 `WP-12` (`F-17`, `F-18`) Part C Implemented & CI-Verified on [PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66) (`0c12e9bfb0d897e82032ac653a5d6b98e2e469e7`, [Main CI #305](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46049587827), [C-01 #159](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46049595175); Part E Release & GCP Deploy Pending)
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 Maintenance Amendment (`BR-07 v1.1`, `9054b45`) + Sprint 2 (`WP-08`..`WP-11`) Merged on `staging-lab5` (`f3cd70bfeb34dca10057d7dedd9859d6262fcaf8`) + Sprint 3 `WP-12` (`F-17`, `F-18`) Part C Implemented on [PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66) (`590b1ad499a1c778ad8f427fb82814897e2b9183`, prior baseline `f3df5d0` verified on [Main CI #308](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46099133426) & [C-01 #162](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46099137531); Part E Release & GCP Deploy Pending)
 
 ### Document Revision History
 | Version | Status | Date | Scope / Reference | Summary |
