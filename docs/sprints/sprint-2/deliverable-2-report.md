@@ -7,7 +7,11 @@
 > **Release Candidate Tag:** `v0.2.0-sprint2-rc`  
 > **Release Commit (`main`):** `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` ([PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67))  
 > **Live Cloud Run URL:** https://whatsss-sipqw4logq-as.a.run.app  
-> **Part E Status:** Deployed & Tagged (`v0.2.0-sprint2-rc`); live unauthenticated smoke checks passed; authenticated live UI/API demo walkthrough & screenshots remain **Pending** *(see Section 4)*.
+> **Release & Deployment:** Completed (`467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade`, `v0.2.0-sprint2-rc`, [Main CI #315](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583), [Deploy demo #13](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654))  
+> **Automated Regression:** Passed (`548/548` backend incl. Live PG16, `104/104` frontend)  
+> **Unauthenticated Smoke Checks:** Passed  
+> **Authenticated Live Demonstrations:** Pending  
+> **Overall Part E:** **Pending** *(awaiting authenticated live demonstrations & screenshot/PDF bundle; Markdown is the repository source and no PDF has been generated yet)*
 
 ---
 
@@ -21,7 +25,8 @@
 | **GCP Cloud Run Deploy** | [Deploy demo #13 (`46151836654`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654) | `completed / success` (`Test & Build Gate / test-and-docker`, `Deploy to Cloud Run`) |
 | **WP-12 Implementation SHA** | `e23416a9fd3f3d8326e6e60799fb2bed9e3c5c2f` | Verified by [Main CI #311 (`46109538015`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109538015) & [C-01 #165 (`46109542107`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109542107) |
 | **Prior Doc Sync SHA (`55fe673`)** | `55fe67399522694f57ef2697cb3f701edb4a3594` | Verified by [Main CI #312 (`46110225554`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46110225554) & [C-01 #166 (`46110231193`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46110231193) |
-| **Part E Doc PR (#68) Prior Head** | `9fdae8be25e2af6482119d5051f4c04a0a2bbb14` | Verified by [C-01 #169 (`46152652691`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46152652691) (`completed / success`) |
+| **WP-12 Teammate Review (PR #66)** | `@Apichaya251400` | `APPROVED` at `2026-11-28T13:38:40Z` on `de71fd0c62bb9e465cade68649fd16592e2362a0` |
+| **Part E Doc PR (#68) Prior Heads** | `9fdae8be25e2af6482119d5051f4c04a0a2bbb14` / `188be001d1f455bab8a8eafad46c9fe2d1324e8b` | Verified by [C-01 #169 (`46152652691`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46152652691) & [C-01 #170 (`46153460161`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46153460161) (`completed / success`) |
 
 ---
 
@@ -58,13 +63,18 @@
 
 ### Verified Live Checks (`https://whatsss-sipqw4logq-as.a.run.app`)
 Executed against the live Cloud Run service after [Deploy demo #13](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654):
-1. `GET /` $\rightarrow$ `HTTP 200 OK` (`Content-Type: text/html; charset=UTF-8`, SPA `<div id="root">` present).
-2. `GET /api/health` $\rightarrow$ `HTTP 200 OK` (`{"status":"ok","commitSha":"467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade"}`).
-3. `GET /api/reports/categories` (unauthenticated) $\rightarrow$ `HTTP 401 UNAUTHORIZED` (`Authentication required`).
-4. `GET /api/transactions/00000000-0000-0000-0000-000000000000/audit-history` (unauthenticated) $\rightarrow$ `HTTP 401 UNAUTHORIZED` (`Authentication required`).
+
+| Evidence ID | Date / Time (UTC) | Action / Command | Expected Result | Actual Result | Endpoint / UI | Release SHA |
+|---|---|---|---|---|---|---|
+| `SMOKE-LIVE-01` | `2026-11-28T13:59:58Z` | `Invoke-WebRequest -Uri "https://whatsss-sipqw4logq-as.a.run.app/"` | `HTTP 200 OK`, `text/html`, SPA `<div id="root">` | `HTTP 200 OK`, `text/html; charset=UTF-8`, `hasRootDiv=True` | `GET /` (SPA) | `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` |
+| `SMOKE-LIVE-02` | `2026-11-28T13:59:49Z` | `Invoke-RestMethod -Uri "https://whatsss-sipqw4logq-as.a.run.app/api/health"` | `HTTP 200 OK`, `status: "ok"`, matching `commitSha` | `HTTP 200 OK`, `{"status":"ok","commitSha":"467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade"}` | `GET /api/health` | `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` |
+| `SMOKE-LIVE-03` | `2026-11-28T14:00:14Z` | `curl.exe -s "https://whatsss-sipqw4logq-as.a.run.app/api/reports/categories"` (unauth) | `HTTP 401 UNAUTHORIZED` (`Authentication required`) | `HTTP 401`, `{"success":false,"error":{"code":"UNAUTHORIZED","message":"Authentication required"}}` | `GET /api/reports/categories` | `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` |
+| `SMOKE-LIVE-04` | `2026-11-28T14:00:14Z` | `curl.exe -s "https://whatsss-sipqw4logq-as.a.run.app/api/transactions/00000000-0000-0000-0000-000000000000/audit-history"` (unauth) | `HTTP 401 UNAUTHORIZED` (`Authentication required`) | `HTTP 401`, `{"success":false,"error":{"code":"UNAUTHORIZED","message":"Authentication required"}}` | `GET /api/transactions/:id/audit-history` | `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` |
 
 ### Explicitly Pending Live Demonstration Items (Issue #60)
-- **Authenticated Live Cloud Run Walkthroughs:** Sprint 1 Golden Journey live UI/API continuity re-verification, Sprint 2/3 authenticated feature demonstrations (`F-10`..`F-19`), and captured UI/API screenshots/PDF bundle on `https://whatsss-sipqw4logq-as.a.run.app` have **not** been executed in this session and remain **Pending**.
+- **`DEMO-LIVE-01` (Sprint 1 Golden Journey Live Continuity):** Authenticated UI/API continuity re-verification on `https://whatsss-sipqw4logq-as.a.run.app` — **Pending** (credentials/interactive browser run not executed in this session).
+- **`DEMO-LIVE-02` (Authenticated Sprint 2/3 Feature Demonstrations `F-10`..`F-19`):** Live authenticated walkthroughs of custom accounts, transfers, loans, favorites/search, corrections + audit history, account archival, category spending reports, and admin governance — **Pending**.
+- **`DEMO-LIVE-03` (UI/API Screenshots & Final PDF Export):** Screenshot bundle and PDF export for final course submission — **Pending** *(Markdown is the repository source; no PDF has been generated yet)*.
 
 ---
 
