@@ -63,7 +63,7 @@ function makeAuthCookie(user: { id: string; username: string; role: string }) {
   return `token=${token}`;
 }
 
-describe('Integration Test: Transaction Audit History (F-18, TEST-AUDIT-01, TEST-AUDIT-04, TEST-AUDIT-05)', () => {
+describe('Integration Test: Transaction Audit History (F-18, TEST-AUDIT-01, TEST-AUDIT-04A, TEST-AUDIT-05)', () => {
   const userDemoCookie = makeAuthCookie({
     id: 'user-a-uuid',
     username: 'user_demo',
@@ -137,7 +137,7 @@ describe('Integration Test: Transaction Audit History (F-18, TEST-AUDIT-01, TEST
     expect(res.body.data.audit_logs[1].new_snapshot.total_amount).toBe('22000.00');
   });
 
-  it('TEST-AUDIT-04: rejects cross-tenant audit history access (404 NOT_FOUND) and ADMIN access (403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN)', async () => {
+  it('TEST-AUDIT-04A: rejects cross-tenant audit history access (404 NOT_FOUND) and ADMIN access (403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN)', async () => {
     const crossTenantRes = await request(app)
       .get('/api/transactions/txn-audit-1/audit-history')
       .set('Origin', TRUSTED_ORIGIN)

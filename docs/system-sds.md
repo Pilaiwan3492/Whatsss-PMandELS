@@ -90,6 +90,7 @@ erDiagram
     Account ||--o{ Transaction : "primary source/destination"
     Transaction ||--|{ AllocationLine : "contains (1..*)"
     Account ||--o{ AllocationLine : "allocated to/from"
+    Transaction ||--o{ TransactionAuditLog : "audited by (0..*)"
 
     User {
         string id PK
@@ -106,9 +107,12 @@ erDiagram
         string id PK
         string user_id FK
         string name
+        string normalized_name
         string type "CASH | LOAN_TAKEN | LOAN_GIVEN | INCOME | EXPENSE"
+        string subtype "DEFAULT | CREDIT_CARD | GENERAL_LOAN"
         decimal opening_balance
         boolean is_opening_locked
+        boolean is_archived
         datetime created_at
         datetime updated_at
     }
@@ -121,7 +125,9 @@ erDiagram
         decimal total_amount
         date transaction_date
         string description
+        boolean is_favorite
         datetime created_at
+        datetime updated_at
     }
 
     AllocationLine {
@@ -131,30 +137,44 @@ erDiagram
         decimal amount
         string notes
     }
+
+    TransactionAuditLog {
+        string id PK
+        bigint sequence_number UK
+        string transaction_id FK
+        string user_id
+        string action
+        json previous_snapshot
+        json new_snapshot
+        datetime created_at
+    }
 ```
 
 ### Data Dictionary, Database Constraints & Multi-Tenant Invariants
 
 1. **User Table (`users`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).
-   * `username`: VARCHAR(50) (NOT NULL, UNIQUE, case-insensitive index).
-   * `email`: VARCHAR(254) (NOT NULL, UNIQUE, case-insensitive index matching ER Diagram).
-   * `password_hash`: VARCHAR(255) (NOT NULL, salted one-way hash generated with bcrypt, work factor $\ge 10$, `NFR-SEC-01`).
+   * `username`: VARCHAR (NOT NULL, UNIQUE).
+   * `email`: VARCHAR (NOT NULL, UNIQUE).
+   * `password_hash`: VARCHAR (NOT NULL, salted one-way hash generated with bcrypt, work factor $\ge 10$, `NFR-SEC-01`).
    * `role`: ENUM(`'USER'`, `'ADMIN'`) (NOT NULL, default `'USER'`).
    * `is_active`: BOOLEAN (NOT NULL, default `true`).
    * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
-   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
+   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, `@updatedAt`).
 
 2. **Account Table (`accounts`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).
    * `user_id`: UUID (NOT NULL, Foreign Key references `users(id)` ON DELETE CASCADE).
    * `name`: VARCHAR(100) (NOT NULL).
+   * `normalized_name`: VARCHAR(100) (NOT NULL, default `""`).
    * `type`: ENUM(`'CASH'`, `'LOAN_TAKEN'`, `'LOAN_GIVEN'`, `'INCOME'`, `'EXPENSE'`) (NOT NULL).
+   * `subtype`: ENUM(`'DEFAULT'`, `'CREDIT_CARD'`, `'GENERAL_LOAN'`) (NOT NULL, default `'DEFAULT'`).
    * `opening_balance`: DECIMAL(12, 2) (NOT NULL, default `0.00`, CHECK `opening_balance >= 0.00`).
    * `is_opening_locked`: BOOLEAN (NOT NULL, default `false`).
+   * `is_archived`: BOOLEAN (NOT NULL, default `false`).
    * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
-   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
-   * **Constraints & Indexes:** `UNIQUE(user_id, name)`, `INDEX(user_id)`.
+   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`, `@updatedAt`).
+   * **Constraints & Indexes:** `UNIQUE(user_id, name)`, `UNIQUE(user_id, normalized_name)`, `INDEX(user_id)`.
 
 3. **Transaction Table (`transactions`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).
@@ -164,8 +184,10 @@ erDiagram
    * `total_amount`: DECIMAL(12, 2) (NOT NULL, CHECK `total_amount > 0.00`).
    * `transaction_date`: DATE (NOT NULL).
    * `description`: VARCHAR(255) (NULLABLE).
+   * `is_favorite`: BOOLEAN (NOT NULL, default `false`).
    * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
-   * **Constraints & Indexes:** `INDEX(user_id, transaction_date)`.
+   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`, `@updatedAt`).
+   * **Constraints & Indexes:** `INDEX(user_id, transaction_date)`, `INDEX(primary_account_id)`.
 
 4. **AllocationLine Table (`allocation_lines`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).
@@ -175,7 +197,18 @@ erDiagram
    * `notes`: VARCHAR(255) (NULLABLE).
    * **Constraints & Indexes:** `INDEX(transaction_id)`, `INDEX(target_account_id)`.
 
-5. **Relational Invariants, Atomicity & Concurrency Controls:**
+5. **TransactionAuditLog Table (`transaction_audit_logs`):**
+   * `id`: UUID (Primary Key, default `gen_random_uuid()`).
+   * `sequence_number`: BIGINT (`BIGSERIAL`, NOT NULL, UNIQUE, database-allocated monotonic order).
+   * `transaction_id`: UUID (NOT NULL, Foreign Key references `transactions(id)` ON DELETE RESTRICT).
+   * `user_id`: UUID (NOT NULL).
+   * `action`: VARCHAR(50) (NOT NULL, default `'CORRECTED'`).
+   * `previous_snapshot`: JSONB (NOT NULL).
+   * `new_snapshot`: JSONB (NOT NULL).
+   * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
+   * **Constraints & Indexes:** `INDEX(transaction_id, created_at DESC, id DESC)`, `INDEX(transaction_id, sequence_number DESC)`, `INDEX(user_id)`.
+
+6. **Relational Invariants, Atomicity & Concurrency Controls:**
    * **Transactional Atomicity (`prisma.$transaction`):** The creation of a `Transaction` header, all associated `AllocationLine` items, and the atomic locking of referenced opening balances are unconditionally executed inside a single database transaction. If any validation fails (e.g., allocation sum mismatch, unowned target account), the transaction aborts and rolls back completely; zero partial records are ever committed.
    * **Cross-Tenant Ownership Scoping on Target Accounts:** In addition to validating `primary_account.user_id === req.user.id`, the backend must explicitly verify that **every** `target_account_id` referenced in the allocation lines belongs to `req.user.id`. Any attempt to reference another tenant's account as a target account is rejected immediately with HTTP `404 Not Found` (resource existence concealment per `BR-01`).
    * **Concurrency-Safe Opening Balance Locking & Atomic Conditional Mutation:**
