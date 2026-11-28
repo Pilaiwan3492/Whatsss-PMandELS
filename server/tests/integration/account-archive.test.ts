@@ -95,7 +95,7 @@ function makeAuthCookie(user: { id: string; username: string; role: string }) {
   return `token=${token}`;
 }
 
-describe('Integration Test: Account Archival & Unarchival Lifecycle (F-18, TEST-AUDIT-02, TEST-AUDIT-04)', () => {
+describe('Integration Test: Account Archival & Unarchival Lifecycle (F-18, TEST-AUDIT-02, TEST-AUDIT-04B)', () => {
   const userDemoCookie = makeAuthCookie({
     id: 'user-a-uuid',
     username: 'user_demo',
@@ -248,7 +248,7 @@ describe('Integration Test: Account Archival & Unarchival Lifecycle (F-18, TEST-
     }
   });
 
-  it('TEST-AUDIT-04: validates archive payload (INVALID_ARCHIVE_PAYLOAD), tenant isolation (404 NOT_FOUND), and admin exclusion (403)', async () => {
+  it('TEST-AUDIT-04B: validates archive payload (INVALID_ARCHIVE_PAYLOAD), tenant isolation (404 NOT_FOUND), and admin exclusion (403)', async () => {
     const badFlagRes = await request(app)
       .patch('/api/accounts/acc-demo-checking/archive')
       .set('Origin', TRUSTED_ORIGIN)

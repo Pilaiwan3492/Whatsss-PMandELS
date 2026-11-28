@@ -4,7 +4,7 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part C: System-Level SDS) & Deliverable 2 (Part D: Sprint 2/3 Schema & Architecture Evolution)  
-> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 `BR-07 v1.1` Amendment + Sprint 2 & Sprint 3 Evolution (`v2.1-wp12`, `WP-08`..`WP-11` Merged `f3cd70b`; `WP-12` Part C Implemented & CI-Verified on [PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66) `e23416a9fd3f3d8326e6e60799fb2bed9e3c5c2f`, [Main CI #311](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109538015), [C-01 #165](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109542107); Part E Pending)
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 `BR-07 v1.1` Amendment + Sprint 2 & Sprint 3 Release (`v0.2.0-sprint2-rc`, `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` on `main` via [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67)). **Release & Deployment:** Completed ([Main CI #315](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583), [Deploy demo #13](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654): https://whatsss-sipqw4logq-as.a.run.app) | **Automated Regression:** Passed | **Unauthenticated Smoke Checks:** Passed | **Authenticated Live Demonstrations:** Completed (`DEMO-LIVE-01`..`03`) | **Overall Part E:** **Completed**
 
 ### Document Revision History
 | Version | Status | Date | Scope / Reference | Summary |
@@ -12,6 +12,7 @@
 | `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original Sprint 1 System-Level SDS (`F-01`..`F-09`). |
 | `v2.0-contract` | **Sprint 2 & 3 Contracted Architecture Evolution** | 2026-11-26 | `WP-07` / [Issue #55](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/55) | Adds Section 11 specifying consolidated Sprint 2/3 Prisma schema evolution (`AccountSubtype` discriminator for Credit Card vs. General Loan Taken resolving the Lab 7 `BR-07 v1.1` prerequisite, `Account.is_archived`, `Transaction.is_favorite`, and `TransactionAuditLog`), extended balance equations (`F-11`..`F-13`), and Admin governance routes (`F-19`). |
 | `v2.1-wp12` | **WP-11 Merged & WP-12 Part C Implemented** | 2026-11-28 | `WP-11` ([PR #64](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/64) `f3cd70b`) & `WP-12` ([PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66) `e23416a9fd3f3d8326e6e60799fb2bed9e3c5c2f`) | Records implemented `TransactionAuditLog.sequence_number` (`BIGSERIAL`, serialized as decimal string to preserve `BIGINT` precision) ordering under row locks (`GET /api/transactions/:id/audit-history` ordered `sequence_number DESC`), `PATCH /api/accounts/:id/archive` (`acquireAccountRowLocks`, `INVALID_ARCHIVE_PAYLOAD`), and clarifies §11.1 audit-history immutability boundary vs. `F-16` `PUT/PATCH /api/transactions/:id` corrections. |
+| `v0.2.0-sprint2-rc` | **Part E Release, Cloud Run Deployment & Live Demo Completed** | 2026-11-28 | `WP-12` / [Issue #60](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/60) / [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67) (`467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade`, Tag `v0.2.0-sprint2-rc`) | Merged `staging-lab5` (`WP-08`..`WP-12`) into `main`, passed [Main CI #315](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583), deployed via [Deploy demo #13](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654) (https://whatsss-sipqw4logq-as.a.run.app), and completed `SMOKE-LIVE-01`..`04` plus `DEMO-LIVE-01`..`03` (16 screenshots + `deliverable-2-report.pdf`). |
 
 ---
 
@@ -89,6 +90,7 @@ erDiagram
     Account ||--o{ Transaction : "primary source/destination"
     Transaction ||--|{ AllocationLine : "contains (1..*)"
     Account ||--o{ AllocationLine : "allocated to/from"
+    Transaction ||--o{ TransactionAuditLog : "audited by (0..*)"
 
     User {
         string id PK
@@ -105,9 +107,12 @@ erDiagram
         string id PK
         string user_id FK
         string name
+        string normalized_name
         string type "CASH | LOAN_TAKEN | LOAN_GIVEN | INCOME | EXPENSE"
+        string subtype "DEFAULT | CREDIT_CARD | GENERAL_LOAN"
         decimal opening_balance
         boolean is_opening_locked
+        boolean is_archived
         datetime created_at
         datetime updated_at
     }
@@ -120,7 +125,9 @@ erDiagram
         decimal total_amount
         date transaction_date
         string description
+        boolean is_favorite
         datetime created_at
+        datetime updated_at
     }
 
     AllocationLine {
@@ -130,30 +137,44 @@ erDiagram
         decimal amount
         string notes
     }
+
+    TransactionAuditLog {
+        string id PK
+        bigint sequence_number UK
+        string transaction_id FK
+        string user_id
+        string action
+        json previous_snapshot
+        json new_snapshot
+        datetime created_at
+    }
 ```
 
 ### Data Dictionary, Database Constraints & Multi-Tenant Invariants
 
 1. **User Table (`users`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).
-   * `username`: VARCHAR(50) (NOT NULL, UNIQUE, case-insensitive index).
-   * `email`: VARCHAR(254) (NOT NULL, UNIQUE, case-insensitive index matching ER Diagram).
-   * `password_hash`: VARCHAR(255) (NOT NULL, salted one-way hash generated with bcrypt, work factor $\ge 10$, `NFR-SEC-01`).
+   * `username`: VARCHAR (NOT NULL, UNIQUE).
+   * `email`: VARCHAR (NOT NULL, UNIQUE).
+   * `password_hash`: VARCHAR (NOT NULL, salted one-way hash generated with bcrypt, work factor $\ge 10$, `NFR-SEC-01`).
    * `role`: ENUM(`'USER'`, `'ADMIN'`) (NOT NULL, default `'USER'`).
    * `is_active`: BOOLEAN (NOT NULL, default `true`).
    * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
-   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
+   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, `@updatedAt`).
 
 2. **Account Table (`accounts`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).
    * `user_id`: UUID (NOT NULL, Foreign Key references `users(id)` ON DELETE CASCADE).
    * `name`: VARCHAR(100) (NOT NULL).
+   * `normalized_name`: VARCHAR(100) (NOT NULL, default `""`).
    * `type`: ENUM(`'CASH'`, `'LOAN_TAKEN'`, `'LOAN_GIVEN'`, `'INCOME'`, `'EXPENSE'`) (NOT NULL).
+   * `subtype`: ENUM(`'DEFAULT'`, `'CREDIT_CARD'`, `'GENERAL_LOAN'`) (NOT NULL, default `'DEFAULT'`).
    * `opening_balance`: DECIMAL(12, 2) (NOT NULL, default `0.00`, CHECK `opening_balance >= 0.00`).
    * `is_opening_locked`: BOOLEAN (NOT NULL, default `false`).
+   * `is_archived`: BOOLEAN (NOT NULL, default `false`).
    * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
-   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
-   * **Constraints & Indexes:** `UNIQUE(user_id, name)`, `INDEX(user_id)`.
+   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`, `@updatedAt`).
+   * **Constraints & Indexes:** `UNIQUE(user_id, name)`, `UNIQUE(user_id, normalized_name)`, `INDEX(user_id)`.
 
 3. **Transaction Table (`transactions`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).
@@ -163,8 +184,10 @@ erDiagram
    * `total_amount`: DECIMAL(12, 2) (NOT NULL, CHECK `total_amount > 0.00`).
    * `transaction_date`: DATE (NOT NULL).
    * `description`: VARCHAR(255) (NULLABLE).
+   * `is_favorite`: BOOLEAN (NOT NULL, default `false`).
    * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
-   * **Constraints & Indexes:** `INDEX(user_id, transaction_date)`.
+   * `updated_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`, `@updatedAt`).
+   * **Constraints & Indexes:** `INDEX(user_id, transaction_date)`, `INDEX(primary_account_id)`.
 
 4. **AllocationLine Table (`allocation_lines`):**
    * `id`: UUID (Primary Key, default `gen_random_uuid()`).
@@ -174,7 +197,18 @@ erDiagram
    * `notes`: VARCHAR(255) (NULLABLE).
    * **Constraints & Indexes:** `INDEX(transaction_id)`, `INDEX(target_account_id)`.
 
-5. **Relational Invariants, Atomicity & Concurrency Controls:**
+5. **TransactionAuditLog Table (`transaction_audit_logs`):**
+   * `id`: UUID (Primary Key, default `gen_random_uuid()`).
+   * `sequence_number`: BIGINT (`BIGSERIAL`, NOT NULL, UNIQUE, database-allocated monotonic order).
+   * `transaction_id`: UUID (NOT NULL, Foreign Key references `transactions(id)` ON DELETE RESTRICT).
+   * `user_id`: UUID (NOT NULL).
+   * `action`: VARCHAR(50) (NOT NULL, default `'CORRECTED'`).
+   * `previous_snapshot`: JSONB (NOT NULL).
+   * `new_snapshot`: JSONB (NOT NULL).
+   * `created_at`: TIMESTAMP WITH TIME ZONE (NOT NULL, default `NOW()`).
+   * **Constraints & Indexes:** `INDEX(transaction_id, created_at DESC, id DESC)`, `INDEX(transaction_id, sequence_number DESC)`, `INDEX(user_id)`.
+
+6. **Relational Invariants, Atomicity & Concurrency Controls:**
    * **Transactional Atomicity (`prisma.$transaction`):** The creation of a `Transaction` header, all associated `AllocationLine` items, and the atomic locking of referenced opening balances are unconditionally executed inside a single database transaction. If any validation fails (e.g., allocation sum mismatch, unowned target account), the transaction aborts and rolls back completely; zero partial records are ever committed.
    * **Cross-Tenant Ownership Scoping on Target Accounts:** In addition to validating `primary_account.user_id === req.user.id`, the backend must explicitly verify that **every** `target_account_id` referenced in the allocation lines belongs to `req.user.id`. Any attempt to reference another tenant's account as a target account is rejected immediately with HTTP `404 Not Found` (resource existence concealment per `BR-01`).
    * **Concurrency-Safe Opening Balance Locking & Atomic Conditional Mutation:**
@@ -419,7 +453,7 @@ To ensure robust security, avoid token leakage, and eliminate token storage inco
 | Authenticate (`/api/auth/login`) | Allowed | Allowed | Allowed |
 | Terminate Session (`/api/auth/logout`) | Allowed | Allowed | Allowed (Idempotent `200 OK` Cookie Clear) |
 | Get Current User (`/api/auth/me`) | Allowed (Own Profile) | Allowed (Own Profile) | `401 Unauthorized` |
-| View Platform User Directory (`/api/admin/users`) | `403 Forbidden` | Planned (Sprint 2) | `401 Unauthorized` |
+| View Platform User Directory (`/api/admin/users`) | `403 Forbidden` | **Allowed** (`ADMIN` only per §11.5) | `401 Unauthorized` |
 | Financial Accounts (`/api/accounts/*`) | Allowed (Own Accounts Only) | **`403 Forbidden`** | `401 Unauthorized` |
 | Financial Transactions (`/api/transactions/*`) | Allowed (Own Transactions Only) | **`403 Forbidden`** | `401 Unauthorized` |
 | Financial Summaries (`/api/reports/summary`) | Allowed (Own Summary Only) | **`403 Forbidden`** | `401 Unauthorized` |
@@ -441,10 +475,29 @@ All runtime configuration is managed through externalized environment variables 
 
 ---
 
-## 10. Deployment Approach
+## 10. Deployment Approach & Verification Status
 
+### 10.1 Deployment Architecture
 * **Sprint 1 Development:** Runs locally with PostgreSQL 16 hosted via Docker Compose (`docker compose up -d`) and the Express application executed locally via Node.js.
-* **Lab 5–7 & Deliverable 2 Cloud Deployment:** The application is packaged via a multi-stage `Dockerfile` and deployed automatically to **Google Cloud Run** (`asia-southeast1`) connected to **Cloud SQL for PostgreSQL 16** via `.github/workflows/deploy.yml` using Workload Identity Federation (WIF) and Secret Manager.
+* **Cloud Production / Release Candidate Architecture:** Multi-stage `Dockerfile` (serving the compiled React SPA from Express and connecting to **Cloud SQL for PostgreSQL 16** via Prisma ORM) deployed to **Google Cloud Run** (`asia-southeast1`).
+
+### 10.2 Intended GCP Cloud Run Deployment Configuration
+* **CI/CD Workflow:** `.github/workflows/deploy.yml` authenticates to GCP via Workload Identity Federation (WIF), retrieves runtime secrets (`DATABASE_URL`, `JWT_SECRET`, `CLIENT_URL`) from Google Secret Manager, builds/pushes the container image to Artifact Registry (`asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss`), and deploys to Cloud Run service `whatsss`.
+* **CI Quality Gate:** Both `.github/workflows/ci.yml` (`Main CI`) and `.github/workflows/deploy.yml` (`Test & Build Gate`) are configured to gate deployment prior to Cloud Run rollout. Configuration alone does not constitute deployment verification.
+
+### 10.3 Deployment Verification Evidence (`v0.2.0-sprint2-rc`)
+
+| Evidence Item | Status | Verified Value / Reference |
+|---|---|---|
+| **Release Commit & Tag (`main`)** | **Verified** | `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` (`v0.2.0-sprint2-rc`, [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67)) |
+| **Main CI Gate on Release Commit** | **Verified (`success`)** | [Main CI #315 (`46151836583`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583) (`548/548` backend incl. Live PG16, `104/104` frontend) |
+| **GCP Cloud Run Deploy Run** | **Verified (`success`)** | [Deploy demo #13 (`46151836654`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654) |
+| **Deployed Cloud Run Revision** | **Verified** | `whatsss-00030-k42` (`100%` traffic; primary `https://whatsss-sipqw4logq-as.a.run.app`, regional `https://whatsss-1086708130644.asia-southeast1.run.app`) |
+| **Container Image Digest** | **Verified** | `asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:76c621119e92ab98a2eaa557c76176f5ae9f1653326ddd7237b13cbed5eadcea` |
+| **Unauthenticated Smoke Tests** | **Verified** | `SMOKE-LIVE-01`..`04` (`200 OK` SPA, `200 OK` `/api/health`, `401` on `/api/accounts` & `/api/auth/me`) |
+| **Golden Journey & Live Feature Verification** | **Verified** | `DEMO-LIVE-01`..`03` (16 screenshots in `docs/sprints/sprint-2/evidence/` + [`docs/sprints/sprint-2/deliverable-2-report.pdf`](sprints/sprint-2/deliverable-2-report.pdf)) |
+| **Part E Documentation PR (#68) Merge to `main`** | **Pending** | [PR #68](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/68) open on `docs/part-e-release-evidence`, awaiting teammate review & merge |
+| **Backup & Disaster Recovery Restore Drill** | **Not Verified** | No Cloud SQL PITR or restore test executed (`§12.2`) |
 
 ---
 
@@ -565,4 +618,39 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
 |---|:---:|:---:|:---:|:---:|
 | `GET /api/admin/users` (`FR-03`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (Non-financial user metadata only) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
 | `PATCH /api/admin/users/:id/status` (`FR-04`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (`422 CANNOT_DEACTIVATE_SELF` on self) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
+
+### 11.6 Sprint 3 Analytics & Governance Architecture (`F-17` & `F-18`, `WP-12`)
+
+* **`F-17` Category Spending Reports (`GET /api/reports/categories`):**
+  * **Query & Response Contract:** Accepts `startDate` and `endDate` (`YYYY-MM-DD`, validated with `400 INVALID_DATE_RANGE` when malformed or `startDate > endDate`) and returns `period.start_date` and `period.end_date` metadata alongside `total_expense` and `categories`.
+  * **Aggregation & Exclusions:** Aggregates `AllocationLine.amount` where `target_account.type === 'EXPENSE'`, strictly excluding opening balances (`BR-02`), internal cash transfers (`BR-02`), credit card repayments (`BR-08`), and loan principal disbursements/recoveries/repayments (`BR-08`).
+  * **Precision & Ordering:** Computes category percentage shares using `Prisma.Decimal` `ROUND_HALF_UP` to 2 decimal places, ordered deterministically by `total_amount DESC, category_name ASC`.
+* **`F-18` Audited Correction History & Account Archival (`GET /api/transactions/:id/audit-history`, `PATCH /api/accounts/:id/archive`):**
+  * **Audit History Ordering & Serialization:** Queries `transaction_audit_logs` ordered reverse-chronologically (newest first) by `sequence_number DESC` (with `created_at DESC, id DESC` fallback) and serializes `BIGINT` `sequence_number` as a decimal string to preserve precision above `Number.MAX_SAFE_INTEGER`.
+  * **Multi-Layer Immutability:** Enforced via absence of mutation endpoints (`405`/`404`), relational foreign key `onDelete: Restrict` (`409 AUDIT_HISTORY_PROTECTED`), and the PostgreSQL `BEFORE UPDATE OR DELETE` trigger (`prevent_audit_log_mutation()`).
+  * **Account Archival Restrictions & Guards:** `PATCH /api/accounts/:id/archive` enforces zero computed balance/debt/receivable (`422 ACCOUNT_BALANCE_NON_ZERO`) on `CASH`, `LOAN_TAKEN`, and `LOAN_GIVEN` accounts while allowing `INCOME`/`EXPENSE` category archival and unarchival across all 5 types; all transaction creation, duplication, and correction workflows reject any archived `primary_account` or `AllocationLine.target_account` under `acquireAccountRowLocks` with `422 ACCOUNT_ARCHIVED`.
+
+---
+
+## 12. Verified Capabilities, Known Limitations & Planned Enhancements
+
+### 12.1 Verified Capabilities
+* **Atomic Balance & Audit Trail (`NFR-DATA-01`):** Account balances and summaries are computed dynamically from persisted `Transaction` and `AllocationLine` rows inside `prisma.$transaction` with pessimistic row locking (`acquireAccountRowLocks`). `TransactionAuditLog` enforces append-only immutability via API boundaries, `onDelete: Restrict`, and the PostgreSQL `prevent_audit_log_mutation()` trigger, ordered reverse-chronologically by `sequence_number DESC` (with `created_at DESC, id DESC` fallback).
+* **Deployed Cloud Run Candidate (`§10.3`):** Verified live on revision `whatsss-00030-k42` (`467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade`, `v0.2.0-sprint2-rc`).
+
+### 12.2 Known Limitations
+* **Dynamic Audit Snapshot Label Resolution:** `TransactionAuditLog.previous_snapshot` and `new_snapshot` store `target_account_id` and `amount`, and the UI resolves account/category display names from current `Account` metadata. Consequently, audit snapshots **do not guarantee immutable historical display labels** if an account or category is later renamed via `F-10`.
+* **Backup, Disaster Recovery, Monitoring & Alerting Not Yet Verified:** While Cloud SQL for PostgreSQL 16 and Cloud Run provide managed infrastructure, **automated backup restoration, disaster recovery (PITR) drills, automated audit retention pruning/archival jobs, and production monitoring/alerting policies have not been configured or verified with operational tests**; readiness claims must not be made until verified and evidenced.
+
+### 12.3 Planned Enhancements
+* **Denormalized Snapshot Labels:** Persist `target_account_name` inside `TransactionAuditLog` snapshots at write time so historical audit entries preserve exact point-in-time display labels.
+* **Backup & Restore Verification (`NFR-DATA-02` Proposal):** Execute and document a Cloud SQL restore verification drill prior to any production SLA commitment.
+
+---
+
+## 13. API Versioning & Backward Compatibility Policy
+
+* **Current Baseline:** All REST endpoints are currently served under the unversioned `/api/*` prefix (`v0.2.0-sprint2-rc`), matching the single-client React SPA bundled in the same container.
+* **Backward Compatibility Rule:** Within the `/api/*` baseline, changes must be **additive only** (optional query parameters, new response fields, or new endpoints). Existing query parameters (e.g., `startDate` and `endDate` on `GET /api/reports/categories`), required request fields, error codes, and response structures must not be renamed or removed without a coordinated versioned migration.
+* **Future Breaking Changes:** Any breaking contract change requires introducing an explicit versioned prefix (e.g., `/api/v2/*`) alongside a documented deprecation window for `/api/*`.
 | `/api/accounts/*`, `/api/transactions/*`, `/api/reports/*` | **Allowed** (Own tenant records only, `BR-01`) | **`403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN` (`BR-10`)** | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
