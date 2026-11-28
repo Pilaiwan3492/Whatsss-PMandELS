@@ -71,3 +71,10 @@ export async function updateOpeningBalance(id: string, opening_balance: number):
   });
   return res.data.data.account;
 }
+
+export async function archiveAccount(id: string, is_archived: boolean): Promise<Account> {
+  const res = await axiosClient.patch<SingleAccountResponse>(`/accounts/${id}/archive`, {
+    is_archived
+  });
+  return res.data.data.account;
+}

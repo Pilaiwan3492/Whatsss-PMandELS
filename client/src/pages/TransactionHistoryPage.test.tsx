@@ -9,6 +9,7 @@ import {
 } from './TransactionHistoryPage.js';
 import { axiosClient } from '../api/axiosClient.js';
 import * as transactionApi from '../api/transactionApi.js';
+import * as accountApi from '../api/accountApi.js';
 
 describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', () => {
   const mockUserDemo = {
@@ -920,6 +921,281 @@ describe('Frontend Transaction History Suite (WP-06, Feature F-09, AC-09-1)', ()
       expect((screen.getByTestId('filter-type-select') as HTMLSelectElement).value).toBe('');
       expect(screen.getByTestId('transactions-table')).toBeDefined();
       expect(screen.getByTestId('txn-row-tx-salary')).toBeDefined();
+    });
+  });
+
+  it('TEST-UI-AUDIT-01: opens Audit History modal on Audit button click and renders correction snapshots', async () => {
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+    const auditSpy = vi.spyOn(transactionApi, 'getTransactionAuditHistory').mockResolvedValue([
+      {
+        id: 'log-1',
+        sequence_number: '2',
+        transaction_id: 'tx-salary',
+        user_id: 'u1-uuid',
+        action: 'CORRECTED',
+        previous_snapshot: {
+          total_amount: '20000.00',
+          transaction_date: '2026-11-02',
+          description: 'Salary',
+          allocations: []
+        },
+        new_snapshot: {
+          total_amount: '22000.00',
+          transaction_date: '2026-11-02',
+          description: 'Salary + Bonus',
+          allocations: []
+        },
+        created_at: '2026-11-05T12:00:00.000Z'
+      }
+    ]);
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-audit-tx-salary')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-audit-tx-salary'));
+
+    await waitFor(() => {
+      expect(auditSpy).toHaveBeenCalledWith('tx-salary');
+      expect(screen.getByTestId('audit-history-modal')).toBeDefined();
+      expect(screen.getByTestId('audit-entry-0').textContent).toContain('20000.00 THB');
+      expect(screen.getByTestId('audit-entry-0').textContent).toContain('22000.00 THB');
+    });
+  });
+
+  it('TEST-UI-AUDIT-02: renders added, removed, and modified snapshot allocations, notes, empty allocations, and unresolved account fallbacks', async () => {
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+    vi.spyOn(accountApi, 'getAccounts').mockResolvedValue([
+      {
+        id: 'acc-dining',
+        user_id: 'u1-uuid',
+        name: 'Dining',
+        type: 'EXPENSE',
+        subtype: 'DEFAULT',
+        opening_balance: 0,
+        current_balance: 0,
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      },
+      {
+        id: 'acc-grocery',
+        user_id: 'u1-uuid',
+        name: 'Grocery',
+        type: 'EXPENSE',
+        subtype: 'DEFAULT',
+        opening_balance: 0,
+        current_balance: 0,
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      }
+    ]);
+
+    vi.spyOn(transactionApi, 'getTransactionAuditHistory').mockResolvedValue([
+      {
+        id: 'log-mod',
+        sequence_number: '3',
+        transaction_id: 'tx-purchase',
+        user_id: 'u1-uuid',
+        action: 'CORRECTED',
+        previous_snapshot: {
+          total_amount: '3000.00',
+          transaction_date: '2026-11-03',
+          description: 'Original split',
+          allocations: [
+            { target_account_id: 'acc-dining', amount: '1000.00', notes: 'Old dinner' },
+            { target_account_id: 'acc-removed', amount: '2000.00', notes: 'Removed line' }
+          ]
+        },
+        new_snapshot: {
+          total_amount: '3500.00',
+          transaction_date: '2026-11-03',
+          description: 'Updated split',
+          allocations: [
+            { target_account_id: 'acc-dining', amount: '1500.00', notes: 'Modified dinner' },
+            { target_account_id: 'acc-grocery', amount: '2000.00', notes: 'Added grocery' }
+          ]
+        },
+        created_at: '2026-11-06T12:00:00.000Z'
+      },
+      {
+        id: 'log-legacy',
+        sequence_number: '1',
+        transaction_id: 'tx-purchase',
+        user_id: 'u1-uuid',
+        action: 'CORRECTED',
+        previous_snapshot: {
+          total_amount: '1000.00',
+          transaction_date: '2026-11-03',
+          description: null,
+          allocations: []
+        },
+        new_snapshot: {
+          total_amount: '3000.00',
+          transaction_date: '2026-11-03',
+          description: 'Legacy entry'
+        } as any,
+        created_at: '2026-11-05T10:00:00.000Z'
+      }
+    ]);
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-audit-tx-purchase')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-audit-tx-purchase'));
+
+    await waitFor(() => {
+      const prev0 = screen.getByTestId('audit-entry-0-previous').textContent || '';
+      const new0 = screen.getByTestId('audit-entry-0-new').textContent || '';
+      expect(prev0).toContain('Dining: 1000.00 THB — Old dinner');
+      expect(prev0).toContain('Account (acc-removed): 2000.00 THB — Removed line');
+      expect(new0).toContain('Dining: 1500.00 THB — Modified dinner');
+      expect(new0).toContain('Grocery: 2000.00 THB — Added grocery');
+
+      expect(screen.getByTestId('audit-entry-1-previous-allocations-empty').textContent).toContain('No allocations');
+      expect(screen.getByTestId('audit-entry-1-new-allocations-empty').textContent).toContain('No allocations');
+    });
+  });
+
+  it('TEST-UI-AUDIT-03: handles HTTP 403/404/500, network failure, empty state, and retry in Audit History modal', async () => {
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+    const auditSpy = vi
+      .spyOn(transactionApi, 'getTransactionAuditHistory')
+      .mockRejectedValueOnce({ response: { status: 403, data: { error: { message: 'Admin forbidden' } } } })
+      .mockRejectedValueOnce({ response: { status: 404, data: { error: { message: 'Transaction not found.' } } } })
+      .mockRejectedValueOnce({ response: { status: 500, data: { error: { message: 'Server error' } } } })
+      .mockRejectedValueOnce(new Error('Network down'))
+      .mockResolvedValueOnce([]);
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-audit-tx-salary')).toBeDefined();
+    });
+
+    // 403
+    fireEvent.click(screen.getByTestId('btn-audit-tx-salary'));
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-error-alert').textContent).toContain('Admin forbidden');
+    });
+
+    // Retry -> 404
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-error-alert').textContent).toContain('Transaction not found.');
+    });
+
+    // Retry -> 500
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-error-alert').textContent).toContain('Server error');
+    });
+
+    // Retry -> Network Error
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-error-alert').textContent).toContain('Network down');
+    });
+
+    // Retry -> Empty history
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('audit-error-alert')).toBeNull();
+      expect(screen.getByTestId('audit-empty-state').textContent).toContain(
+        'No correction history recorded for this transaction.'
+      );
+    });
+    expect(auditSpy).toHaveBeenCalledTimes(5);
+  });
+
+  it('TEST-UI-AUDIT-04: prevents stale audit history responses when closing modal or switching transactions while loading', async () => {
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+
+    let resolveTx1!: (val: transactionApi.TransactionAuditLogEntry[]) => void;
+    let resolveTx2!: (val: transactionApi.TransactionAuditLogEntry[]) => void;
+    let resolveTx3!: (val: transactionApi.TransactionAuditLogEntry[]) => void;
+
+    vi.spyOn(transactionApi, 'getTransactionAuditHistory')
+      .mockImplementationOnce(() => new Promise((res) => { resolveTx1 = res; }))
+      .mockImplementationOnce(() => new Promise((res) => { resolveTx2 = res; }))
+      .mockImplementationOnce(() => new Promise((res) => { resolveTx3 = res; }));
+
+    renderHistory();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-audit-tx-salary')).toBeDefined();
+      expect(screen.getByTestId('btn-audit-tx-purchase')).toBeDefined();
+    });
+
+    // 1. Open tx-salary, then close modal while still loading
+    fireEvent.click(screen.getByTestId('btn-audit-tx-salary'));
+    expect(screen.getByTestId('audit-loading')).toBeDefined();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]);
+    expect(screen.queryByTestId('audit-history-modal')).toBeNull();
+
+    // Resolve closed request — modal stays closed, no stale data
+    resolveTx1([
+      {
+        id: 'stale-log-1',
+        sequence_number: '1',
+        transaction_id: 'tx-salary',
+        user_id: 'u1-uuid',
+        action: 'CORRECTED',
+        previous_snapshot: { total_amount: '1.00', transaction_date: '2026-11-01', description: 'Stale1', allocations: [] },
+        new_snapshot: { total_amount: '2.00', transaction_date: '2026-11-01', description: 'Stale1', allocations: [] },
+        created_at: '2026-11-05T12:00:00.000Z'
+      }
+    ]);
+    await waitFor(() => {
+      expect(screen.queryByTestId('audit-history-modal')).toBeNull();
+    });
+
+    // 2. Open tx-salary, then switch to tx-purchase while tx-salary is loading
+    fireEvent.click(screen.getByTestId('btn-audit-tx-salary'));
+    fireEvent.click(screen.getByTestId('btn-audit-tx-purchase'));
+
+    resolveTx3([
+      {
+        id: 'fresh-log-2',
+        sequence_number: '10',
+        transaction_id: 'tx-purchase',
+        user_id: 'u1-uuid',
+        action: 'CORRECTED',
+        previous_snapshot: { total_amount: '3000.00', transaction_date: '2026-11-03', description: 'FreshPurchase', allocations: [] },
+        new_snapshot: { total_amount: '3200.00', transaction_date: '2026-11-03', description: 'FreshPurchaseNew', allocations: [] },
+        created_at: '2026-11-06T12:00:00.000Z'
+      }
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-entry-0').textContent).toContain('FreshPurchaseNew');
+    });
+
+    // Older tx-salary response resolves late — must NOT overwrite tx-purchase's modal
+    resolveTx2([
+      {
+        id: 'stale-log-2',
+        sequence_number: '9',
+        transaction_id: 'tx-salary',
+        user_id: 'u1-uuid',
+        action: 'CORRECTED',
+        previous_snapshot: { total_amount: '9999.00', transaction_date: '2026-11-02', description: 'StaleSalary', allocations: [] },
+        new_snapshot: { total_amount: '9999.00', transaction_date: '2026-11-02', description: 'StaleSalary', allocations: [] },
+        created_at: '2026-11-05T12:00:00.000Z'
+      }
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-entry-0').textContent).toContain('FreshPurchaseNew');
+      expect(screen.getByTestId('audit-entry-0').textContent).not.toContain('StaleSalary');
     });
   });
 });

@@ -362,3 +362,36 @@ export async function duplicateTransaction(
   );
   return res.data.data.transaction;
 }
+
+export interface TransactionAuditSnapshot {
+  total_amount: string;
+  transaction_date: string;
+  description: string | null;
+  allocations?: Array<{
+    target_account_id: string;
+    target_account_name?: string;
+    amount: string;
+    notes: string | null;
+  }>;
+}
+
+export interface TransactionAuditLogEntry {
+  id: string;
+  sequence_number?: string;
+  transaction_id: string;
+  user_id: string;
+  action: string;
+  previous_snapshot: TransactionAuditSnapshot;
+  new_snapshot: TransactionAuditSnapshot;
+  created_at: string;
+}
+
+export async function getTransactionAuditHistory(
+  transactionId: string
+): Promise<TransactionAuditLogEntry[]> {
+  const res = await axiosClient.get<{
+    success: boolean;
+    data: { transaction_id: string; audit_logs: TransactionAuditLogEntry[] };
+  }>(`/transactions/${transactionId}/audit-history`);
+  return res.data.data.audit_logs;
+}

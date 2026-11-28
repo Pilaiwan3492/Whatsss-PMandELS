@@ -1,7 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.js';
-import { getFinancialSummary, FinancialSummaryData } from '../api/reportApi.js';
+import {
+  getFinancialSummary,
+  getCategorySpendingReport,
+  FinancialSummaryData,
+  CategorySpendingReportData
+} from '../api/reportApi.js';
 import { getTransactions, HistoryTransaction } from '../api/transactionApi.js';
 
 export const DashboardPage: React.FC = () => {
@@ -15,44 +20,94 @@ export const DashboardPage: React.FC = () => {
   const [historyLoading, setHistoryLoading] = useState<boolean>(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [categoryReport, setCategoryReport] = useState<CategorySpendingReportData | null>(null);
+  const [categoryLoading, setCategoryLoading] = useState<boolean>(false);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
+
+  const isMountedRef = useRef<boolean>(true);
+  const categoryRequestIdRef = useRef<number>(0);
+  const summaryRequestIdRef = useRef<number>(0);
+  const historyRequestIdRef = useRef<number>(0);
+
+  const loadCategoryReport = async (sDate?: string, eDate?: string) => {
+    if (typeof getCategorySpendingReport !== 'function') return;
+    const requestId = ++categoryRequestIdRef.current;
+    setCategoryLoading(true);
+    setCategoryError(null);
+    setCategoryReport(null);
+    try {
+      const data = await getCategorySpendingReport({
+        startDate: sDate || undefined,
+        endDate: eDate || undefined
+      });
+      if (!isMountedRef.current || requestId !== categoryRequestIdRef.current) return;
+      if (data && Array.isArray(data.categories)) {
+        setCategoryReport(data);
+      }
+    } catch (err: any) {
+      if (!isMountedRef.current || requestId !== categoryRequestIdRef.current) return;
+      setCategoryReport(null);
+      const msg = err?.response?.data?.error?.message || err?.message || 'Failed to load category spending';
+      setCategoryError(msg);
+    } finally {
+      if (isMountedRef.current && requestId === categoryRequestIdRef.current) {
+        setCategoryLoading(false);
+      }
+    }
+  };
+
   const loadSummary = async () => {
+    const requestId = ++summaryRequestIdRef.current;
     setSummaryLoading(true);
     setSummaryError(null);
     try {
       const summaryData = await getFinancialSummary();
+      if (!isMountedRef.current || requestId !== summaryRequestIdRef.current) return;
       setSummary(summaryData);
     } catch (err: any) {
+      if (!isMountedRef.current || requestId !== summaryRequestIdRef.current) return;
       const msg = err?.response?.data?.error?.message || err?.message || 'Failed to load financial summary';
-      if (!msg.includes('Unhandled url')) {
-        setSummaryError(msg);
-      }
+      setSummaryError(msg);
     } finally {
-      setSummaryLoading(false);
+      if (isMountedRef.current && requestId === summaryRequestIdRef.current) {
+        setSummaryLoading(false);
+      }
     }
   };
 
   const loadRecentTransactions = async () => {
+    const requestId = ++historyRequestIdRef.current;
     setHistoryLoading(true);
     setHistoryError(null);
     try {
       const txns = await getTransactions();
+      if (!isMountedRef.current || requestId !== historyRequestIdRef.current) return;
       setRecentTransactions(Array.isArray(txns) ? txns.slice(0, 5) : []);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error?.message || err?.message || 'Unable to load recent transactions.';
-      if (!msg.includes('Unhandled url')) {
-        setHistoryError('Unable to load recent transactions.');
-      }
+    } catch {
+      if (!isMountedRef.current || requestId !== historyRequestIdRef.current) return;
+      setHistoryError('Unable to load recent transactions.');
     } finally {
-      setHistoryLoading(false);
+      if (isMountedRef.current && requestId === historyRequestIdRef.current) {
+        setHistoryLoading(false);
+      }
     }
   };
 
   const fetchDashboardData = async () => {
-    await Promise.all([loadSummary(), loadRecentTransactions()]);
+    await Promise.all([loadSummary(), loadRecentTransactions(), loadCategoryReport(startDate, endDate)]);
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
     fetchDashboardData();
+    return () => {
+      isMountedRef.current = false;
+      categoryRequestIdRef.current += 1;
+      summaryRequestIdRef.current += 1;
+      historyRequestIdRef.current += 1;
+    };
   }, []);
 
   const formatCurrency = (amount: number | undefined): string => {
@@ -178,10 +233,106 @@ export const DashboardPage: React.FC = () => {
             <div className="col-12 col-lg-5">
               <div className="card shadow-sm h-100 border">
                 <div className="card-header bg-white py-3 border-bottom">
-                  <h5 className="fw-bold mb-0">Expense Category Breakdown</h5>
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <h5 className="fw-bold mb-0">Expense Category Breakdown</h5>
+                    {categoryReport && (
+                      <span className="small text-muted fw-semibold" data-testid="category-report-total">
+                        Total: {Number(categoryReport.total_expense).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} THB
+                      </span>
+                    )}
+                  </div>
+                  <div className="d-flex gap-2 align-items-end flex-wrap">
+                    <div>
+                      <label htmlFor="report-start-date" className="form-label small text-muted mb-1">
+                        Start Date
+                      </label>
+                      <input
+                        id="report-start-date"
+                        type="date"
+                        className="form-control form-control-sm"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="report-end-date" className="form-label small text-muted mb-1">
+                        End Date
+                      </label>
+                      <input
+                        id="report-end-date"
+                        type="date"
+                        className="form-control form-control-sm"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-primary"
+                      onClick={() => loadCategoryReport(startDate, endDate)}
+                    >
+                      Apply
+                    </button>
+                    {(startDate || endDate) && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={() => {
+                          setStartDate('');
+                          setEndDate('');
+                          loadCategoryReport('', '');
+                        }}
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="card-body" data-testid="category-breakdown-section">
-                  {summary.categories && summary.categories.length > 0 ? (
+                  {categoryError && (
+                    <div className="alert alert-danger py-2 small" role="alert" data-testid="category-report-error">
+                      {categoryError}
+                    </div>
+                  )}
+                  {categoryLoading ? (
+                    <div className="text-center py-4 text-muted">Loading category report...</div>
+                  ) : categoryError ? null : categoryReport ? (
+                    categoryReport.categories.length > 0 ? (
+                      <div className="d-flex flex-column gap-3">
+                        {categoryReport.categories.map((cat) => {
+                          const pctNum = Number(cat.percentage);
+                          const amtNum = Number(cat.total_amount);
+                          return (
+                            <div key={cat.category_id} data-testid={`category-row-${cat.category_name}`}>
+                              <div className="d-flex justify-content-between align-items-center mb-1">
+                                <span className="fw-semibold">
+                                  {cat.category_name}{' '}
+                                  <small className="text-muted">({cat.transaction_count} txns)</small>
+                                </span>
+                                <span className="fw-bold text-dark">
+                                  {formatCurrency(amtNum)} ({cat.percentage}%)
+                                </span>
+                              </div>
+                              <div className="progress" style={{ height: '8px' }}>
+                                <div
+                                  className="progress-bar bg-primary"
+                                  role="progressbar"
+                                  style={{ width: `${pctNum}%` }}
+                                  aria-valuenow={pctNum}
+                                  aria-valuemin={0}
+                                  aria-valuemax={100}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-center py-4 text-muted">
+                        <p className="mb-0">No expense allocations recorded for this period.</p>
+                      </div>
+                    )
+                  ) : summary.categories && summary.categories.length > 0 ? (
                     <div className="d-flex flex-column gap-3">
                       {summary.categories.map((cat) => {
                         const percentage = summary.total_expense > 0

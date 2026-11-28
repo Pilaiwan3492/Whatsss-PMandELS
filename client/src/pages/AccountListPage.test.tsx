@@ -902,4 +902,103 @@ describe('Frontend Financial Accounts & Opening Balance Suite (WP-02)', () => {
       expect(screen.getAllByText(/600\.00/).length).toBeGreaterThanOrEqual(2);
     });
   });
+
+  it('TEST-UI-ARCHIVE-01: archives zero-balance account, shows Archived badge, and displays error banner on non-zero balance rejection', async () => {
+    const accountsFixture = [
+      {
+        id: 'acc-cash-nonzero',
+        user_id: 'u1-uuid',
+        name: 'Primary Checking',
+        type: 'CASH',
+        opening_balance: 500.0,
+        current_balance: 500.0,
+        is_opening_locked: true,
+        is_archived: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      },
+      {
+        id: 'acc-exp-zero',
+        user_id: 'u1-uuid',
+        name: 'Coffee Category',
+        type: 'EXPENSE',
+        opening_balance: 0.0,
+        is_opening_locked: false,
+        is_archived: false,
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-01T00:00:00.000Z'
+      }
+    ];
+
+    vi.spyOn(axiosClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/auth/me') {
+        return { data: { success: true, data: { user: mockUserDemo } } };
+      }
+      if (url === '/accounts') {
+        return { data: { success: true, data: { accounts: accountsFixture } } };
+      }
+      throw new Error(`Unhandled get url: ${url}`);
+    });
+
+    const patchSpy = vi.spyOn(axiosClient, 'patch').mockImplementation(async (url: string) => {
+      if (url === '/accounts/acc-cash-nonzero/archive') {
+        throw {
+          response: {
+            status: 422,
+            data: {
+              success: false,
+              error: {
+                code: 'ACCOUNT_BALANCE_NON_ZERO',
+                message: 'Cannot archive an account with a non-zero balance (500.00).'
+              }
+            }
+          }
+        };
+      }
+      if (url === '/accounts/acc-exp-zero/archive') {
+        return {
+          data: {
+            success: true,
+            data: {
+              account: {
+                ...accountsFixture[1],
+                is_archived: true
+              }
+            }
+          }
+        };
+      }
+      throw new Error(`Unhandled patch url: ${url}`);
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Primary Checking')).toBeDefined();
+      expect(screen.getByText('Coffee Category')).toBeDefined();
+    });
+
+    // 1. Try archiving non-zero cash account -> displays error banner
+    fireEvent.click(screen.getByRole('button', { name: 'Archive Primary Checking' }));
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith('/accounts/acc-cash-nonzero/archive', { is_archived: true });
+      expect(screen.getByTestId('archive-error-alert').textContent).toContain(
+        'Cannot archive an account with a non-zero balance (500.00).'
+      );
+    });
+
+    // 2. Archive zero-balance expense category -> Archived badge and Unarchive button appear
+    fireEvent.click(screen.getByRole('button', { name: 'Archive Coffee Category' }));
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith('/accounts/acc-exp-zero/archive', { is_archived: true });
+      expect(screen.getByText('Archived')).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Unarchive Coffee Category' })).toBeDefined();
+    });
+  });
 });

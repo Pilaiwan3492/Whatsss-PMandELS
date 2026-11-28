@@ -4,6 +4,7 @@ import {
   createAccount,
   updateAccount,
   updateOpeningBalance,
+  archiveAccount,
   Account,
   AccountType,
   AccountSubtype
@@ -94,6 +95,25 @@ export const AccountListPage: React.FC = () => {
   const [renameInput, setRenameInput] = useState<string>('');
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState<boolean>(false);
+
+  // Archive Account state (F-18)
+  const [archivingAccountId, setArchivingAccountId] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+
+  const handleToggleArchive = async (acc: Account) => {
+    setArchivingAccountId(acc.id);
+    setArchiveError(null);
+    try {
+      const updated = await archiveAccount(acc.id, !acc.is_archived);
+      setAccounts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+    } catch (err: any) {
+      setArchiveError(
+        err?.response?.data?.error?.message || 'Failed to update archive status. Please try again.'
+      );
+    } finally {
+      setArchivingAccountId(null);
+    }
+  };
 
   // Internal Cash Transfer modal state (F-11, WP-08)
   const [isTransferModalOpen, setIsTransferModalOpen] = useState<boolean>(false);
@@ -407,6 +427,18 @@ export const AccountListPage: React.FC = () => {
         </div>
       </div>
 
+      {archiveError && (
+        <div className="alert alert-danger d-flex justify-content-between align-items-center" role="alert" data-testid="archive-error-alert">
+          <span>{archiveError}</span>
+          <button
+            type="button"
+            className="btn-close"
+            aria-label="Close"
+            onClick={() => setArchiveError(null)}
+          />
+        </div>
+      )}
+
       {errorMessage && (
         <div className="alert alert-danger shadow-sm" role="alert">
           {errorMessage}
@@ -452,6 +484,11 @@ export const AccountListPage: React.FC = () => {
                               </button>
                             </div>
                             <div className="d-flex gap-1 flex-wrap">
+                              {acc.is_archived && (
+                                <span className="badge bg-warning text-dark">
+                                  Archived
+                                </span>
+                              )}
                               <span className={`badge ${group.badgeClass}`}>
                                 {acc.type}
                               </span>
@@ -524,6 +561,22 @@ export const AccountListPage: React.FC = () => {
                               )}
                             </div>
 
+                            <div className="d-flex align-items-center gap-2">
+                              <button
+                                type="button"
+                                className={`btn btn-sm ${
+                                  acc.is_archived ? 'btn-outline-success' : 'btn-outline-secondary'
+                                }`}
+                                aria-label={`${acc.is_archived ? 'Unarchive' : 'Archive'} ${acc.name}`}
+                                disabled={archivingAccountId === acc.id}
+                                onClick={() => handleToggleArchive(acc)}
+                              >
+                                {archivingAccountId === acc.id
+                                  ? 'Updating...'
+                                  : acc.is_archived
+                                  ? 'Unarchive'
+                                  : 'Archive'}
+                              </button>
                             {acc.type === 'LOAN_TAKEN' && Number(acc.current_balance ?? 0) > 0 && (
                               acc.subtype === 'GENERAL_LOAN' ? (
                                 <button
@@ -549,6 +602,7 @@ export const AccountListPage: React.FC = () => {
                                 Recover Loan
                               </button>
                             )}
+                            </div>
                           </div>
                         </div>
                       </div>

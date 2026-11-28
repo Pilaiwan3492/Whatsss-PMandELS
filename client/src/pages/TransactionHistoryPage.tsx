@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   getTransactions,
   toggleFavorite,
   duplicateTransaction,
+  getTransactionAuditHistory,
   HistoryTransaction,
-  TransactionFilterParams
+  TransactionFilterParams,
+  TransactionAuditLogEntry
 } from '../api/transactionApi.js';
 import { getAccounts, Account } from '../api/accountApi.js';
 import { TransactionCorrectionModal } from '../components/TransactionCorrectionModal.js';
@@ -88,6 +90,96 @@ export const TransactionHistoryPage: React.FC = () => {
   const [editingTxn, setEditingTxn] = useState<HistoryTransaction | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Audit History Modal state (F-18)
+  const [auditTargetTxn, setAuditTargetTxn] = useState<HistoryTransaction | null>(null);
+  const [auditLogs, setAuditLogs] = useState<TransactionAuditLogEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState<boolean>(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const auditRequestIdRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      auditRequestIdRef.current += 1;
+    };
+  }, []);
+
+  const handleCloseAuditHistory = () => {
+    auditRequestIdRef.current += 1;
+    setAuditTargetTxn(null);
+    setAuditLogs([]);
+    setAuditError(null);
+    setAuditLoading(false);
+  };
+
+  const handleOpenAuditHistory = async (tx: HistoryTransaction) => {
+    const requestId = ++auditRequestIdRef.current;
+    setAuditTargetTxn(tx);
+    setAuditLogs([]);
+    setAuditError(null);
+    setAuditLoading(true);
+    try {
+      const logs = await getTransactionAuditHistory(tx.id);
+      if (!isMountedRef.current || requestId !== auditRequestIdRef.current) return;
+      setAuditLogs(Array.isArray(logs) ? logs : []);
+    } catch (err: any) {
+      if (!isMountedRef.current || requestId !== auditRequestIdRef.current) return;
+      setAuditError(err?.response?.data?.error?.message || err?.message || 'Failed to load audit history.');
+    } finally {
+      if (isMountedRef.current && requestId === auditRequestIdRef.current) {
+        setAuditLoading(false);
+      }
+    }
+  };
+
+  const resolveSnapshotAccountLabel = (
+    targetAccountId: string,
+    targetAccountName?: string
+  ): string => {
+    if (targetAccountName && targetAccountName.trim() !== '') {
+      return targetAccountName;
+    }
+    const matched = accounts.find((acc) => acc.id === targetAccountId);
+    if (matched) return matched.name;
+    return `Account (${targetAccountId})`;
+  };
+
+  const renderSnapshotAllocations = (
+    allocations:
+      | Array<{
+          target_account_id: string;
+          target_account_name?: string;
+          amount: string;
+          notes: string | null;
+        }>
+      | undefined,
+    testIdPrefix: string
+  ) => {
+    const items = Array.isArray(allocations) ? allocations : [];
+    if (items.length === 0) {
+      return (
+        <div className="text-muted fst-italic mt-1" data-testid={`${testIdPrefix}-empty`}>
+          No allocations
+        </div>
+      );
+    }
+    return (
+      <ul className="list-unstyled mb-0 mt-1" data-testid={testIdPrefix}>
+        {items.map((alloc, allocIdx) => (
+          <li key={`${alloc.target_account_id}-${allocIdx}`} className="mb-1">
+            <span className="fw-semibold">
+              {resolveSnapshotAccountLabel(alloc.target_account_id, alloc.target_account_name)}
+            </span>
+            : {alloc.amount} THB
+            {alloc.notes ? <span className="text-muted"> — {alloc.notes}</span> : null}
+          </li>
+        ))}
+      </ul>
+    );
+  };
 
   // Quick tab filter (client-side refinement over fetched results)
   const [selectedFilter, setSelectedFilter] = useState<'ALL' | SemanticKind>('ALL');
@@ -656,7 +748,7 @@ export const TransactionHistoryPage: React.FC = () => {
                           </button>
                           <button
                             type="button"
-                            className="btn btn-sm btn-outline-secondary"
+                            className="btn btn-sm btn-outline-secondary me-1"
                             onClick={() => {
                               setCorrectionFeedback(null);
                               setEditingTxn(tx);
@@ -664,6 +756,14 @@ export const TransactionHistoryPage: React.FC = () => {
                             data-testid={`btn-edit-${tx.id}`}
                           >
                             Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-dark"
+                            onClick={() => handleOpenAuditHistory(tx)}
+                            data-testid={`btn-audit-${tx.id}`}
+                          >
+                            Audit
                           </button>
                         </td>
                       </tr>
@@ -726,6 +826,109 @@ export const TransactionHistoryPage: React.FC = () => {
             await fetchHistory();
           }}
         />
+      )}
+
+      {/* Transaction Audit History Modal (F-18) */}
+      {auditTargetTxn && (
+        <div
+          className="modal d-block"
+          tabIndex={-1}
+          role="dialog"
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          data-testid="audit-history-modal"
+        >
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title fw-bold">
+                  Audit History — {auditTargetTxn.description || auditTargetTxn.transaction_date}
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close"
+                  onClick={handleCloseAuditHistory}
+                />
+              </div>
+              <div className="modal-body">
+                {auditLoading ? (
+                  <div className="text-center py-3 text-muted" data-testid="audit-loading">
+                    Loading audit history...
+                  </div>
+                ) : auditError ? (
+                  <div
+                    className="alert alert-danger d-flex justify-content-between align-items-center"
+                    role="alert"
+                    data-testid="audit-error-alert"
+                  >
+                    <span>{auditError}</span>
+                    {auditTargetTxn && (
+                      <button
+                        type="button"
+                        className="btn btn-outline-danger btn-sm"
+                        onClick={() => handleOpenAuditHistory(auditTargetTxn)}
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <p className="text-muted mb-0" data-testid="audit-empty-state">
+                    No correction history recorded for this transaction.
+                  </p>
+                ) : (
+                  <div className="d-flex flex-column gap-3">
+                    {auditLogs.map((log, idx) => (
+                      <div key={log.id} className="border rounded p-3 bg-light" data-testid={`audit-entry-${idx}`}>
+                        <div className="d-flex justify-content-between align-items-center mb-2">
+                          <span className="badge bg-dark">{log.action}</span>
+                          <small className="text-muted">{log.created_at}</small>
+                        </div>
+                        <div className="row g-2 small">
+                          <div className="col-md-6" data-testid={`audit-entry-${idx}-previous`}>
+                            <div className="fw-semibold text-muted">Previous Snapshot</div>
+                            <div>Amount: {log.previous_snapshot?.total_amount} THB</div>
+                            <div>Date: {log.previous_snapshot?.transaction_date}</div>
+                            <div>Description: {log.previous_snapshot?.description || '—'}</div>
+                            <div className="mt-1">
+                              <span className="fw-semibold">Allocations:</span>
+                              {renderSnapshotAllocations(
+                                log.previous_snapshot?.allocations,
+                                `audit-entry-${idx}-previous-allocations`
+                              )}
+                            </div>
+                          </div>
+                          <div className="col-md-6" data-testid={`audit-entry-${idx}-new`}>
+                            <div className="fw-semibold text-success">New Snapshot</div>
+                            <div>Amount: {log.new_snapshot?.total_amount} THB</div>
+                            <div>Date: {log.new_snapshot?.transaction_date}</div>
+                            <div>Description: {log.new_snapshot?.description || '—'}</div>
+                            <div className="mt-1">
+                              <span className="fw-semibold">Allocations:</span>
+                              {renderSnapshotAllocations(
+                                log.new_snapshot?.allocations,
+                                `audit-entry-${idx}-new-allocations`
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleCloseAuditHistory}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Duplicate Transaction Modal (F-14) */}

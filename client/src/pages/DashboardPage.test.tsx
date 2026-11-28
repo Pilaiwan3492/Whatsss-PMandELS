@@ -113,6 +113,8 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
       }
       throw new Error(`Unhandled url: ${url}`);
     });
+
+    vi.spyOn(reportApi, 'getCategorySpendingReport').mockResolvedValue(null as any);
   });
 
   const renderDashboard = () => {
@@ -260,6 +262,294 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
       expect(screen.getByTestId('metric-bank-balance')).toBeDefined();
       expect(screen.getByTestId('history-empty')).toBeDefined();
       expect(screen.getByText('No transactions recorded yet.')).toBeDefined();
+    });
+  });
+
+  it('TEST-UI-REP-CAT-01: renders period-filtered category spending report with percentages and handles invalid range errors', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+    const catSpy = vi
+      .spyOn(reportApi, 'getCategorySpendingReport')
+      .mockResolvedValueOnce({
+        period: { start_date: null, end_date: null },
+        total_expense: '3000.00',
+        categories: [
+          {
+            category_id: 'cat-grocery',
+            category_name: 'Grocery',
+            total_amount: '2000.00',
+            percentage: '66.67',
+            transaction_count: 1
+          },
+          {
+            category_id: 'cat-dining',
+            category_name: 'Dining',
+            total_amount: '1000.00',
+            percentage: '33.33',
+            transaction_count: 1
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        period: { start_date: '2026-11-01', end_date: '2026-11-02' },
+        total_expense: '1000.00',
+        categories: [
+          {
+            category_id: 'cat-dining',
+            category_name: 'Dining',
+            total_amount: '1000.00',
+            percentage: '100.00',
+            transaction_count: 1
+          }
+        ]
+      });
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-total').textContent).toContain('3,000.00 THB');
+      expect(screen.getByTestId('category-row-Grocery').textContent).toContain('66.67%');
+      expect(screen.getByTestId('category-row-Dining').textContent).toContain('33.33%');
+    });
+
+    fireEvent.change(screen.getByLabelText('Start Date'), { target: { value: '2026-11-01' } });
+    fireEvent.change(screen.getByLabelText('End Date'), { target: { value: '2026-11-02' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(catSpy).toHaveBeenLastCalledWith({ startDate: '2026-11-01', endDate: '2026-11-02' });
+      expect(screen.getByTestId('category-report-total').textContent).toContain('1,000.00 THB');
+      expect(screen.getByTestId('category-row-Dining').textContent).toContain('100.00%');
+    });
+  });
+
+  it('TEST-UI-REP-CAT-02: displays HTTP 400, 403, 500, network failure errors, empty state, and recovers on retry', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+
+    const catSpy = vi
+      .spyOn(reportApi, 'getCategorySpendingReport')
+      // 1. Initial load: empty state
+      .mockResolvedValueOnce({
+        period: { start_date: null, end_date: null },
+        total_expense: '0.00',
+        categories: []
+      })
+      // 2. HTTP 400 INVALID_DATE_RANGE
+      .mockRejectedValueOnce({
+        response: { status: 400, data: { error: { code: 'INVALID_DATE_RANGE', message: 'startDate must be <= endDate' } } }
+      })
+      // 3. HTTP 403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN
+      .mockRejectedValueOnce({
+        response: { status: 403, data: { error: { code: 'ADMIN_FINANCIAL_ACCESS_FORBIDDEN', message: 'Admin cannot access financial reports' } } }
+      })
+      // 4. HTTP 500
+      .mockRejectedValueOnce({
+        response: { status: 500, data: { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } } }
+      })
+      // 5. Network failure (no response)
+      .mockRejectedValueOnce(new Error('Network Error'))
+      // 6. Retry / Apply succeeds
+      .mockResolvedValueOnce({
+        period: { start_date: '2026-11-01', end_date: '2026-11-10' },
+        total_expense: '1500.00',
+        categories: [
+          {
+            category_id: 'cat-dining',
+            category_name: 'Dining',
+            total_amount: '1500.00',
+            percentage: '100.00',
+            transaction_count: 2
+          }
+        ]
+      });
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-breakdown-section').textContent).toContain('No expense allocations recorded for this period.');
+    });
+
+    // HTTP 400
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('startDate must be <= endDate');
+    });
+
+    // HTTP 403
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('Admin cannot access financial reports');
+    });
+
+    // HTTP 500
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('Internal server error');
+    });
+
+    // Network Error
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('Network Error');
+    });
+
+    // Retry succeeds and clears error
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('category-report-error')).toBeNull();
+      expect(screen.getByTestId('category-row-Dining').textContent).toContain('1,500.00 THB (100.00%)');
+    });
+    expect(catSpy).toHaveBeenCalledTimes(6);
+  });
+
+  it('TEST-UI-REP-CAT-03: prevents stale category report response from overwriting newer date-range results and handles unmount safely', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+
+    let resolveFirst!: (val: reportApi.CategorySpendingReportData) => void;
+    let resolveSecond!: (val: reportApi.CategorySpendingReportData) => void;
+
+    const firstPromise = new Promise<reportApi.CategorySpendingReportData>((res) => {
+      resolveFirst = res;
+    });
+    const secondPromise = new Promise<reportApi.CategorySpendingReportData>((res) => {
+      resolveSecond = res;
+    });
+
+    vi.spyOn(reportApi, 'getCategorySpendingReport')
+      .mockReturnValueOnce(firstPromise)
+      .mockReturnValueOnce(secondPromise);
+
+    const { unmount } = renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('metric-bank-balance')).toBeDefined();
+    });
+
+    // Trigger newer request before older request resolves
+    fireEvent.change(screen.getByLabelText('Start Date'), { target: { value: '2026-11-05' } });
+    fireEvent.change(screen.getByLabelText('End Date'), { target: { value: '2026-11-06' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    // Newer request resolves first
+    resolveSecond({
+      period: { start_date: '2026-11-05', end_date: '2026-11-06' },
+      total_expense: '500.00',
+      categories: [
+        {
+          category_id: 'cat-coffee',
+          category_name: 'Coffee',
+          total_amount: '500.00',
+          percentage: '100.00',
+          transaction_count: 1
+        }
+      ]
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-row-Coffee').textContent).toContain('500.00 THB');
+    });
+
+    // Older request resolves AFTER newer request — must be ignored
+    resolveFirst({
+      period: { start_date: null, end_date: null },
+      total_expense: '9999.00',
+      categories: [
+        {
+          category_id: 'cat-stale',
+          category_name: 'StaleCategory',
+          total_amount: '9999.00',
+          percentage: '100.00',
+          transaction_count: 9
+        }
+      ]
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-row-Coffee')).toBeDefined();
+      expect(screen.queryByTestId('category-row-StaleCategory')).toBeNull();
+      expect(screen.getByTestId('category-report-total').textContent).toContain('500.00 THB');
+    });
+
+    // Unmount cleanly without errors
+    unmount();
+  });
+
+  it('TEST-UI-REP-CAT-04: clears stale category report and hides unfiltered summary fallback when a date-filter request fails, then recovers on retry', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+
+    vi.spyOn(reportApi, 'getCategorySpendingReport')
+      // 1. Initial successful report
+      .mockResolvedValueOnce({
+        period: { start_date: null, end_date: null },
+        total_expense: '3000.00',
+        categories: [
+          {
+            category_id: 'cat-grocery',
+            category_name: 'Grocery',
+            total_amount: '2000.00',
+            percentage: '66.67',
+            transaction_count: 1
+          },
+          {
+            category_id: 'cat-dining',
+            category_name: 'Dining',
+            total_amount: '1000.00',
+            percentage: '33.33',
+            transaction_count: 1
+          }
+        ]
+      })
+      // 2. Different date range fails
+      .mockRejectedValueOnce({
+        response: { status: 500, data: { error: { message: 'Failed to load period report' } } }
+      })
+      // 3. Retry succeeds with new period data
+      .mockResolvedValueOnce({
+        period: { start_date: '2026-11-10', end_date: '2026-11-15' },
+        total_expense: '450.00',
+        categories: [
+          {
+            category_id: 'cat-transport',
+            category_name: 'Transport',
+            total_amount: '450.00',
+            percentage: '100.00',
+            transaction_count: 1
+          }
+        ]
+      });
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-total').textContent).toContain('3,000.00 THB');
+      expect(screen.getByTestId('category-row-Grocery')).toBeDefined();
+      expect(screen.getByTestId('category-row-Dining')).toBeDefined();
+    });
+
+    // Apply a different date range that fails
+    fireEvent.change(screen.getByLabelText('Start Date'), { target: { value: '2026-11-10' } });
+    fireEvent.change(screen.getByLabelText('End Date'), { target: { value: '2026-11-15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('Failed to load period report');
+    });
+
+    // Old report and unfiltered summary.categories fallback must NOT be displayed
+    expect(screen.queryByTestId('category-report-total')).toBeNull();
+    expect(screen.queryByTestId('category-row-Grocery')).toBeNull();
+    expect(screen.queryByTestId('category-row-Dining')).toBeNull();
+
+    // Retry successfully and verify new report appears
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('category-report-error')).toBeNull();
+      expect(screen.getByTestId('category-report-total').textContent).toContain('450.00 THB');
+      expect(screen.getByTestId('category-row-Transport').textContent).toContain('450.00 THB (100.00%)');
     });
   });
 });
