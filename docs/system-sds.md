@@ -4,7 +4,7 @@
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
 > **Deliverable:** Project Deliverable 1 (Part C: System-Level SDS) & Deliverable 2 (Part D: Sprint 2/3 Schema & Architecture Evolution)  
-> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 `BR-07 v1.1` Amendment + Sprint 2 & Sprint 3 Evolution (`v2.1-wp12`, `WP-08`..`WP-11` Merged `f3cd70b`; `WP-12` Part C Implemented & CI-Verified on [PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66) `e23416a9fd3f3d8326e6e60799fb2bed9e3c5c2f`, [Main CI #311](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109538015), [C-01 #165](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109542107); Part E Pending)
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 `BR-07 v1.1` Amendment + Sprint 2 & Sprint 3 Release (`v0.2.0-sprint2-rc`, `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` on `main` via [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67), [Main CI #315](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583), GCP Cloud Run [Deploy demo #13](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654): https://whatsss-sipqw4logq-as.a.run.app — **Part E Completed**)
 
 ### Document Revision History
 | Version | Status | Date | Scope / Reference | Summary |
