@@ -36,6 +36,7 @@ export const DashboardPage: React.FC = () => {
     const requestId = ++categoryRequestIdRef.current;
     setCategoryLoading(true);
     setCategoryError(null);
+    setCategoryReport(null);
     try {
       const data = await getCategorySpendingReport({
         startDate: sDate || undefined,
@@ -47,6 +48,7 @@ export const DashboardPage: React.FC = () => {
       }
     } catch (err: any) {
       if (!isMountedRef.current || requestId !== categoryRequestIdRef.current) return;
+      setCategoryReport(null);
       const msg = err?.response?.data?.error?.message || err?.message || 'Failed to load category spending';
       setCategoryError(msg);
     } finally {
@@ -294,7 +296,7 @@ export const DashboardPage: React.FC = () => {
                   )}
                   {categoryLoading ? (
                     <div className="text-center py-4 text-muted">Loading category report...</div>
-                  ) : categoryReport ? (
+                  ) : categoryError ? null : categoryReport ? (
                     categoryReport.categories.length > 0 ? (
                       <div className="d-flex flex-column gap-3">
                         {categoryReport.categories.map((cat) => {

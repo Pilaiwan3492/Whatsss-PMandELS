@@ -475,4 +475,81 @@ describe('Frontend Dashboard & Financial Summary Suite (WP-06, Features F-08, F-
     // Unmount cleanly without errors
     unmount();
   });
+
+  it('TEST-UI-REP-CAT-04: clears stale category report and hides unfiltered summary fallback when a date-filter request fails, then recovers on retry', async () => {
+    vi.spyOn(reportApi, 'getFinancialSummary').mockResolvedValue(mockGoldenSummary);
+    vi.spyOn(transactionApi, 'getTransactions').mockResolvedValue(mockGoldenTransactions);
+
+    vi.spyOn(reportApi, 'getCategorySpendingReport')
+      // 1. Initial successful report
+      .mockResolvedValueOnce({
+        period: { start_date: null, end_date: null },
+        total_expense: '3000.00',
+        categories: [
+          {
+            category_id: 'cat-grocery',
+            category_name: 'Grocery',
+            total_amount: '2000.00',
+            percentage: '66.67',
+            transaction_count: 1
+          },
+          {
+            category_id: 'cat-dining',
+            category_name: 'Dining',
+            total_amount: '1000.00',
+            percentage: '33.33',
+            transaction_count: 1
+          }
+        ]
+      })
+      // 2. Different date range fails
+      .mockRejectedValueOnce({
+        response: { status: 500, data: { error: { message: 'Failed to load period report' } } }
+      })
+      // 3. Retry succeeds with new period data
+      .mockResolvedValueOnce({
+        period: { start_date: '2026-11-10', end_date: '2026-11-15' },
+        total_expense: '450.00',
+        categories: [
+          {
+            category_id: 'cat-transport',
+            category_name: 'Transport',
+            total_amount: '450.00',
+            percentage: '100.00',
+            transaction_count: 1
+          }
+        ]
+      });
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-total').textContent).toContain('3,000.00 THB');
+      expect(screen.getByTestId('category-row-Grocery')).toBeDefined();
+      expect(screen.getByTestId('category-row-Dining')).toBeDefined();
+    });
+
+    // Apply a different date range that fails
+    fireEvent.change(screen.getByLabelText('Start Date'), { target: { value: '2026-11-10' } });
+    fireEvent.change(screen.getByLabelText('End Date'), { target: { value: '2026-11-15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('category-report-error').textContent).toContain('Failed to load period report');
+    });
+
+    // Old report and unfiltered summary.categories fallback must NOT be displayed
+    expect(screen.queryByTestId('category-report-total')).toBeNull();
+    expect(screen.queryByTestId('category-row-Grocery')).toBeNull();
+    expect(screen.queryByTestId('category-row-Dining')).toBeNull();
+
+    // Retry successfully and verify new report appears
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('category-report-error')).toBeNull();
+      expect(screen.getByTestId('category-report-total').textContent).toContain('450.00 THB');
+      expect(screen.getByTestId('category-row-Transport').textContent).toContain('450.00 THB (100.00%)');
+    });
+  });
 });
