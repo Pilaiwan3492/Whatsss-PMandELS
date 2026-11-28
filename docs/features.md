@@ -170,7 +170,7 @@ Features are partitioned into:
 
 ### Feature F-17: Category Spending Summaries & Reports (`WP-12` / Issue #60)
 * **User Goal:** As a user, I want to inspect category-wise expense totals, transaction counts, and percentage distributions over a chosen date range.
-* **Scope (Sprint 3):** `GET /api/reports/categories?startDate=...&endDate=...` (`startDate` and `endDate` are the API query parameters; `period` is a UI-level selector / response object `{ start_date, end_date }`, not an API query parameter) with `ROUND_HALF_UP` percentage shares and strict exclusion of opening balances, transfers, repayments, and loans (`BR-02`, `BR-08`).
+* **Scope (Sprint 3):** `GET /api/reports/categories?startDate=...&endDate=...` (`startDate` and `endDate` are the API query parameters; `period.start_date` and `period.end_date` are response metadata and `period` is a UI-level selector, not an API query parameter) with `ROUND_HALF_UP` percentage shares and strict exclusion of opening balances, transfers, repayments, and loans (`BR-02`, `BR-08`).
 * **Linked Requirements & ACs:** `FR-20`, `BR-01`, `BR-02`, `BR-08`, `BR-10`, `AC-17-1`..`AC-17-3`.
 
 ### Feature F-18: Audited Correction History & Archival (`WP-12` / Issue #60)

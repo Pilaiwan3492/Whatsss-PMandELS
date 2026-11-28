@@ -586,6 +586,17 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
 | `GET /api/admin/users` (`FR-03`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (Non-financial user metadata only) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
 | `PATCH /api/admin/users/:id/status` (`FR-04`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (`422 CANNOT_DEACTIVATE_SELF` on self) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
 
+### 11.6 Sprint 3 Analytics & Governance Architecture (`F-17` & `F-18`, `WP-12`)
+
+* **`F-17` Category Spending Reports (`GET /api/reports/categories`):**
+  * **Query & Response Contract:** Accepts `startDate` and `endDate` (`YYYY-MM-DD`, validated with `400 INVALID_DATE_RANGE` when malformed or `startDate > endDate`) and returns `period.start_date` and `period.end_date` metadata alongside `total_expense` and `categories`.
+  * **Aggregation & Exclusions:** Aggregates `AllocationLine.amount` where `target_account.type === 'EXPENSE'`, strictly excluding opening balances (`BR-02`), internal cash transfers (`BR-02`), credit card repayments (`BR-08`), and loan principal disbursements/recoveries/repayments (`BR-08`).
+  * **Precision & Ordering:** Computes category percentage shares using `Prisma.Decimal` `ROUND_HALF_UP` to 2 decimal places, ordered deterministically by `total_amount DESC, category_name ASC`.
+* **`F-18` Audited Correction History & Account Archival (`GET /api/transactions/:id/audit-history`, `PATCH /api/accounts/:id/archive`):**
+  * **Audit History Ordering & Serialization:** Queries `transaction_audit_logs` ordered reverse-chronologically (newest first) by `sequence_number DESC` (with `created_at DESC, id DESC` fallback) and serializes `BIGINT` `sequence_number` as a decimal string to preserve precision above `Number.MAX_SAFE_INTEGER`.
+  * **Multi-Layer Immutability:** Enforced via absence of mutation endpoints (`405`/`404`), relational foreign key `onDelete: Restrict` (`409 AUDIT_HISTORY_PROTECTED`), and the PostgreSQL `BEFORE UPDATE OR DELETE` trigger (`prevent_audit_log_mutation()`).
+  * **Account Archival Restrictions & Guards:** `PATCH /api/accounts/:id/archive` enforces zero computed balance/debt/receivable (`422 ACCOUNT_BALANCE_NON_ZERO`) on `CASH`, `LOAN_TAKEN`, and `LOAN_GIVEN` accounts while allowing `INCOME`/`EXPENSE` category archival and unarchival across all 5 types; all transaction creation, duplication, and correction workflows reject any archived `primary_account` or `AllocationLine.target_account` under `acquireAccountRowLocks` with `422 ACCOUNT_ARCHIVED`.
+
 ---
 
 ## 12. Verified Capabilities, Known Limitations & Planned Enhancements
