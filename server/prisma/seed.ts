@@ -4,12 +4,23 @@ import bcrypt from 'bcrypt';
 const defaultPrisma = new PrismaClient();
 
 export const STANDARD_ACCOUNTS = [
-  { name: 'Checking Bank', type: 'CASH' as const },
-  { name: 'Visa Credit Card', type: 'LOAN_TAKEN' as const },
-  { name: 'Salary', type: 'INCOME' as const },
-  { name: 'Dining', type: 'EXPENSE' as const },
-  { name: 'Grocery', type: 'EXPENSE' as const }
+  { name: 'Checking Bank', type: 'CASH' as const, subtype: 'DEFAULT' as const },
+  { name: 'Visa Credit Card', type: 'LOAN_TAKEN' as const, subtype: 'CREDIT_CARD' as const },
+  { name: 'Salary', type: 'INCOME' as const, subtype: 'DEFAULT' as const },
+  { name: 'Dining', type: 'EXPENSE' as const, subtype: 'DEFAULT' as const },
+  { name: 'Grocery', type: 'EXPENSE' as const, subtype: 'DEFAULT' as const }
 ];
+
+export function normalizeAccountName(rawName: string): {
+  displayName: string;
+  normalizedName: string;
+} {
+  const displayName = rawName.trim().replace(/\s+/g, ' ');
+  return {
+    displayName,
+    normalizedName: displayName.toLowerCase()
+  };
+}
 
 async function runInTransaction<T>(
   client: any,
@@ -39,20 +50,24 @@ export async function provisionDemoAccounts(
 
   await runInTransaction(client, async (tx) => {
     for (const acc of STANDARD_ACCOUNTS) {
+      const { displayName, normalizedName } = normalizeAccountName(acc.name);
       await tx.account.upsert({
         where: {
           user_id_name: {
             user_id: user.id,
-            name: acc.name
+            name: displayName
           }
         },
         update: {},
         create: {
           user_id: user.id,
-          name: acc.name,
+          name: displayName,
+          normalized_name: normalizedName,
           type: acc.type,
+          subtype: acc.subtype,
           opening_balance: 0.00,
-          is_opening_locked: false
+          is_opening_locked: false,
+          is_archived: false
         }
       });
     }

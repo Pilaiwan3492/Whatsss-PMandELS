@@ -23,8 +23,10 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
   onSuccess
 }) => {
   const safeAccounts = accounts || [];
-  const creditCardAccounts = safeAccounts.filter((a) => a.type === 'LOAN_TAKEN');
-  const expenseAccounts = safeAccounts.filter((a) => a.type === 'EXPENSE');
+  const creditCardAccounts = safeAccounts.filter(
+    (a) => a.type === 'LOAN_TAKEN' && (!a.subtype || a.subtype === 'CREDIT_CARD') && !a.is_archived
+  );
+  const expenseAccounts = safeAccounts.filter((a) => a.type === 'EXPENSE' && !a.is_archived);
 
   const [primaryAccountId, setPrimaryAccountId] = useState<string>('');
   const [totalAmount, setTotalAmount] = useState<string>('');

@@ -5,9 +5,14 @@ import { useAuth } from '../context/AuthContext.js';
 interface ProtectedRouteProps {
   children: React.ReactElement;
   disallowAdmin?: boolean;
+  requireAdmin?: boolean;
 }
 
-export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, disallowAdmin = false }) => {
+export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
+  children,
+  disallowAdmin = false,
+  requireAdmin = false
+}) => {
   const { isAuthenticated, role, isLoading } = useAuth();
 
   if (isLoading) {
@@ -25,6 +30,10 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, disall
   }
 
   if (disallowAdmin && role === 'ADMIN') {
+    return <Navigate to="/access-denied" replace />;
+  }
+
+  if (requireAdmin && role !== 'ADMIN') {
     return <Navigate to="/access-denied" replace />;
   }
 

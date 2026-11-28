@@ -20,6 +20,12 @@ enum AccountType {
   EXPENSE
 }
 
+enum AccountSubtype {
+  DEFAULT
+  CREDIT_CARD
+  GENERAL_LOAN
+}
+
 model User {
   id            String        @id @default(uuid())
   username      String        @unique
@@ -40,15 +46,19 @@ model Account {
   user_id              String
   user                 User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
   name                 String           @db.VarChar(100)
+  normalized_name      String           @default("") @db.VarChar(100)
   type                 AccountType
+  subtype              AccountSubtype   @default(DEFAULT)
   opening_balance      Decimal          @default(0.00) @db.Decimal(12, 2)
   is_opening_locked    Boolean          @default(false)
+  is_archived          Boolean          @default(false)
   created_at           DateTime         @default(now())
   updated_at           DateTime         @default(now()) @updatedAt
   primary_transactions Transaction[]    @relation("PrimaryAccountTransactions")
   allocation_lines     AllocationLine[] @relation("AccountAllocations")
 
   @@unique([user_id, name])
+  @@unique([user_id, normalized_name])
   @@index([user_id])
   @@map("accounts")
 }
@@ -59,17 +69,20 @@ enum TransactionForm {
 }
 
 model Transaction {
-  id                 String           @id @default(uuid())
+  id                 String                @id @default(uuid())
   user_id            String
-  user               User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user               User                  @relation(fields: [user_id], references: [id], onDelete: Cascade)
   primary_account_id String
-  primary_account    Account          @relation("PrimaryAccountTransactions", fields: [primary_account_id], references: [id], onDelete: Restrict)
+  primary_account    Account               @relation("PrimaryAccountTransactions", fields: [primary_account_id], references: [id], onDelete: Restrict)
   form               TransactionForm
-  total_amount       Decimal          @db.Decimal(12, 2)
-  transaction_date   DateTime         @db.Date
-  description        String?          @db.VarChar(255)
-  created_at         DateTime         @default(now())
+  total_amount       Decimal               @db.Decimal(12, 2)
+  transaction_date   DateTime              @db.Date
+  description        String?               @db.VarChar(255)
+  is_favorite        Boolean               @default(false)
+  created_at         DateTime              @default(now())
+  updated_at         DateTime              @default(now()) @updatedAt
   allocation_lines   AllocationLine[]
+  audit_logs         TransactionAuditLog[]
 
   @@index([user_id, transaction_date])
   @@index([primary_account_id])
@@ -88,4 +101,24 @@ model AllocationLine {
   @@index([transaction_id])
   @@index([target_account_id])
   @@map("allocation_lines")
+}
+
+model TransactionAuditLog {
+  id                String      @id @default(uuid())
+  // Monotonic, database-allocated event order (BIGSERIAL). Allocated while the corrected Transaction row is
+  // held FOR UPDATE, so for a given transaction_id sequence_number order == lock-acquisition/commit order.
+  // MUST be used (instead of random UUID `id` or same-millisecond `created_at`) to order audit events.
+  sequence_number   BigInt      @unique @default(autoincrement())
+  transaction_id    String
+  transaction       Transaction @relation(fields: [transaction_id], references: [id], onDelete: Restrict)
+  user_id           String
+  action            String      @default("CORRECTED") @db.VarChar(50)
+  previous_snapshot Json
+  new_snapshot      Json
+  created_at        DateTime    @default(now())
+
+  @@index([transaction_id, created_at(sort: Desc), id(sort: Desc)])
+  @@index([transaction_id, sequence_number(sort: Desc)])
+  @@index([user_id])
+  @@map("transaction_audit_logs")
 }

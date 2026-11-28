@@ -4,7 +4,10 @@ import { roleGuard } from '../middlewares/roleGuard.js';
 import {
   getAccounts,
   getAccountById,
-  updateOpeningBalance
+  createAccount,
+  updateAccount,
+  updateOpeningBalance,
+  archiveAccount
 } from '../controllers/account.controller.js';
 
 const router = Router();
@@ -14,7 +17,10 @@ router.use(authGuard);
 router.use(roleGuard);
 
 router.get('/', getAccounts);
+router.post('/', createAccount);
 router.get('/:id', getAccountById);
+router.patch('/:id', updateAccount);
 router.patch('/:id/opening-balance', updateOpeningBalance);
+router.patch('/:id/archive', archiveAccount);
 
 export default router;

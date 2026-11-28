@@ -53,11 +53,13 @@ export interface TransactionHistoryRecord {
     id: string;
     name: string;
     type: string;
+    subtype?: string;
   };
   form: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
   total_amount: number;
   transaction_date: string;
   description: string | null;
+  is_favorite?: boolean;
   created_at: string;
   allocation_lines: Array<{
     id: string;
@@ -67,6 +69,7 @@ export interface TransactionHistoryRecord {
       id: string;
       name: string;
       type: string;
+      subtype?: string;
     };
     amount: number;
     notes: string | null;
@@ -160,6 +163,24 @@ export function computeFinancialBalances(input: {
         ) {
           creditDebtDecimal = creditDebtDecimal.sub(lineAmount);
         }
+
+        // General Loan Borrowing: RECEIVE_MONEY on CASH targeting LOAN_TAKEN increases debt (F-13, BR-08)
+        if (
+          tx.form === 'RECEIVE_MONEY' &&
+          cashAccountIds.has(tx.primary_account_id) &&
+          (targetType === 'LOAN_TAKEN' || loanTakenAccountIds.has(line.target_account_id))
+        ) {
+          creditDebtDecimal = creditDebtDecimal.add(lineAmount);
+        }
+
+        // Internal Cash Transfer: PAYMENT_CHARGE from CASH targeting CASH increases destination CASH balance (F-11, BR-02)
+        if (
+          tx.form === 'PAYMENT_CHARGE' &&
+          cashAccountIds.has(tx.primary_account_id) &&
+          (targetType === 'CASH' || cashAccountIds.has(line.target_account_id))
+        ) {
+          bankBalanceDecimal = bankBalanceDecimal.add(lineAmount);
+        }
       }
     }
   }
@@ -214,6 +235,7 @@ export async function getFinancialSummary(
 
   // Compute dynamic Cash transactions (Inflows and Outflows)
   let bankReceiveTotal = zero;
+  let bankIncomingTransferTotal = zero;
   let bankPaymentTotal = zero;
   if (typeof prismaClient.transaction?.aggregate === 'function' && cashAccounts.length > 0) {
     const cashIds = cashAccounts.map((a) => a.id);
@@ -242,7 +264,36 @@ export async function getFinancialSummary(
     }
   }
 
-  const finalBankBalance = bankOpeningDecimal.add(bankReceiveTotal).sub(bankPaymentTotal);
+  // Incoming internal cash transfers (PAYMENT_CHARGE from CASH targeting CASH) restore destination cash (F-11, BR-02)
+  if (typeof prismaClient.allocationLine?.aggregate === 'function' && cashAccounts.length > 0) {
+    const cashIds = cashAccounts.map((a) => a.id);
+    const transferAgg = await prismaClient.allocationLine.aggregate({
+      where: {
+        target_account_id: { in: cashIds },
+        target_account: {
+          type: 'CASH',
+          user_id: userId
+        },
+        transaction: {
+          user_id: userId,
+          form: 'PAYMENT_CHARGE',
+          primary_account: {
+            type: 'CASH',
+            user_id: userId
+          }
+        }
+      },
+      _sum: { amount: true }
+    });
+    if (transferAgg._sum?.amount) {
+      bankIncomingTransferTotal = new Prisma.Decimal(transferAgg._sum.amount.toString());
+    }
+  }
+
+  const finalBankBalance = bankOpeningDecimal
+    .add(bankReceiveTotal)
+    .add(bankIncomingTransferTotal)
+    .sub(bankPaymentTotal);
 
   // Compute dynamic Credit Card Debt (Charges on LOAN_TAKEN accounts minus repayments) (BR-04, BR-07)
   if (typeof prismaClient.transaction?.aggregate === 'function' && loanTakenAccounts.length > 0) {
@@ -260,7 +311,7 @@ export async function getFinancialSummary(
     }
   }
 
-  // Settlements/repayments targeting LOAN_TAKEN accounts decrease debt (BR-07, WP-05)
+  // Settlements/repayments targeting LOAN_TAKEN accounts decrease debt (BR-07, WP-05, F-13)
   if (typeof prismaClient.allocationLine?.aggregate === 'function' && loanTakenAccounts.length > 0) {
     const loanTakenIds = loanTakenAccounts.map((a) => a.id);
     const settlementAgg = await prismaClient.allocationLine.aggregate({
@@ -283,6 +334,29 @@ export async function getFinancialSummary(
     });
     if (settlementAgg._sum?.amount) {
       creditDebtDecimal = creditDebtDecimal.sub(new Prisma.Decimal(settlementAgg._sum.amount.toString()));
+    }
+
+    // General Loan Borrowings (RECEIVE_MONEY on CASH targeting LOAN_TAKEN) increase liability debt (F-13, BR-08)
+    const borrowingAgg = await prismaClient.allocationLine.aggregate({
+      where: {
+        transaction: {
+          user_id: userId,
+          form: 'RECEIVE_MONEY',
+          primary_account: {
+            type: 'CASH',
+            user_id: userId
+          }
+        },
+        target_account_id: { in: loanTakenIds },
+        target_account: {
+          type: 'LOAN_TAKEN',
+          user_id: userId
+        }
+      },
+      _sum: { amount: true }
+    });
+    if (borrowingAgg._sum?.amount) {
+      creditDebtDecimal = creditDebtDecimal.add(new Prisma.Decimal(borrowingAgg._sum.amount.toString()));
     }
   }
 
@@ -455,4 +529,185 @@ export async function getTransactionHistory(
       }))
     };
   });
+}
+
+export class ReportError extends Error {
+  statusCode: number;
+  code: string;
+  details: any[];
+
+  constructor(
+    message: string,
+    statusCode: number = 400,
+    code: string = 'INVALID_DATE_RANGE',
+    details: any[] = []
+  ) {
+    super(message);
+    this.name = 'ReportError';
+    this.statusCode = statusCode;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+export interface CategorySpendingItem {
+  category_id: string;
+  category_name: string;
+  total_amount: string;
+  percentage: string;
+  transaction_count: number;
+}
+
+export interface CategorySpendingReportResult {
+  period: {
+    start_date: string | null;
+    end_date: string | null;
+  };
+  total_expense: string;
+  categories: CategorySpendingItem[];
+}
+
+export interface CategorySpendingQuery {
+  startDate?: unknown;
+  endDate?: unknown;
+}
+
+function parseReportCalendarDate(raw: unknown, fieldName: string): Date {
+  if (typeof raw !== 'string') {
+    throw new ReportError(`${fieldName} must be a valid YYYY-MM-DD calendar date.`, 400, 'INVALID_DATE_RANGE');
+  }
+  const trimmed = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    throw new ReportError(`${fieldName} must be in YYYY-MM-DD format.`, 400, 'INVALID_DATE_RANGE');
+  }
+  const [yStr, mStr, dStr] = trimmed.split('-');
+  const year = parseInt(yStr, 10);
+  const month = parseInt(mStr, 10);
+  const day = parseInt(dStr, 10);
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  if (utc.getUTCFullYear() !== year || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) {
+    throw new ReportError(`${fieldName} is not a valid calendar date.`, 400, 'INVALID_DATE_RANGE');
+  }
+  return utc;
+}
+
+/**
+ * Computes category-wise EXPENSE spending summaries for a tenant within an optional date range (F-17, FR-20).
+ * Strictly excludes opening balances (BR-02), internal cash transfers (F-11, BR-02),
+ * credit card repayments (F-07, BR-08), and loan principal flows (F-12, F-13, BR-08).
+ */
+export async function getCategorySpendingReport(
+  userId: string,
+  query: CategorySpendingQuery = {},
+  prismaClient: PrismaClient = defaultPrisma
+): Promise<CategorySpendingReportResult> {
+  const startDateRaw = query.startDate !== undefined && query.startDate !== '' ? query.startDate : undefined;
+  const endDateRaw = query.endDate !== undefined && query.endDate !== '' ? query.endDate : undefined;
+
+  let startDateObj: Date | undefined;
+  let endDateObj: Date | undefined;
+
+  if (startDateRaw !== undefined) {
+    startDateObj = parseReportCalendarDate(startDateRaw, 'startDate');
+  }
+  if (endDateRaw !== undefined) {
+    endDateObj = parseReportCalendarDate(endDateRaw, 'endDate');
+  }
+  if (startDateObj && endDateObj && startDateObj.getTime() > endDateObj.getTime()) {
+    throw new ReportError('startDate must be less than or equal to endDate.', 400, 'INVALID_DATE_RANGE');
+  }
+
+  const transactionDateFilter =
+    startDateObj || endDateObj
+      ? {
+          ...(startDateObj ? { gte: startDateObj } : {}),
+          ...(endDateObj ? { lte: endDateObj } : {})
+        }
+      : undefined;
+
+  const lines = await prismaClient.allocationLine.findMany({
+    where: {
+      target_account: {
+        type: 'EXPENSE',
+        user_id: userId
+      },
+      transaction: {
+        user_id: userId,
+        form: 'PAYMENT_CHARGE',
+        ...(transactionDateFilter ? { transaction_date: transactionDateFilter } : {})
+      }
+    },
+    select: {
+      transaction_id: true,
+      target_account_id: true,
+      amount: true,
+      target_account: {
+        select: {
+          id: true,
+          name: true
+        }
+      }
+    }
+  });
+
+  const zero = new Prisma.Decimal('0.00');
+  const categoryMap = new Map<
+    string,
+    {
+      category_id: string;
+      category_name: string;
+      totalDecimal: Prisma.Decimal;
+      transactionIds: Set<string>;
+    }
+  >();
+
+  let totalExpenseDecimal = zero;
+
+  for (const line of lines) {
+    const amountDecimal = new Prisma.Decimal(line.amount.toString());
+    totalExpenseDecimal = totalExpenseDecimal.add(amountDecimal);
+
+    const categoryId = line.target_account?.id ?? line.target_account_id;
+    const categoryName = line.target_account?.name ?? 'Unknown Category';
+    const existing = categoryMap.get(categoryId);
+    if (existing) {
+      existing.totalDecimal = existing.totalDecimal.add(amountDecimal);
+      existing.transactionIds.add(line.transaction_id);
+    } else {
+      categoryMap.set(categoryId, {
+        category_id: categoryId,
+        category_name: categoryName,
+        totalDecimal: amountDecimal,
+        transactionIds: new Set([line.transaction_id])
+      });
+    }
+  }
+
+  const sortedEntries = Array.from(categoryMap.values()).sort((a, b) => {
+    const cmp = b.totalDecimal.comparedTo(a.totalDecimal);
+    if (cmp !== 0) return cmp;
+    return a.category_name.localeCompare(b.category_name);
+  });
+
+  const categories: CategorySpendingItem[] = sortedEntries.map((entry) => {
+    const percentageDecimal = totalExpenseDecimal.gt(zero)
+      ? entry.totalDecimal.mul(100).div(totalExpenseDecimal).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+      : zero;
+    return {
+      category_id: entry.category_id,
+      category_name: entry.category_name,
+      total_amount: entry.totalDecimal.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toFixed(2),
+      percentage: percentageDecimal.toFixed(2),
+      transaction_count: entry.transactionIds.size
+    };
+  });
+
+  return {
+    period: {
+      start_date: typeof startDateRaw === 'string' ? startDateRaw.trim() : null,
+      end_date: typeof endDateRaw === 'string' ? endDateRaw.trim() : null
+    },
+    total_expense: totalExpenseDecimal.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toFixed(2),
+    categories
+  };
 }

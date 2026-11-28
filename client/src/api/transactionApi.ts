@@ -105,6 +105,65 @@ export interface RepaymentApiResponse {
   data: RepaymentResponseData;
 }
 
+export interface TransferPayload {
+  from_account_id: string;
+  to_account_id: string;
+  amount: string;
+  transaction_date: string;
+  description?: string | null;
+}
+
+export interface TransferResponseData {
+  transaction: RepaymentTransaction;
+  updated_from_cash_balance: string;
+  updated_to_cash_balance: string;
+}
+
+export interface TransferApiResponse {
+  success: boolean;
+  data: TransferResponseData;
+}
+
+export interface LoanFlowPayload {
+  from_account_id: string;
+  to_account_id: string;
+  amount: string;
+  transaction_date: string;
+  description?: string | null;
+}
+
+export interface LoanTransaction {
+  id: string;
+  primary_account_id: string;
+  form: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
+  total_amount: string;
+  transaction_date: string;
+  description: string | null;
+  allocations: AllocationItem[];
+}
+
+export interface LoanGivenResponseData {
+  transaction: LoanTransaction;
+  updated_cash_balance: string;
+  updated_receivable: string;
+}
+
+export interface LoanGivenApiResponse {
+  success: boolean;
+  data: LoanGivenResponseData;
+}
+
+export interface GeneralLoanResponseData {
+  transaction: LoanTransaction;
+  updated_cash_balance: string;
+  updated_debt: string;
+}
+
+export interface GeneralLoanApiResponse {
+  success: boolean;
+  data: GeneralLoanResponseData;
+}
+
 export interface HistoryAllocationLine {
   id: string;
   transaction_id: string;
@@ -113,6 +172,7 @@ export interface HistoryAllocationLine {
     id: string;
     name: string;
     type: string;
+    subtype?: string;
   };
   amount: number;
   notes: string | null;
@@ -126,13 +186,31 @@ export interface HistoryTransaction {
     id: string;
     name: string;
     type: string;
+    subtype?: string;
   };
   form: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
   total_amount: number;
   transaction_date: string;
   description: string | null;
+  is_favorite?: boolean;
   created_at: string;
   allocation_lines: HistoryAllocationLine[];
+}
+
+export interface TransactionFilterParams {
+  startDate?: string;
+  endDate?: string;
+  accountId?: string;
+  categoryId?: string;
+  form?: 'PAYMENT_CHARGE' | 'RECEIVE_MONEY';
+  type?: 'INCOME' | 'EXPENSE' | 'REPAYMENT' | 'TRANSFER' | 'LOAN';
+  favorite?: 'true' | 'false';
+  q?: string;
+}
+
+export interface DuplicatePayload {
+  transaction_date?: string;
+  description?: string;
 }
 
 export interface TransactionsApiResponse {
@@ -172,9 +250,148 @@ export async function recordRepayment(payload: RepaymentPayload): Promise<Repaym
 }
 
 /**
- * Fetches chronological transaction history for the authenticated tenant (WP-06, F-09, FR-11, AC-09-1).
+ * Records an internal cash transfer between two owned CASH accounts (F-11, WP-08, FR-13, BR-02).
  */
-export async function getTransactions(): Promise<HistoryTransaction[]> {
+export async function recordTransfer(payload: TransferPayload): Promise<TransferResponseData> {
+  const res = await axiosClient.post<TransferApiResponse>('/transactions/transfer', payload);
+  return res.data.data;
+}
+
+export interface CorrectTransactionPayload {
+  total_amount: string;
+  transaction_date: string;
+  description?: string | null;
+  allocations: AllocationLinePayload[];
+}
+
+/**
+ * Disburses funds from a CASH account to a LOAN_GIVEN account (F-12, WP-09, FR-14, BR-08).
+ */
+export async function recordLoanGiven(payload: LoanFlowPayload): Promise<LoanGivenResponseData> {
+  const res = await axiosClient.post<LoanGivenApiResponse>('/transactions/loan-given', payload);
+  return res.data.data;
+}
+
+/**
+ * Recovers principal from a LOAN_GIVEN account into a CASH account (F-12, WP-09, FR-14, BR-08).
+ */
+export async function recordLoanRecovery(payload: LoanFlowPayload): Promise<LoanGivenResponseData> {
+  const res = await axiosClient.post<LoanGivenApiResponse>('/transactions/loan-recovery', payload);
+  return res.data.data;
+}
+
+/**
+ * Records money borrowed from a general LOAN_TAKEN account (subtype GENERAL_LOAN) into a CASH account (F-13, WP-09, FR-15, BR-08).
+ */
+export async function recordLoanBorrowing(payload: LoanFlowPayload): Promise<GeneralLoanResponseData> {
+  const res = await axiosClient.post<GeneralLoanApiResponse>('/transactions/loan-borrowing', payload);
+  return res.data.data;
+}
+
+/**
+ * Repays general loan principal from a CASH account to a general LOAN_TAKEN account (subtype GENERAL_LOAN) (F-13, WP-09, FR-15, BR-08).
+ */
+export async function recordLoanRepayment(payload: LoanFlowPayload): Promise<GeneralLoanResponseData> {
+  const res = await axiosClient.post<GeneralLoanApiResponse>('/transactions/loan-repayment', payload);
+  return res.data.data;
+}
+
+/**
+ * Fetches chronological transaction history for the authenticated tenant with optional
+ * search & multi-criteria filtering (WP-06, WP-10, F-09, F-15, FR-11, FR-18).
+ */
+export async function getTransactions(
+  filters?: TransactionFilterParams
+): Promise<HistoryTransaction[]> {
+  if (filters) {
+    const cleanParams: Record<string, string> = {};
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== null && String(v).trim() !== '') {
+        cleanParams[k] = String(v).trim();
+      }
+    }
+    if (Object.keys(cleanParams).length > 0) {
+      const res = await reportClient.get<TransactionsApiResponse>('/transactions', {
+        params: cleanParams
+      });
+      return res.data.data.transactions;
+    }
+  }
   const res = await reportClient.get<TransactionsApiResponse>('/transactions');
   return res.data.data.transactions;
+}
+
+/**
+ * Atomically corrects an existing user-owned transaction (F-16, WP-11, FR-19, AC-16-1..4).
+ */
+export async function correctTransaction(
+  transactionId: string,
+  payload: CorrectTransactionPayload
+): Promise<any> {
+  const res = await axiosClient.put<{ success: boolean; data: { transaction: any } }>(
+    `/transactions/${transactionId}`,
+    payload
+  );
+  return res.data.data.transaction;
+}
+
+/**
+ * Toggles favorite status on a user-owned transaction (F-14, WP-10, FR-16, AC-14-1).
+ */
+export async function toggleFavorite(
+  transactionId: string,
+  is_favorite: boolean
+): Promise<HistoryTransaction> {
+  const res = await axiosClient.patch<{ success: boolean; data: { transaction: HistoryTransaction } }>(
+    `/transactions/${transactionId}/favorite`,
+    { is_favorite }
+  );
+  return res.data.data.transaction;
+}
+
+/**
+ * Duplicates an existing user-owned transaction with live re-validation (F-14, WP-10, FR-17, AC-14-2..3).
+ */
+export async function duplicateTransaction(
+  transactionId: string,
+  payload: DuplicatePayload = {}
+): Promise<any> {
+  const res = await axiosClient.post<{ success: boolean; data: { transaction: any } }>(
+    `/transactions/${transactionId}/duplicate`,
+    payload
+  );
+  return res.data.data.transaction;
+}
+
+export interface TransactionAuditSnapshot {
+  total_amount: string;
+  transaction_date: string;
+  description: string | null;
+  allocations?: Array<{
+    target_account_id: string;
+    target_account_name?: string;
+    amount: string;
+    notes: string | null;
+  }>;
+}
+
+export interface TransactionAuditLogEntry {
+  id: string;
+  sequence_number?: string;
+  transaction_id: string;
+  user_id: string;
+  action: string;
+  previous_snapshot: TransactionAuditSnapshot;
+  new_snapshot: TransactionAuditSnapshot;
+  created_at: string;
+}
+
+export async function getTransactionAuditHistory(
+  transactionId: string
+): Promise<TransactionAuditLogEntry[]> {
+  const res = await axiosClient.get<{
+    success: boolean;
+    data: { transaction_id: string; audit_logs: TransactionAuditLogEntry[] };
+  }>(`/transactions/${transactionId}/audit-history`);
+  return res.data.data.audit_logs;
 }

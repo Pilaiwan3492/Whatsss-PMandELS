@@ -471,6 +471,18 @@ export async function recordExpense(
           throw new ExpenseError('Target allocation account not found.', 404, 'NOT_FOUND');
         }
 
+        // System Archived Account Guard (Section 1.2 of Sprint 2 Contracts)
+        if (
+          (primaryAccount as any).is_archived ||
+          targetAccounts.some((a: any) => Boolean(a.is_archived))
+        ) {
+          throw new ExpenseError(
+            'Cannot record transaction referencing an archived account.',
+            422,
+            'ACCOUNT_ARCHIVED'
+          );
+        }
+
         // D. Atomically lock opening balances of all involved accounts (AC-03-3)
         await lockAccounts(tx, [primaryAccount.id, ...uniqueTargetIds], userId);
 

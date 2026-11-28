@@ -3,8 +3,15 @@
 
 > **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents  
 > **Semester:** 1/2026 | **Project Theme:** Theme 7 — Personal Money and Expense Logging System  
-> **Deliverable:** Project Deliverable 1 (Part C: System-Level SDS)  
-> **Status:** Authoritative Baseline (Frozen)  
+> **Deliverable:** Project Deliverable 1 (Part C: System-Level SDS) & Deliverable 2 (Part D: Sprint 2/3 Schema & Architecture Evolution)  
+> **Status:** Accepted Sprint 1 Baseline (`v0.1.0-sprint1`, Frozen) + Lab 7 `BR-07 v1.1` Amendment + Sprint 2 & Sprint 3 Evolution (`v2.1-wp12`, `WP-08`..`WP-11` Merged `f3cd70b`; `WP-12` Part C Implemented & CI-Verified on [PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66) `e23416a9fd3f3d8326e6e60799fb2bed9e3c5c2f`, [Main CI #311](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109538015), [C-01 #165](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109542107); Part E Pending)
+
+### Document Revision History
+| Version | Status | Date | Scope / Reference | Summary |
+|---|---|---|---|---|
+| `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original Sprint 1 System-Level SDS (`F-01`..`F-09`). |
+| `v2.0-contract` | **Sprint 2 & 3 Contracted Architecture Evolution** | 2026-11-26 | `WP-07` / [Issue #55](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/55) | Adds Section 11 specifying consolidated Sprint 2/3 Prisma schema evolution (`AccountSubtype` discriminator for Credit Card vs. General Loan Taken resolving the Lab 7 `BR-07 v1.1` prerequisite, `Account.is_archived`, `Transaction.is_favorite`, and `TransactionAuditLog`), extended balance equations (`F-11`..`F-13`), and Admin governance routes (`F-19`). |
+| `v2.1-wp12` | **WP-11 Merged & WP-12 Part C Implemented** | 2026-11-28 | `WP-11` ([PR #64](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/64) `f3cd70b`) & `WP-12` ([PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66) `e23416a9fd3f3d8326e6e60799fb2bed9e3c5c2f`) | Records implemented `TransactionAuditLog.sequence_number` (`BIGSERIAL`, serialized as decimal string to preserve `BIGINT` precision) ordering under row locks (`GET /api/transactions/:id/audit-history` ordered `sequence_number DESC`), `PATCH /api/accounts/:id/archive` (`acquireAccountRowLocks`, `INVALID_ARCHIVE_PAYLOAD`), and clarifies §11.1 audit-history immutability boundary vs. `F-16` `PUT/PATCH /api/transactions/:id` corrections. |
 
 ---
 
@@ -437,4 +444,125 @@ All runtime configuration is managed through externalized environment variables 
 ## 10. Deployment Approach
 
 * **Sprint 1 Development:** Runs locally with PostgreSQL 16 hosted via Docker Compose (`docker compose up -d`) and the Express application executed locally via Node.js.
-* **Lab 5 Preparation:** The architecture is stateless, container-ready, and requires only external environment configuration for future GCP Cloud Run and Cloud SQL deployment.
+* **Lab 5–7 & Deliverable 2 Cloud Deployment:** The application is packaged via a multi-stage `Dockerfile` and deployed automatically to **Google Cloud Run** (`asia-southeast1`) connected to **Cloud SQL for PostgreSQL 16** via `.github/workflows/deploy.yml` using Workload Identity Federation (WIF) and Secret Manager.
+
+---
+
+## 11. Sprint 2 & Sprint 3 Schema, Ledger & Architecture Evolution (`v2.0-contract`, `WP-07` / Issue #55)
+
+To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) features while preserving 100% backward compatibility with the Sprint 1 Golden Domain Journey (`F-01`..`F-09`) and the Lab 7 `BR-07 v1.1` repayment rules, the relational data model and domain services are extended as follows (implemented in `WP-08` / [Issue #56](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/56)):
+
+### 11.1 Consolidated Prisma Schema Evolution (`server/prisma/schema.prisma`)
+
+1. **`AccountSubtype` Discriminator Enum & Normalized Case-Insensitive Account Name Uniqueness (`F-10`, `F-13`, `BR-07 v1.1` Prerequisite):**
+   ```prisma
+   enum AccountSubtype {
+     DEFAULT
+     CREDIT_CARD
+     GENERAL_LOAN
+   }
+   ```
+   * Added to `Account`:
+     * `subtype AccountSubtype @default(DEFAULT)`
+     * `normalized_name String @db.VarChar(100)` *(populated by `normalizeAccountName(name) = name.trim().replace(/\s+/g, ' ').toLowerCase()` across all layers)*
+     * `is_archived Boolean @default(false)`
+     * `@@unique([user_id, normalized_name])` *(plus PostgreSQL functional unique expression index `CREATE UNIQUE INDEX accounts_user_id_normalized_name_idx ON accounts (user_id, LOWER(REGEXP_REPLACE(BTRIM(name), '\s+', ' ', 'g')));` in the `WP-08` migration)*
+   * **Account Name Normalization & Uniqueness Policy (`F-10`):**
+     * Before persisting on `POST /api/accounts` or `PATCH /api/accounts/:id`, the display `name` is normalized by trimming leading/trailing whitespace and collapsing internal whitespace runs (`displayName = rawName.trim().replace(/\s+/g, ' ')`), and `normalized_name = displayName.toLowerCase()` is stored in `accounts.normalized_name`.
+     * Both application-level pre-checks and database-level unique constraints (`@@unique([user_id, normalized_name])` / Prisma `P2002` unique constraint violation inside `prisma.$transaction`) map deterministically to **`HTTP 409 Conflict` (`DUPLICATE_ACCOUNT_NAME`)**. Concurrent requests attempting to create `"Checking Bank"`, `"checking bank"`, or `"  Checking   Bank  "` for the same user are serialized by the database unique index so at most **1** account record is created.
+   * **Domain Separation & Migration Backfill Rule (`F-07` vs. `F-13`, `backfill_loan_taken_subtypes()`):**
+     * Seeded `Visa Credit Card` and user-created credit card accounts have `type = LOAN_TAKEN` and `subtype = CREDIT_CARD`.
+     * User-created general borrowing accounts (`F-13`, `FR-15`) have `type = LOAN_TAKEN` and `subtype = GENERAL_LOAN`.
+     * The `WP-08` SQL migration function `backfill_loan_taken_subtypes()` deterministically classifies pre-migration `LOAN_TAKEN` accounts across 5 cases:
+       1. **Credit Card Purchase History:** Legacy `LOAN_TAKEN` (`subtype = 'DEFAULT'`) with direct `PAYMENT_CHARGE` transactions (`primary_account_id = account.id`) $\rightarrow$ `CREDIT_CARD`.
+       2. **General Loan Borrowing History:** Legacy `LOAN_TAKEN` (`subtype = 'DEFAULT'`) with `RECEIVE_MONEY` borrowing allocations from a `CASH` primary account and zero direct `PAYMENT_CHARGE` purchase charges $\rightarrow$ `GENERAL_LOAN`.
+       3. **No Transaction History:** Legacy `LOAN_TAKEN` (`subtype = 'DEFAULT'`) with zero transactions $\rightarrow$ `CREDIT_CARD` (the documented default for Sprint 1 `LOAN_TAKEN` accounts).
+       4. **Already Explicitly Assigned Subtype:** `LOAN_TAKEN` accounts that already have `subtype = 'CREDIT_CARD'` or `subtype = 'GENERAL_LOAN'` $\rightarrow$ preserved unchanged (never overwritten).
+       5. **Mixed Transaction History:** Legacy `LOAN_TAKEN` (`subtype = 'DEFAULT'`) with both direct `PAYMENT_CHARGE` purchase charges and `RECEIVE_MONEY` borrowing allocations $\rightarrow$ deterministically classified as `CREDIT_CARD` so credit-card `BR-07 v1.1` repayment rules remain enforced on any account with direct credit card purchase charges.
+     * `POST /api/transactions/repayment` (`F-07`) requires `toAccount.type === 'LOAN_TAKEN' && toAccount.subtype === 'CREDIT_CARD'` (enforcing `BR-07 v1.1` minimum repayment floor `max(500.00, 10%)` and `100.00 THB` partial cash reserve exclusively on credit cards).
+     * `POST /api/transactions/loan-borrowing` and `POST /api/transactions/loan-repayment` (`F-13`) require `type === 'LOAN_TAKEN' && subtype === 'GENERAL_LOAN'`.
+
+2. **`Transaction` Favorite & Update Tracking (`F-14`, `F-16`):**
+   * Added to `Transaction`:
+     * `is_favorite Boolean @default(false)` (`FR-16`)
+     * `updated_at DateTime @default(now()) @updatedAt` (`FR-19`)
+     * `audit_logs TransactionAuditLog[]` (`FR-21`)
+
+3. **`TransactionAuditLog` Model, Immutability & Retention Policy (`F-16`, `F-18`, `FR-21`):**
+   ```prisma
+   model TransactionAuditLog {
+     id                String      @id @default(uuid())
+     // Monotonic database-allocated event order (BIGSERIAL) allocated under Transaction row locks.
+     // Required instead of timestamp/UUID ordering because rapid/concurrent corrections can share identical timestamps.
+     sequence_number   BigInt      @unique @default(autoincrement())
+     transaction_id    String
+     transaction       Transaction @relation(fields: [transaction_id], references: [id], onDelete: Restrict)
+     user_id           String
+     action            String      @default("CORRECTED") @db.VarChar(50)
+     previous_snapshot Json
+     new_snapshot      Json
+     created_at        DateTime    @default(now())
+
+     @@index([transaction_id, created_at(sort: Desc), id(sort: Desc)])
+     @@index([transaction_id, sequence_number(sort: Desc)])
+     @@index([user_id])
+     @@map("transaction_audit_logs")
+   }
+   ```
+   * **Cascade Deletion Prevention (`onDelete: Restrict`):** The foreign key from `transaction_audit_logs(transaction_id)` to `transactions(id)` uses **`onDelete: Restrict`** (never `onDelete: Cascade`). Any attempt to hard-delete a `Transaction` that has audit history is blocked at the database relational constraint level (`P2003` / `409 AUDIT_HISTORY_PROTECTED`) and at the application service layer.
+   * **Audit Log Retention, Application API & Database-Level Immutability Policy (`WP-08` Migration & `WP-12` Verification):**
+     * `TransactionAuditLog` is strictly **append-only**: records are inserted exclusively inside the atomic `prisma.$transaction` of `PUT /api/transactions/:id` (`F-16`) and are retained permanently for the lifetime of the tenant ledger.
+     * **No Application API Update or Delete Surface for Audit History:** The application API exposes **no** update (`PUT`/`PATCH`) or delete (`DELETE`) endpoints on `/api/transactions/:id/audit-history` or `/api/transactions/:id/audit-history/:logId` (returning `405 Method Not Allowed` / `404` on unsupported methods), and exposes no `DELETE /api/transactions/:id` endpoint (`PUT /api/transactions/:id` and `PATCH /api/transactions/:id` remain valid exclusively for `F-16` transaction corrections that append new immutable audit logs). The service layer prohibits calling `transactionAuditLog.update`, `updateMany`, `delete`, or `deleteMany`. `sequence_number` (`BIGINT`) is serialized as a decimal string in API JSON responses to preserve precision beyond `Number.MAX_SAFE_INTEGER`. Snapshot allocation account/category labels are resolved in the UI from the tenant's account list with safe `target_account_id` fallback (storing denormalized historical category names at write time is a separate future enhancement).
+     * **Database-Level Trigger Protection Against Direct Update or Delete:** In addition to `onDelete: Restrict`, the `WP-08` SQL migration installs a PostgreSQL `BEFORE UPDATE OR DELETE ON transaction_audit_logs` trigger (`prevent_audit_log_mutation()`) that raises a database exception (`ERRCODE = '55000'`, message `'TransactionAuditLog records are immutable and cannot be updated or deleted'`). Thus, even a direct SQL `UPDATE` or `DELETE` or raw Prisma `transactionAuditLog.update`/`delete` call is rejected directly by PostgreSQL (`TEST-AUDIT-05` in `WP-12`).
+
+### 11.2 System-Wide Concurrency, Row-Locking & Archived Account Guard Policy
+
+1. **Standardized Pessimistic Row-Locking & Separation of Responsibilities (`acquireAccountRowLocks` vs. `lockAccounts`):**
+   * **`acquireAccountRowLocks(tx, accountIds, userId)` (Concurrency Serialization):**
+     * Deduplicates and sorts `accountIds` in **lexicographical ascending UUID order (`[...new Set(accountIds)].sort()`)** and executes `SELECT id FROM accounts WHERE id IN (...) AND user_id = $userId FOR UPDATE` inside `prisma.$transaction`.
+     * **Purpose:** Acquires PostgreSQL row-level write locks in a canonical deterministic order across all concurrent transactions (`F-04` income, `F-05` expense, `F-07` credit card repayment, `F-11` transfer, `F-12` loan given/recovery, `F-13` general borrowing/repayment, `F-14` duplicate, `F-16` correction, and `F-18` account archive), **preventing deadlocks and race conditions** before any account balance, debt, receivable, or `is_archived` check is evaluated.
+   * **`lockAccounts(tx, accountIds, userId)` (Opening Balance Lifecycle `F-03`):**
+     * Executes `UPDATE accounts SET is_opening_locked = true WHERE id IN (...) AND user_id = $userId AND is_opening_locked = false` inside the same `prisma.$transaction` after domain validations pass.
+     * **Purpose:** Permanently locks the initial `opening_balance` (`AC-03-3`) upon the first committed transaction referencing the account. It does **not** replace `acquireAccountRowLocks`.
+
+2. **System-Level Archived Account Guard (`is_archived` Enforcement Across All Workflows):**
+   * Inside the same `prisma.$transaction` and **after** `acquireAccountRowLocks` has locked all referenced accounts (primary account and every allocation target account), every transaction creation, duplication, or correction workflow (`F-04`, `F-05`, `F-07`, `F-11`, `F-12`, `F-13`, `F-14`, `F-16`) inspects `account.is_archived`:
+     * For new or duplicated transactions (`F-04`, `F-05`, `F-07`, `F-11`, `F-12`, `F-13`, `F-14`): if the `primary_account` or **any** `AllocationLine.target_account` has `is_archived === true`, the transaction aborts immediately with **`HTTP 422 Unprocessable Entity` (`ACCOUNT_ARCHIVED`)** and performs zero database writes.
+     * For transaction corrections (`F-16`): if the correction introduces or references an archived `primary_account` or `target_account`, it is rejected with **`HTTP 422 Unprocessable Entity` (`ACCOUNT_ARCHIVED`)** and rolled back.
+     * Because both `PATCH /api/accounts/:id/archive` (`F-18`) and all transaction creation endpoints acquire `SELECT ... FOR UPDATE` on the account row via `acquireAccountRowLocks`, a concurrent archive request and a concurrent transaction creation request on the same account are strictly serialized in PostgreSQL.
+
+3. **Fail-Closed Active User Verification (`F-19`, `is_active` Enforcement):**
+   * `authGuard.ts` verifies the signed JWT cookie **and** performs an authoritative database lookup (`prisma.user.findUnique({ where: { id: decoded.id }, select: { id: true, username: true, role: true, is_active: true } })`) on every protected request:
+     * If the user record does not exist $\rightarrow$ `401 UNAUTHORIZED`.
+     * If `user.is_active === false` $\rightarrow$ **`403 Forbidden` (`ACCOUNT_DISABLED`)** (immediately revoking access even if the user holds a previously issued, unexpired JWT cookie).
+     * **Fail-Closed Database Error Policy:** If the database lookup throws or fails to verify `is_active`, `authGuard` **fails closed** (denies access with `503 SERVICE_UNAVAILABLE` / `AUTH_STATE_UNVERIFIABLE` and never falls back to trusting the stateless JWT payload).
+
+### 11.3 Extended Ledger Accounting Matrix (`F-11`, `F-12`, `F-13`)
+
+| Workflow & Feature | Endpoint | `Transaction.form` | `primary_account` | `AllocationLine.target_account` | Balance & Summary Invariant (`BR-02`, `BR-08`) |
+|---|---|---|---|---|---|
+| **Internal Cash Transfer (`F-11`, `FR-13`)** | `POST /api/transactions/transfer` | `PAYMENT_CHARGE` | Source `CASH` ($-\text{amount}$) | Destination `CASH` ($+\text{amount}$) | Source `CASH` decreases; Destination `CASH` increases; **`total_income` & `total_expense` unchanged (`BR-02`)**. |
+| **Loan Given Disbursement (`F-12`, `FR-14`)** | `POST /api/transactions/loan-given` | `PAYMENT_CHARGE` | Source `CASH` ($-\text{amount}$) | `LOAN_GIVEN` ($+\text{amount}$ receivable) | `CASH` decreases; `LOAN_GIVEN` receivable increases; **`total_expense` unchanged (`BR-08`)**. |
+| **Loan Given Recovery (`F-12`, `FR-14`)** | `POST /api/transactions/loan-recovery` | `RECEIVE_MONEY` | Destination `CASH` ($+\text{amount}$) | `LOAN_GIVEN` ($-\text{amount}$ receivable) | `CASH` increases; `LOAN_GIVEN` receivable decreases; **`total_income` unchanged (`BR-08`)**. |
+| **General Loan Borrowing (`F-13`, `FR-15`)** | `POST /api/transactions/loan-borrowing` | `RECEIVE_MONEY` | Destination `CASH` ($+\text{amount}$) | `LOAN_TAKEN` (`GENERAL_LOAN`, $+\text{amount}$ debt) | `CASH` increases; General `LOAN_TAKEN` debt increases; **`total_income` unchanged (`BR-08`)**. |
+| **General Loan Repayment (`F-13`, `FR-15`)** | `POST /api/transactions/loan-repayment` | `PAYMENT_CHARGE` | Source `CASH` ($-\text{amount}$) | `LOAN_TAKEN` (`GENERAL_LOAN`, $-\text{amount}$ debt) | `CASH` decreases; General `LOAN_TAKEN` debt decreases; **`total_expense` unchanged (`BR-08`)**. |
+
+### 11.4 Extended Deterministic Balance Equations (`server/src/services/report.service.ts` & `server/src/controllers/account.controller.ts`)
+
+1. **Cash Account Balance (`type === 'CASH'`):**
+   $$\text{Cash Balance}(A) = A.\text{opening\_balance} + \sum_{\substack{T.\text{primary} = A \\ T.\text{form} = \text{RECEIVE\_MONEY}}} T.\text{total\_amount} + \sum_{\substack{L.\text{target} = A \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} L.\text{amount} - \sum_{\substack{T.\text{primary} = A \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} T.\text{total\_amount}$$
+2. **Loan Taken Liability Balance (`type === 'LOAN_TAKEN'`, both `CREDIT_CARD` and `GENERAL_LOAN`):**
+   $$\text{Debt Balance}(L_T) = L_T.\text{opening\_balance} + \sum_{\substack{T.\text{primary} = L_T \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} T.\text{total\_amount} + \sum_{\substack{L.\text{target} = L_T \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{RECEIVE\_MONEY}}} L.\text{amount} - \sum_{\substack{L.\text{target} = L_T \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} L.\text{amount}$$
+3. **Loan Given Receivable Balance (`type === 'LOAN_GIVEN'`):**
+   $$\text{Receivable Balance}(L_G) = L_G.\text{opening\_balance} + \sum_{\substack{L.\text{target} = L_G \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{PAYMENT\_CHARGE}}} L.\text{amount} - \sum_{\substack{L.\text{target} = L_G \\ T.\text{primary.type} = \text{CASH} \\ T.\text{form} = \text{RECEIVE\_MONEY}}} L.\text{amount}$$
+4. **Total Income & Total Expense Summaries (`BR-02`, `BR-08`):**
+   * `total_income`: sum of `AllocationLine.amount` where `target_account.type === 'INCOME'`.
+   * `total_expense`: sum of `AllocationLine.amount` where `target_account.type === 'EXPENSE'`.
+
+### 11.5 Updated Role & Privacy Matrix (`F-19`, `BR-10`)
+
+| Endpoint Group | `USER` (`is_active = true`) | `ADMIN` (`is_active = true`) | Disabled User (`is_active = false`) | Unauthenticated |
+|---|:---:|:---:|:---:|:---:|
+| `GET /api/admin/users` (`FR-03`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (Non-financial user metadata only) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
+| `PATCH /api/admin/users/:id/status` (`FR-04`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (`422 CANNOT_DEACTIVATE_SELF` on self) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
+| `/api/accounts/*`, `/api/transactions/*`, `/api/reports/*` | **Allowed** (Own tenant records only, `BR-01`) | **`403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN` (`BR-10`)** | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |

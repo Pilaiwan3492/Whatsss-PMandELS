@@ -335,11 +335,30 @@ export async function recordRepayment(
       );
     }
 
+    const toSubtype = (toAccount as any).subtype;
+    if (toSubtype === 'GENERAL_LOAN') {
+      throw new RepaymentError(
+        `Credit card repayment target must have subtype CREDIT_CARD, received: ${toSubtype}.`,
+        400,
+        'INVALID_ACCOUNT_TYPE'
+      );
+    }
+
+    // System Archived Account Guard (Section 1.2 of Sprint 2 Contracts)
+    if ((fromAccount as any).is_archived || (toAccount as any).is_archived) {
+      throw new RepaymentError(
+        'Cannot record transaction referencing an archived account.',
+        422,
+        'ACCOUNT_ARCHIVED'
+      );
+    }
+
     const zero = new Prisma.Decimal('0.00');
 
     // C. Compute Current Cash Balance under lock
     const fromOpening = new Prisma.Decimal(fromAccount.opening_balance.toString());
     let fromReceived = zero;
+    let fromIncomingTransfer = zero;
     let fromPaid = zero;
 
     if (typeof tx.transaction?.aggregate === 'function') {
@@ -368,7 +387,31 @@ export async function recordRepayment(
       }
     }
 
-    const currentCashBalance = fromOpening.add(fromReceived).sub(fromPaid);
+    if (typeof tx.allocationLine?.aggregate === 'function') {
+      const transferAgg = await tx.allocationLine.aggregate({
+        where: {
+          target_account_id: fromAccountId,
+          target_account: {
+            type: 'CASH',
+            user_id: userId
+          },
+          transaction: {
+            user_id: userId,
+            form: 'PAYMENT_CHARGE',
+            primary_account: {
+              type: 'CASH',
+              user_id: userId
+            }
+          }
+        },
+        _sum: { amount: true }
+      });
+      if (transferAgg._sum?.amount) {
+        fromIncomingTransfer = new Prisma.Decimal(transferAgg._sum.amount.toString());
+      }
+    }
+
+    const currentCashBalance = fromOpening.add(fromReceived).add(fromIncomingTransfer).sub(fromPaid);
 
     // D. Compute Current Debt under lock
     const toOpening = new Prisma.Decimal(toAccount.opening_balance.toString());

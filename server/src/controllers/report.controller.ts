@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { getFinancialSummary } from '../services/report.service.js';
+import { getCategorySpendingReport, getFinancialSummary, ReportError } from '../services/report.service.js';
 
 /**
  * Report Controller
@@ -38,6 +38,46 @@ export async function getSummary(req: Request, res: Response, next: NextFunction
       data: summary
     });
   } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCategorySpending(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          details: []
+        }
+      });
+      return;
+    }
+
+    const report = await getCategorySpendingReport(userId, {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate
+    });
+
+    res.status(200).json({
+      success: true,
+      data: report
+    });
+  } catch (err) {
+    if (err instanceof ReportError) {
+      res.status(err.statusCode).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details
+        }
+      });
+      return;
+    }
     next(err);
   }
 }
