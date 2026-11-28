@@ -462,7 +462,7 @@ All runtime configuration is managed through externalized environment variables 
 | **Deployed Cloud Run Revision** | **Verified** | `whatsss-00030-k42` (`100%` traffic; primary `https://whatsss-sipqw4logq-as.a.run.app`, regional `https://whatsss-1086708130644.asia-southeast1.run.app`) |
 | **Container Image Digest** | **Verified** | `asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:76c621119e92ab98a2eaa557c76176f5ae9f1653326ddd7237b13cbed5eadcea` |
 | **Unauthenticated Smoke Tests** | **Verified** | `SMOKE-LIVE-01`..`04` (`200 OK` SPA, `200 OK` `/api/health`, `401` on `/api/accounts` & `/api/auth/me`) |
-| **Golden Journey & Live Feature Verification** | **Verified** | `DEMO-LIVE-01`..`03` (16 screenshots in `docs/sprints/sprint-2/evidence/screenshots/` + [`docs/sprints/sprint-2/deliverable-2-report.pdf`](sprints/sprint-2/deliverable-2-report.pdf)) |
+| **Golden Journey & Live Feature Verification** | **Verified** | `DEMO-LIVE-01`..`03` (16 screenshots in `docs/sprints/sprint-2/evidence/` + [`docs/sprints/sprint-2/deliverable-2-report.pdf`](sprints/sprint-2/deliverable-2-report.pdf)) |
 | **Part E Documentation PR (#68) Merge to `main`** | **Pending** | [PR #68](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/68) open on `docs/part-e-release-evidence`, awaiting teammate review & merge |
 | **Backup & Disaster Recovery Restore Drill** | **Not Verified** | No Cloud SQL PITR or restore test executed (`§12.2`) |
 
@@ -607,7 +607,7 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
 
 ### 12.2 Known Limitations
 * **Dynamic Audit Snapshot Label Resolution:** `TransactionAuditLog.previous_snapshot` and `new_snapshot` store `target_account_id` and `amount`, and the UI resolves account/category display names from current `Account` metadata. Consequently, audit snapshots **do not guarantee immutable historical display labels** if an account or category is later renamed via `F-10`.
-* **Backup & Disaster Recovery Not Yet Verified:** While Cloud SQL for PostgreSQL 16 provides managed storage, **automated backup restoration and disaster recovery (PITR) have not been tested or verified** with a restore drill; recovery claims must not be made until a restore test is executed and evidenced.
+* **Backup, Disaster Recovery, Monitoring & Alerting Not Yet Verified:** While Cloud SQL for PostgreSQL 16 and Cloud Run provide managed infrastructure, **automated backup restoration, disaster recovery (PITR) drills, automated audit retention pruning/archival jobs, and production monitoring/alerting policies have not been configured or verified with operational tests**; readiness claims must not be made until verified and evidenced.
 
 ### 12.3 Planned Enhancements
 * **Denormalized Snapshot Labels:** Persist `target_account_name` inside `TransactionAuditLog` snapshots at write time so historical audit entries preserve exact point-in-time display labels.
