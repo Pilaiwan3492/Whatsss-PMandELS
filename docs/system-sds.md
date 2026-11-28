@@ -420,7 +420,7 @@ To ensure robust security, avoid token leakage, and eliminate token storage inco
 | Authenticate (`/api/auth/login`) | Allowed | Allowed | Allowed |
 | Terminate Session (`/api/auth/logout`) | Allowed | Allowed | Allowed (Idempotent `200 OK` Cookie Clear) |
 | Get Current User (`/api/auth/me`) | Allowed (Own Profile) | Allowed (Own Profile) | `401 Unauthorized` |
-| View Platform User Directory (`/api/admin/users`) | `403 Forbidden` | Planned (Sprint 2) | `401 Unauthorized` |
+| View Platform User Directory (`/api/admin/users`) | `403 Forbidden` | **Allowed** (`ADMIN` only per §11.5) | `401 Unauthorized` |
 | Financial Accounts (`/api/accounts/*`) | Allowed (Own Accounts Only) | **`403 Forbidden`** | `401 Unauthorized` |
 | Financial Transactions (`/api/transactions/*`) | Allowed (Own Transactions Only) | **`403 Forbidden`** | `401 Unauthorized` |
 | Financial Summaries (`/api/reports/summary`) | Allowed (Own Summary Only) | **`403 Forbidden`** | `401 Unauthorized` |
@@ -442,10 +442,22 @@ All runtime configuration is managed through externalized environment variables 
 
 ---
 
-## 10. Deployment Approach
+## 10. Deployment Approach & Verification Status
 
+### 10.1 Deployment Architecture
 * **Sprint 1 Development:** Runs locally with PostgreSQL 16 hosted via Docker Compose (`docker compose up -d`) and the Express application executed locally via Node.js.
-* **Lab 5–7 & Deliverable 2 Cloud Deployment:** The application is packaged via a multi-stage `Dockerfile` and deployed automatically to **Google Cloud Run** (`asia-southeast1`) connected to **Cloud SQL for PostgreSQL 16** via `.github/workflows/deploy.yml` using Workload Identity Federation (WIF) and Secret Manager.
+* **Cloud Production / Release Candidate Architecture:** Multi-stage `Dockerfile` (serving the compiled React SPA from Express and connecting to **Cloud SQL for PostgreSQL 16** via Prisma ORM) deployed to **Google Cloud Run** (`asia-southeast1`).
+
+### 10.2 Deployment Configuration
+* **CI/CD Workflow:** `.github/workflows/deploy.yml` authenticates to GCP via Workload Identity Federation (WIF), retrieves runtime secrets (`DATABASE_URL`, `JWT_SECRET`, `CLIENT_URL`) from Google Secret Manager, builds/pushes the container image to Artifact Registry (`asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss`), and deploys to Cloud Run service `whatsss`.
+* **CI Quality Gate:** Both `.github/workflows/ci.yml` (`Main CI`) and `.github/workflows/deploy.yml` (`Test & Build Gate`) must pass before deployment.
+
+### 10.3 Actual Deployment Verification (`v0.2.0-sprint2-rc`)
+* **Release Commit (`main`) & Tag:** `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` (`v0.2.0-sprint2-rc`, merged from `staging-lab5` via [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67)).
+* **Verified CI & Deploy Workflows:** [Main CI #315 (`46151836583`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583) (`548/548` backend incl. Live PG16, `104/104` frontend) and [Deploy demo #13 (`46151836654`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654).
+* **Deployed Cloud Run Revision & Image Digest:** Revision `whatsss-00030-k42` serving **100%** traffic; image digest `asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:76c621119e92ab98a2eaa557c76176f5ae9f1653326ddd7237b13cbed5eadcea`.
+* **Live Cloud Run URLs:** Primary `CLIENT_URL` `https://whatsss-sipqw4logq-as.a.run.app` (regional alias `https://whatsss-1086708130644.asia-southeast1.run.app`).
+* **Post-Deployment Smoke & Live Demo Evidence:** Unauthenticated smoke checks (`SMOKE-LIVE-01`..`04`) passed (`200 OK` SPA, `200 OK` `/api/health`, `401` on `/api/accounts` & `/api/auth/me`) and authenticated live demonstrations (`DEMO-LIVE-01`..`03`, 16 screenshots in `docs/sprints/sprint-2/evidence/screenshots/` and [`docs/sprints/sprint-2/deliverable-2-report.pdf`](sprints/sprint-2/deliverable-2-report.pdf)) completed against `whatsss-00030-k42`.
 
 ---
 
@@ -566,4 +578,28 @@ To support all Sprint 2 (`F-10`..`F-16`, `F-19`) and Sprint 3 (`F-17`, `F-18`) f
 |---|:---:|:---:|:---:|:---:|
 | `GET /api/admin/users` (`FR-03`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (Non-financial user metadata only) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
 | `PATCH /api/admin/users/:id/status` (`FR-04`) | `403 ADMIN_ONLY_ENDPOINT` | **Allowed** (`422 CANNOT_DEACTIVATE_SELF` on self) | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |
+
+---
+
+## 12. Verified Capabilities, Known Limitations & Planned Enhancements
+
+### 12.1 Verified Capabilities
+* **Atomic Balance & Audit Trail (`NFR-DATA-01`):** Account balances and summaries are computed dynamically from persisted `Transaction` and `AllocationLine` rows inside `prisma.$transaction` with pessimistic row locking (`acquireAccountRowLocks`). `TransactionAuditLog` enforces append-only immutability via API boundaries, `onDelete: Restrict`, and the PostgreSQL `prevent_audit_log_mutation()` trigger, ordered reverse-chronologically by `sequence_number DESC` (with `created_at DESC, id DESC` fallback).
+* **Deployed Cloud Run Candidate (`§10.3`):** Verified live on revision `whatsss-00030-k42` (`467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade`, `v0.2.0-sprint2-rc`).
+
+### 12.2 Known Limitations
+* **Dynamic Audit Snapshot Label Resolution:** `TransactionAuditLog.previous_snapshot` and `new_snapshot` store `target_account_id` and `amount`, and the UI resolves account/category display names from current `Account` metadata. Consequently, audit snapshots **do not guarantee immutable historical display labels** if an account or category is later renamed via `F-10`.
+* **Backup & Disaster Recovery Not Yet Verified:** While Cloud SQL for PostgreSQL 16 provides managed storage, **automated backup restoration and disaster recovery (PITR) have not been tested or verified** with a restore drill; recovery claims must not be made until a restore test is executed and evidenced.
+
+### 12.3 Planned Enhancements
+* **Denormalized Snapshot Labels:** Persist `target_account_name` inside `TransactionAuditLog` snapshots at write time so historical audit entries preserve exact point-in-time display labels.
+* **Backup & Restore Verification (`NFR-DATA-02` Proposal):** Execute and document a Cloud SQL restore verification drill prior to any production SLA commitment.
+
+---
+
+## 13. API Versioning & Backward Compatibility Policy
+
+* **Current Baseline:** All REST endpoints are currently served under the unversioned `/api/*` prefix (`v0.2.0-sprint2-rc`), matching the single-client React SPA bundled in the same container.
+* **Backward Compatibility Rule:** Within the `/api/*` baseline, changes must be **additive only** (optional query parameters, new response fields, or new endpoints). Existing query parameters (e.g., `startDate` and `endDate` on `GET /api/reports/categories`), required request fields, error codes, and response structures must not be renamed or removed without a coordinated versioned migration.
+* **Future Breaking Changes:** Any breaking contract change requires introducing an explicit versioned prefix (e.g., `/api/v2/*`) alongside a documented deprecation window for `/api/*`.
 | `/api/accounts/*`, `/api/transactions/*`, `/api/reports/*` | **Allowed** (Own tenant records only, `BR-01`) | **`403 ADMIN_FINANCIAL_ACCESS_FORBIDDEN` (`BR-10`)** | `403 ACCOUNT_DISABLED` | `401 UNAUTHORIZED` |

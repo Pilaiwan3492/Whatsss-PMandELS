@@ -124,6 +124,8 @@
 
 ## 3. Sprint 3 Test Specification Matrix (`F-17` & `F-18` — `WP-12` / [Issue #60](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/60))
 
+> **Verified Execution Status (`v0.2.0-sprint2-rc`):** All 10 Sprint 3 Test IDs (`TEST-REP-CAT-01`..`04`, `TEST-AUDIT-01`..`06`) are implemented and **Passed** in [Main CI #315 (`46151836583`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583) on release commit `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` (and pre-merge on `e23416a9fd3f3d8326e6e60799fb2bed9e3c5c2f` via [Main CI #311](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109538015) / [C-01 #165](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46109542107)).
+
 | Test ID | Linked AC / Rule | Target Feature | Test Level | Preconditions & Input | Expected Result |
 |---|---|:---:|:---:|---|---|
 | **`TEST-REP-CAT-01`** | `AC-17-1`, `FR-20`, `BR-04`, `BR-05` | `F-17` | Integration & UI | After Golden Journey (`Dining = 1000.00`, `Grocery = 2000.00`), `user_demo` queries `GET /api/reports/categories`. | HTTP `200 OK`; `total_expense = "3000.00"`, `categories` lists `Grocery` (`total_amount: "2000.00"`, `percentage: "66.67"`, `transaction_count: 1`) and `Dining` (`total_amount: "1000.00"`, `percentage: "33.33"`, `transaction_count: 1`) ordered by `total_amount DESC, category_name ASC`. |

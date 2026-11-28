@@ -5,7 +5,7 @@
 > **Deliverable:** Project Deliverable 2 (Part C: Sprint 3 Contracts and Working Progress — 15 Points)  
 > **Team:** Pilaiwan Churdchu (`67070503492`, `@Pilaiwan3492`) & Aphichaya Klinhual (`67070503447`, `@Apichaya251400`)  
 > **Work Package:** `WP-07` ([Issue #55](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/55) — Contracts) $\rightarrow$ `WP-12` ([Issue #60](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/60) — Implementation & Release)  
-> **Status:** `v3.1-amended` — **Contracted & Amended to Match `TransactionAuditLog.sequence_number` Ordering (`WP-12` / PR #66)**
+> **Status:** `v3.2-part-e` — **Implemented, Released (`v0.2.0-sprint2-rc`), and Reconciled (`WP-12` / PR #66, PR #67, PR #68)**
 
 ### Document Revision History
 | Version | Status | Date | Scope / Reference | Summary |
@@ -13,6 +13,7 @@
 | `v0.1.0-sprint1` | **Accepted & Frozen Baseline** | 2026-11-08 | PR #14 (`f84e7b16`) | Original 3-sprint plan allocating `F-17` (`FR-20`) and `F-18` (`FR-21`) to Sprint 3 (`docs/sprints/plan.md`). |
 | `v3.0-contract` | **Sprint 3 Baseline Contracts (Pre-Implementation)** | 2026-11-26 | `WP-07` / [Issue #55](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/55) / [PR #61](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/61) | Complete engineering contracts for all remaining Sprint 3 features (`F-17: Category Spending Summaries & Reports`, `F-18: Audited Correction History & Archival`), including UI/API/data specifications, reverse-chronological (`created_at DESC, id DESC`) audit ordering, append-only audit retention (`onDelete: Restrict`), per-AccountType archival rules, numbered ACs, STS mappings, Sprint 3 Definition of Done (DoD), and completion schedule by 13 December 2026. |
 | `v3.1-amended` | **Contract Amendment (Teammate Review — `WP-12`)** | 2026-11-28 | `WP-12` / [Issue #60](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/60) / [PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66) | **Audit Ordering Amendment:** Updates `F-18` audit-history ordering from `created_at DESC, id DESC` to **`sequence_number DESC`** (with `created_at DESC, id DESC` fallback), matching `schema.prisma` (`20261128000000_audit_log_sequence_number`). Timestamp/UUID ordering alone is insufficient because rapid or concurrent corrections under `FOR UPDATE` row locks can share an identical millisecond `created_at` and random UUID `id`s do not reflect commit/lock order. Also updates `TEST-AUDIT-05` file reference to `audit-history.test.ts` & `db-reports-audit-archive.test.ts`. |
+| `v3.2-part-e` | **Part E Release Reconciliation (`v0.2.0-sprint2-rc`)** | 2026-11-28 | [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67) (`467eb4c`), [PR #68](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/68) | Preserves original §4.1 historical schedule and adds §4.2 Sprint 2 Feature Completion Table (`WP-08`..`WP-11`) and §4.3 Sprint 3 Actual Progress & Remaining-Work Plan (`13 Dec 2026`). |
 
 ---
 
@@ -207,7 +208,11 @@ A Sprint 3 feature (`F-17`, `F-18`) and the integrated Sprint 3 / Deliverable 2 
 
 ---
 
-## 4. Sprint 3 Implementation Plan & Schedule to Final Submission (13 December 2026)
+## 4. Sprint 2 & Sprint 3 Plan, Actual Progress & Remaining-Work Schedule (to 13 December 2026)
+
+### 4.1 Original Planned Schedule (Historical — `WP-07` Contract Stage)
+
+> *Note: Preserved verbatim from `WP-07` ([PR #61](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/61)) for historical traceability. See §4.2 and §4.3 for actual completion and remaining work.*
 
 Per Deliverable 2 Section 3.3, the team plans around the final examination period (`1–11 December 2026`) by completing all Sprint 2 workflows (`F-10`..`F-16`, `F-19`) and implementing Sprint 3 workflows (`F-17`, `F-18`) for the **29 November 2026 Deliverable 2 Release Candidate**, leaving only bounded final UAT re-verification, presentation video recording, and final PDF packaging for `11–13 December 2026`:
 
@@ -221,3 +226,27 @@ Per Deliverable 2 Section 3.3, the team plans around the final examination perio
 | **`WP-12` ([Issue #60](https://github.com/Pilaiwan3492/Whatsss-PMandELS/issues/60)):** Sprint 3 `F-17` Category Reports & `F-18` Audit/Archival + D2 Release Candidate on GCP | `AC-17-1`..`3`, `AC-18-1`..`3` (`TEST-REP-CAT-01`..`04`, `TEST-AUDIT-01`..`06`) + Complete RTM (`docs/traceability.md`) + GCP Deploy | `@Pilaiwan3492` (Rev: `@Apichaya251400`) | **29 Nov 2026** | **Contracted** |
 | **Final Exam Period Buffer (`1–11 Dec 2026`)** | Final examination window (no heavy coding scheduled) | Both Students | **1–11 Dec 2026** | **Reserved Buffer** |
 | **Final Deliverable 3 Polish, Video & Release (`11–13 Dec 2026`)** | Cross-feature E2E regression polish, <10-min presentation video, Final Release tag `v1.0.0` | Both Students | **12–13 Dec 2026** | **Planned** |
+
+---
+
+### 4.2 Sprint 2 Feature Completion Table (`WP-08`..`WP-11`)
+
+| Work Package | Features | Impl Status | Test Status | Merge Status | PR | Merge SHA (`staging-lab5`) | Tested SHA | CI Run URL |
+|---|---|---|---|---|---|---|---|---|
+| **`WP-08`** (#56) | `F-10` Custom Accounts, `F-11` Cash Transfer | **Completed** | **Passed** (`TEST-ACC-01`..`05`, `TEST-XFER-01`..`06`) | **Merged (`staging-lab5` & `main` `467eb4c`)** | [PR #62](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/62) | `10f33c0641d96d16cf0addcc07b4fb13e3111142` | `5e31264c7a08a21b7379e0eda7d20583f2cd395a` | [CI #279 (`45961894238`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45961894238) |
+| **`WP-09`** (#57) | `F-12` Loan Given, `F-13` General Loan Taken | **Completed** | **Passed** (`TEST-LOAN-GIVEN-01`..`05`, `TEST-LOAN-TAKEN-01`..`05`) | **Merged (`staging-lab5` & `main` `467eb4c`)** | [PR #65](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/65) | `8b015478d530c930a02fc8f006599fc985578b90` | `795ef8884665d65b08c31a4280471120b89ccccf` | [CI #281 (`45990625475`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45990625475) |
+| **`WP-10`** (#58) | `F-14` Favorite/Duplicate, `F-15` Search/Filter | **Completed** | **Passed** (`TEST-FAV-01`..`05`, `TEST-SRCH-01`..`06`) | **Merged (`staging-lab5` & `main` `467eb4c`)** | [PR #63](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/63) | `b7b9f16bc0d92b4e0528b419dbd72a9d3bbca0a7` | `805524297891c2632436088f1c66e8c41bd04476` | [CI #282 (`45998344358`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/45998344358) |
+| **`WP-11`** (#59) | `F-16` Corrections, `F-19` Admin Governance | **Completed** | **Passed** (`TEST-CORR-01`..`07`, `TEST-ADMIN-01`..`06`) | **Merged (`staging-lab5` & `main` `467eb4c`)** | [PR #64](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/64) | `f3cd70bfeb34dca10057d7dedd9859d6262fcaf8` | `d34e46f02d4dd9310844a9e85da7e6618bdde53a` | [CI #299 (`46040062231`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46040062231) |
+
+---
+
+### 4.3 Sprint 3 Actual Progress, Evidence & Remaining-Work Plan (`F-17`, `F-18`, Part D, Part E)
+
+| Work Item / Scope | Current Status | Owner | Target / Completion Date | Dependencies | Evidence URL |
+|---|---|---|---|---|---|
+| **`F-17` Category Spending Reports** (`FR-20`, `WP-12`) | **Completed, Merged & Deployed (`v0.2.0-sprint2-rc`)** | `@Pilaiwan3492` (Rev: `@Apichaya251400`) | **Completed 2026-11-28** | `WP-07`, `WP-11` | [PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66), [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67), [Main CI #315](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583) |
+| **`F-18` Audit History & Account Archival** (`FR-21`, `WP-12`) | **Completed, Merged & Deployed (`v0.2.0-sprint2-rc`)** | `@Pilaiwan3492` (Rev: `@Apichaya251400`) | **Completed 2026-11-28** | `WP-08`..`WP-11` | [PR #66](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/66), [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67), [Main CI #315](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583) |
+| **Part D: Requirements & Test Traceability Sync** | **Completed on `PR #68` (Pending Merge to `main`)** | `@Pilaiwan3492` | **2026-11-28** | `PR #67` (`467eb4c`) | [PR #68](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/68), [`docs/traceability.md`](../../traceability.md) |
+| **Part E: Cloud Run Release, Smoke Checks & Live Demo** | **Release & Demo Completed (`whatsss-00030-k42`); Doc PR #68 Pending Merge** | `@Pilaiwan3492` | **2026-11-28** | `PR #67`, `PR #68` | [Deploy #13](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654), [`deliverable-2-report.pdf`](../sprint-2/deliverable-2-report.pdf) |
+| **Final Exam Period Buffer** | **Scheduled Buffer** | Both Students | **1–11 Dec 2026** | Deliverable 2 submitted | — |
+| **Final Deliverable 3 Polish, Presentation Video & `v1.0.0`** | **Planned** | Both Students | **13 Dec 2026** | Final exams complete | — |
