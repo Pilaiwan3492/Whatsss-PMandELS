@@ -448,16 +448,23 @@ All runtime configuration is managed through externalized environment variables 
 * **Sprint 1 Development:** Runs locally with PostgreSQL 16 hosted via Docker Compose (`docker compose up -d`) and the Express application executed locally via Node.js.
 * **Cloud Production / Release Candidate Architecture:** Multi-stage `Dockerfile` (serving the compiled React SPA from Express and connecting to **Cloud SQL for PostgreSQL 16** via Prisma ORM) deployed to **Google Cloud Run** (`asia-southeast1`).
 
-### 10.2 Deployment Configuration
+### 10.2 Intended GCP Cloud Run Deployment Configuration
 * **CI/CD Workflow:** `.github/workflows/deploy.yml` authenticates to GCP via Workload Identity Federation (WIF), retrieves runtime secrets (`DATABASE_URL`, `JWT_SECRET`, `CLIENT_URL`) from Google Secret Manager, builds/pushes the container image to Artifact Registry (`asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss`), and deploys to Cloud Run service `whatsss`.
-* **CI Quality Gate:** Both `.github/workflows/ci.yml` (`Main CI`) and `.github/workflows/deploy.yml` (`Test & Build Gate`) must pass before deployment.
+* **CI Quality Gate:** Both `.github/workflows/ci.yml` (`Main CI`) and `.github/workflows/deploy.yml` (`Test & Build Gate`) are configured to gate deployment prior to Cloud Run rollout. Configuration alone does not constitute deployment verification.
 
-### 10.3 Actual Deployment Verification (`v0.2.0-sprint2-rc`)
-* **Release Commit (`main`) & Tag:** `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` (`v0.2.0-sprint2-rc`, merged from `staging-lab5` via [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67)).
-* **Verified CI & Deploy Workflows:** [Main CI #315 (`46151836583`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583) (`548/548` backend incl. Live PG16, `104/104` frontend) and [Deploy demo #13 (`46151836654`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654).
-* **Deployed Cloud Run Revision & Image Digest:** Revision `whatsss-00030-k42` serving **100%** traffic; image digest `asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:76c621119e92ab98a2eaa557c76176f5ae9f1653326ddd7237b13cbed5eadcea`.
-* **Live Cloud Run URLs:** Primary `CLIENT_URL` `https://whatsss-sipqw4logq-as.a.run.app` (regional alias `https://whatsss-1086708130644.asia-southeast1.run.app`).
-* **Post-Deployment Smoke & Live Demo Evidence:** Unauthenticated smoke checks (`SMOKE-LIVE-01`..`04`) passed (`200 OK` SPA, `200 OK` `/api/health`, `401` on `/api/accounts` & `/api/auth/me`) and authenticated live demonstrations (`DEMO-LIVE-01`..`03`, 16 screenshots in `docs/sprints/sprint-2/evidence/screenshots/` and [`docs/sprints/sprint-2/deliverable-2-report.pdf`](sprints/sprint-2/deliverable-2-report.pdf)) completed against `whatsss-00030-k42`.
+### 10.3 Deployment Verification Evidence (`v0.2.0-sprint2-rc`)
+
+| Evidence Item | Status | Verified Value / Reference |
+|---|---|---|
+| **Release Commit & Tag (`main`)** | **Verified** | `467eb4c8a7155c822fbaab8e1b4a52f9d5ae3ade` (`v0.2.0-sprint2-rc`, [PR #67](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/67)) |
+| **Main CI Gate on Release Commit** | **Verified (`success`)** | [Main CI #315 (`46151836583`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836583) (`548/548` backend incl. Live PG16, `104/104` frontend) |
+| **GCP Cloud Run Deploy Run** | **Verified (`success`)** | [Deploy demo #13 (`46151836654`)](https://github.com/Pilaiwan3492/Whatsss-PMandELS/actions/runs/46151836654) |
+| **Deployed Cloud Run Revision** | **Verified** | `whatsss-00030-k42` (`100%` traffic; primary `https://whatsss-sipqw4logq-as.a.run.app`, regional `https://whatsss-1086708130644.asia-southeast1.run.app`) |
+| **Container Image Digest** | **Verified** | `asia-southeast1-docker.pkg.dev/cpe334-whatsss-pmandels/whatsss/whatsss@sha256:76c621119e92ab98a2eaa557c76176f5ae9f1653326ddd7237b13cbed5eadcea` |
+| **Unauthenticated Smoke Tests** | **Verified** | `SMOKE-LIVE-01`..`04` (`200 OK` SPA, `200 OK` `/api/health`, `401` on `/api/accounts` & `/api/auth/me`) |
+| **Golden Journey & Live Feature Verification** | **Verified** | `DEMO-LIVE-01`..`03` (16 screenshots in `docs/sprints/sprint-2/evidence/screenshots/` + [`docs/sprints/sprint-2/deliverable-2-report.pdf`](sprints/sprint-2/deliverable-2-report.pdf)) |
+| **Part E Documentation PR (#68) Merge to `main`** | **Pending** | [PR #68](https://github.com/Pilaiwan3492/Whatsss-PMandELS/pull/68) open on `docs/part-e-release-evidence`, awaiting teammate review & merge |
+| **Backup & Disaster Recovery Restore Drill** | **Not Verified** | No Cloud SQL PITR or restore test executed (`§12.2`) |
 
 ---
 
